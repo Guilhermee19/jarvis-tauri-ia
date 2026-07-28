@@ -1,9 +1,16 @@
 'use client'
 
-import { ChatIcon, HomeIcon, PowerIcon, PulseIcon, SettingsIcon } from '@/components/ui/icons'
+import {
+  CameraIcon,
+  ChatIcon,
+  MicIcon,
+  PowerIcon,
+  PulseIcon,
+  SettingsIcon,
+} from '@/components/ui/icons'
 import { quitApp } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { useChatStore, useSheetStore, type SheetId } from '@/stores'
+import { useChatStore, useSensorStore, useSheetStore, type SheetId } from '@/stores'
 
 interface NavItem {
   id: SheetId
@@ -12,10 +19,12 @@ interface NavItem {
 }
 
 /**
- * Barra de ícones — funciona como barra de tarefas das gavetas, não como
- * navegação: clicar abre a gaveta, clicar de novo fecha.
+ * Barra de ícones. Dois grupos com semânticas diferentes:
  *
- * Features novas (voz, automação) entram nesta lista com o id da gaveta delas.
+ * - Sensores (webcam, microfone): interruptores de algo que continua ligado depois
+ *   do clique, independente da tela aberta.
+ * - Gavetas (conversa, diagnóstico, configurações): barra de tarefas — clicar abre,
+ *   clicar de novo fecha, e é assim que se volta para o núcleo.
  */
 const ITEMS: NavItem[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
@@ -26,18 +35,12 @@ const ITEMS: NavItem[] = [
 export function BottomNav() {
   const activeSheet = useSheetStore((state) => state.activeSheet)
   const toggle = useSheetStore((state) => state.toggle)
-  const close = useSheetStore((state) => state.close)
   const hasMessages = useChatStore((state) => state.messages.length > 0)
 
   return (
     <nav className="no-select border-border-soft bg-surface/80 flex shrink-0 items-center justify-center gap-1 border-t px-3 py-2 backdrop-blur-sm">
-      {/* Equivalente ao "mostrar área de trabalho": fecha a gaveta e revela o núcleo. */}
-      <NavButton
-        label="Mostrar o núcleo"
-        isActive={activeSheet === null}
-        onClick={close}
-        icon={<HomeIcon className="h-4.5 w-4.5" />}
-      />
+      <WebcamButton />
+      <MicButton />
 
       <span className="bg-border-soft mx-1 h-4 w-px" />
 
@@ -66,29 +69,86 @@ export function BottomNav() {
   )
 }
 
+function WebcamButton() {
+  const isOn = useSensorStore((state) => state.isWebcamOn)
+  const isBusy = useSensorStore((state) => state.isWebcamBusy)
+  const toggleWebcam = useSensorStore((state) => state.toggleWebcam)
+
+  return (
+    <NavButton
+      label={isOn ? 'Desligar a webcam' : 'Ligar a webcam'}
+      isActive={isOn}
+      isBusy={isBusy}
+      onClick={() => void toggleWebcam()}
+      icon={<CameraIcon className="h-4.5 w-4.5" />}
+    />
+  )
+}
+
+function MicButton() {
+  const isOn = useSensorStore((state) => state.isMicOn)
+  const isBusy = useSensorStore((state) => state.isMicBusy)
+  const level = useSensorStore((state) => state.micLevel)
+  const toggleMic = useSensorStore((state) => state.toggleMic)
+
+  return (
+    <NavButton
+      label={isOn ? 'Desligar o microfone' : 'Ligar o microfone'}
+      isActive={isOn}
+      isBusy={isBusy}
+      onClick={() => void toggleMic()}
+      icon={<MicIcon className="h-4.5 w-4.5" />}
+      // Anel que respira com a voz: o botão precisa mostrar que está CAPTANDO, não
+      // só que está ligado. A raiz quadrada tira a fala do fundo da escala linear.
+      ring={isOn ? Math.min(1, Math.sqrt(level)) : null}
+    />
+  )
+}
+
 interface NavButtonProps {
   label: string
   isActive: boolean
   hasDot?: boolean
   isDanger?: boolean
+  isBusy?: boolean
+  ring?: number | null
   onClick: () => void
   icon: React.ReactNode
 }
 
-function NavButton({ label, isActive, hasDot, isDanger, onClick, icon }: NavButtonProps) {
+function NavButton({
+  label,
+  isActive,
+  hasDot,
+  isDanger,
+  isBusy,
+  ring,
+  onClick,
+  icon,
+}: NavButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={isBusy}
       title={label}
       aria-label={label}
       aria-pressed={isActive}
       className={cn(
         'relative flex h-8 w-9 items-center justify-center rounded transition-colors',
+        'disabled:cursor-not-allowed disabled:opacity-60',
         isActive && 'hud-glow bg-accent/10 text-accent',
         !isActive && (isDanger ? 'text-muted hover:text-danger' : 'text-muted hover:text-content'),
       )}
     >
+      {ring != null ? (
+        <span
+          aria-hidden
+          className="border-accent pointer-events-none absolute inset-0.5 rounded border transition-opacity duration-75"
+          style={{ opacity: 0.15 + ring * 0.85 }}
+        />
+      ) : null}
+
       {icon}
 
       {hasDot ? (

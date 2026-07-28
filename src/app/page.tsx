@@ -2,23 +2,29 @@
 
 import { ChatWindow } from '@/components/chat/ChatWindow'
 import { HomeScreen } from '@/components/home/HomeScreen'
+import { WebcamStage } from '@/components/home/WebcamStage'
 import { DiagnosticsSheet } from '@/components/sheets/DiagnosticsSheet'
 import { SettingsSheet } from '@/components/sheets/SettingsSheet'
 import { BottomNav } from '@/components/tray-window/BottomNav'
 import { HudFrame } from '@/components/tray-window/HudFrame'
 import { TitleBar } from '@/components/tray-window/TitleBar'
 import { useBootstrap } from '@/hooks/useBootstrap'
+import { useSensorEvents } from '@/hooks/useSensorEvents'
 import { useTrayEvents } from '@/hooks/useTrayEvents'
 
 export default function HomePage() {
   useBootstrap()
   useTrayEvents()
+  useSensorEvents()
 
   return (
     // Sem `bg-base` aqui de propósito: o fundo do `main` seria pintado por cima
     // das camadas com z-index negativo, apagando a grade. A cor vem do `body`.
     <main className="relative flex h-screen flex-col overflow-hidden">
-      {/* Fundo do HUD: vale para toda a janela, por isso mora no shell. */}
+      {/* Fundo do HUD: vale para toda a janela, por isso mora no shell. A webcam
+          entra ABAIXO da grade (-z-20) — o efeito é a grade passando por cima da
+          imagem, como se a tela fosse um visor. */}
+      <WebcamStage />
       <div className="hud-grid pointer-events-none absolute inset-0 -z-10" />
       <div className="hud-vignette pointer-events-none absolute inset-0 -z-10" />
 

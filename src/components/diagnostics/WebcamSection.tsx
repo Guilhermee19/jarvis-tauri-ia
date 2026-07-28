@@ -1,62 +1,48 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Preview, Section } from './Section'
 import { Button } from '@/components/ui/Button'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
-import { captureWebcamFrame, closeWebcam, openWebcam } from '@/lib/tauri'
+import { captureWebcamFrame } from '@/lib/tauri'
+import { useSensorStore } from '@/stores'
 import type { CapturedImage } from '@/types'
 
-/** ~11 quadros por segundo: suficiente para parecer vivo sem saturar o IPC com base64. */
-const PREVIEW_INTERVAL_MS = 90
-
 export function WebcamSection() {
-  const [isOpen, setIsOpen] = useState(false)
-  const [preview, setPreview] = useState<CapturedImage | null>(null)
+  const isOn = useSensorStore((state) => state.isWebcamOn)
+  const isBusy = useSensorStore((state) => state.isWebcamBusy)
+  const frame = useSensorStore((state) => state.webcamFrame)
+  const sensorError = useSensorStore((state) => state.webcamError)
+  const toggleWebcam = useSensorStore((state) => state.toggleWebcam)
+
   const [captured, setCaptured] = useState<CapturedImage | null>(null)
-  const { isBusy, error, run, setError } = useAsyncAction()
-
-  usePreviewLoop(isOpen, setPreview, setError)
-  useCloseOnUnmount()
-
-  async function toggle() {
-    await run(async () => {
-      if (isOpen) {
-        await closeWebcam()
-        setIsOpen(false)
-        setPreview(null)
-        return
-      }
-
-      await openWebcam()
-      setIsOpen(true)
-    })
-  }
+  const { isBusy: isCapturing, error: captureError, run } = useAsyncAction()
 
   return (
     <Section
       title="Webcam"
-      hint="Abre a câmera e mostra o preview ao vivo. Capturar frame congela a imagem atual — sem nenhum reconhecimento nesta versão."
-      error={error}
+      hint="Mesmo interruptor do ícone na barra — ligada, a imagem também vira o fundo da tela inicial. Capturar frame congela a imagem atual, sem nenhum reconhecimento."
+      error={sensorError ?? captureError}
     >
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          variant={isOpen ? 'subtle' : 'primary'}
-          onClick={() => void toggle()}
+          variant={isOn ? 'subtle' : 'primary'}
+          onClick={() => void toggleWebcam()}
           disabled={isBusy}
         >
-          {isOpen ? 'Fechar webcam' : 'Abrir webcam'}
+          {isOn ? 'Fechar webcam' : 'Abrir webcam'}
         </Button>
         <Button
           variant="subtle"
           onClick={() => void run(async () => setCaptured(await captureWebcamFrame()))}
-          disabled={isBusy}
+          disabled={isCapturing}
         >
           Capturar frame
         </Button>
       </div>
 
-      {preview ? <Preview src={preview.dataUrl} label="Preview da webcam" /> : null}
+      {/* O quadro vem do store: existe UM laço de captura para a home e para cá. */}
+      {frame ? <Preview src={frame} label="Preview da webcam" /> : null}
 
       {captured ? (
         <div className="flex flex-col gap-1">
@@ -67,51 +53,5 @@ export function WebcamSection() {
         </div>
       ) : null}
     </Section>
-  )
-}
-
-/**
- * Laço com `setTimeout` encadeado, não `setInterval`: se um frame demorar mais que o
- * intervalo, os pedidos se empilhariam e a webcam nunca alcançaria a fila.
- */
-function usePreviewLoop(
-  isOpen: boolean,
-  onFrame: (frame: CapturedImage) => void,
-  onError: (message: string) => void,
-) {
-  useEffect(() => {
-    if (!isOpen) return
-    let active = true
-
-    async function loop() {
-      while (active) {
-        try {
-          const frame = await captureWebcamFrame()
-          if (!active) return
-          onFrame(frame)
-        } catch (cause) {
-          // Um erro no meio do preview (câmera arrancada da USB) para o laço em vez
-          // de repetir a mesma falha 11 vezes por segundo.
-          onError(cause instanceof Error ? cause.message : String(cause))
-          return
-        }
-        await new Promise((resolve) => setTimeout(resolve, PREVIEW_INTERVAL_MS))
-      }
-    }
-
-    void loop()
-    return () => {
-      active = false
-    }
-  }, [isOpen, onFrame, onError])
-}
-
-/** Fechar a gaveta com a câmera aberta deixaria a luz da webcam acesa. */
-function useCloseOnUnmount() {
-  useEffect(
-    () => () => {
-      void closeWebcam().catch(() => undefined)
-    },
-    [],
   )
 }

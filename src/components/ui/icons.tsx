@@ -26,16 +26,6 @@ function Svg({ className, children }: IconProps & { children: React.ReactNode })
   )
 }
 
-export function HomeIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M3.5 10.5 12 3.5l8.5 7" />
-      <path d="M5.8 9.4V20h12.4V9.4" />
-      <path d="M10 20v-5h4v5" />
-    </Svg>
-  )
-}
-
 export function ChatIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -60,6 +50,15 @@ export function MicIcon(props: IconProps) {
     <Svg {...props}>
       <rect x="9" y="3" width="6" height="11" rx="3" />
       <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" />
+    </Svg>
+  )
+}
+
+export function CameraIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 8.5h3l1.4-2h7.2l1.4 2h3v10h-16Z" />
+      <circle cx="11.5" cy="13" r="3.2" />
     </Svg>
   )
 }

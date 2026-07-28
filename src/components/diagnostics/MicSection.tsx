@@ -1,50 +1,32 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import { Section } from './Section'
 import { Button } from '@/components/ui/Button'
-import { useAsyncAction } from '@/hooks/useAsyncAction'
-import { JarvisEvent, onJarvisEvent, startRecording, stopRecording } from '@/lib/tauri'
-import type { Recording } from '@/types'
+import { useSensorStore } from '@/stores'
 
 export function MicSection() {
-  const [isRecording, setIsRecording] = useState(false)
-  const [level, setLevel] = useState(0)
-  const [recording, setRecording] = useState<Recording | null>(null)
-  const { isBusy, error, run } = useAsyncAction()
-
-  useMicLevel(setLevel)
-  useStopOnUnmount(isRecording)
-
-  async function toggle() {
-    await run(async () => {
-      if (isRecording) {
-        setRecording(await stopRecording())
-        setIsRecording(false)
-        setLevel(0)
-        return
-      }
-
-      await startRecording()
-      setIsRecording(true)
-    })
-  }
+  const isOn = useSensorStore((state) => state.isMicOn)
+  const isBusy = useSensorStore((state) => state.isMicBusy)
+  const level = useSensorStore((state) => state.micLevel)
+  const error = useSensorStore((state) => state.micError)
+  const recording = useSensorStore((state) => state.lastRecording)
+  const toggleMic = useSensorStore((state) => state.toggleMic)
 
   return (
     <Section
       title="Microfone"
-      hint="Grava do microfone padrão e salva um WAV mono de 16 bits — o formato que a transcrição vai consumir. Ainda não transcreve."
+      hint="Mesmo interruptor do ícone na barra: grava do microfone padrão e salva um WAV mono de 16 bits, o formato que a transcrição vai consumir. Ainda não transcreve."
       error={error}
     >
       <div className="flex items-center gap-2">
         <Button
-          variant={isRecording ? 'subtle' : 'primary'}
-          onClick={() => void toggle()}
+          variant={isOn ? 'subtle' : 'primary'}
+          onClick={() => void toggleMic()}
           disabled={isBusy}
         >
-          {isRecording ? 'Parar' : 'Gravar'}
+          {isOn ? 'Parar' : 'Gravar'}
         </Button>
-        <LevelMeter level={level} isActive={isRecording} />
+        <LevelMeter level={level} isActive={isOn} />
       </div>
 
       {recording ? (
@@ -82,42 +64,5 @@ function LevelMeter({ level, isActive }: { level: number; isActive: boolean }) {
         style={{ width: `${width}%` }}
       />
     </div>
-  )
-}
-
-function useMicLevel(onLevel: (level: number) => void) {
-  useEffect(() => {
-    let unlisten: (() => void) | null = null
-    let cancelled = false
-
-    void onJarvisEvent<number>(JarvisEvent.MicLevel, onLevel).then((stop) => {
-      // A gaveta pode fechar antes de o `listen` resolver; sem isso, o listener
-      // ficaria pendurado para sempre.
-      if (cancelled) stop()
-      else unlisten = stop
-    })
-
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [onLevel])
-}
-
-/** Fechar a gaveta no meio de uma gravação deixaria o microfone aberto no backend. */
-function useStopOnUnmount(isRecording: boolean) {
-  // Ref, e não a prop direto: a limpeza roda uma vez só (deps vazias) e precisa
-  // enxergar o estado do momento do unmount, não o da primeira renderização.
-  const recordingRef = useRef(isRecording)
-
-  useEffect(() => {
-    recordingRef.current = isRecording
-  }, [isRecording])
-
-  useEffect(
-    () => () => {
-      if (recordingRef.current) void stopRecording().catch(() => undefined)
-    },
-    [],
   )
 }

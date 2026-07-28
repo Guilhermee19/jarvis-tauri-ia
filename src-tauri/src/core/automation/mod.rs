@@ -29,8 +29,12 @@ pub enum AutomationError {
     CameraDenied,
     #[error("falha na webcam: {0}")]
     Camera(String),
-    #[error("a webcam não está aberta")]
-    CameraClosed,
+    /// Separado de [`AutomationError::Camera`] porque é recuperável: quem abre a
+    /// câmera tenta de novo com outro formato antes de desistir.
+    #[error(
+        "a câmera abriu em {format} mas não entregou nenhum quadro em {seconds:.1}s — verifique se outro programa está usando a webcam"
+    )]
+    CameraSilent { format: String, seconds: f32 },
     #[error("nenhum monitor encontrado")]
     NoMonitor,
     #[error("monitor {0} não existe")]
@@ -55,9 +59,19 @@ pub struct CapturedImage {
 }
 
 impl CapturedImage {
-    /// JPEG para a webcam: o preview roda em loop, e o mesmo frame em PNG é várias
-    /// vezes maior — o peso apareceria direto na fluidez da imagem.
-    fn from_webcam(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, AutomationError> {
+    /// Caminho rápido: os bytes JÁ são um JPEG (MJPEG da webcam), então não há o
+    /// que codificar — só embrulhar.
+    fn from_jpeg(width: u32, height: u32, jpeg: &[u8]) -> Self {
+        Self {
+            data_url: data_url(jpeg, "image/jpeg"),
+            width,
+            height,
+        }
+    }
+
+    /// Caminho lento, para câmeras que só entregam pixels crus. JPEG e não PNG: o
+    /// preview roda em laço, e o mesmo quadro em PNG é várias vezes maior.
+    fn from_rgb(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, AutomationError> {
         let frame = RgbImage::from_raw(width, height, pixels)
             .ok_or_else(|| AutomationError::Encode("frame com tamanho inesperado".into()))?;
 
@@ -83,14 +97,17 @@ impl CapturedImage {
             .write_to(&mut bytes, format)
             .map_err(|error| AutomationError::Encode(error.to_string()))?;
 
-        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes.into_inner());
-
         Ok(Self {
-            data_url: format!("data:{mime};base64,{encoded}"),
+            data_url: data_url(&bytes.into_inner(), mime),
             width: source.width(),
             height: source.height(),
         })
     }
+}
+
+fn data_url(bytes: &[u8], mime: &str) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{encoded}")
 }
 
 /// Dono da sessão de webcam. A câmera fica aberta entre capturas porque abrir custa
