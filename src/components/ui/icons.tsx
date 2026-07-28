@@ -73,6 +73,15 @@ export function ScreenIcon(props: IconProps) {
   )
 }
 
+/** Sinal de vida: a aba de diagnóstico é sobre sensores respondendo ou não. */
+export function PulseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 12h3.5l2-5.5 3.5 11 2.5-7 1.8 3.5H21" />
+    </Svg>
+  )
+}
+
 export function PowerIcon(props: IconProps) {
   return (
     <Svg {...props}>

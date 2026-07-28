@@ -7,8 +7,9 @@ import { useChatStore, useSettingsStore, useSheetStore } from '@/stores'
  * O HUD ocioso do assistente — fundo permanente da janela, sob os painéis.
  *
  * O núcleo é a única coisa clicável (abre a janelinha de conversa) e as linhas de
- * status mostram o estado de cada subsistema. Cada "offline" corresponde a um
- * módulo Rust que já existe vazio, esperando a versão que o implementa.
+ * status mostram o estado de cada subsistema. "Diagnóstico" quer dizer que a
+ * capacidade existe e é testável na bancada, mas ainda não está ligada ao agente;
+ * "offline" continua sendo um módulo Rust vazio esperando a versão que o implementa.
  */
 export function HomeScreen() {
   const assistantName = useSettingsStore((state) => state.settings.assistantName)
@@ -33,8 +34,8 @@ export function HomeScreen() {
 
       <dl className="mt-8 w-full max-w-[300px] space-y-1.5">
         <StatusRow label="Núcleo" value="simulado" tone="warn" />
-        <StatusRow label="Voz" value="offline" />
-        <StatusRow label="Automação" value="offline" />
+        <StatusRow label="Voz" value="diagnóstico" tone="warn" />
+        <StatusRow label="Visão" value="diagnóstico" tone="warn" />
         <StatusRow label="Memória" value="sessão" />
         <StatusRow
           label="API key"

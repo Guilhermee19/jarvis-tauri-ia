@@ -4,10 +4,11 @@
 //! o agente e a memória persistente entrarem depois sem mexer no contrato: hoje o
 //! histórico é um `Vec` em memória, amanhã é uma tabela no SQLite atrás de `storage`.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use crate::config::AppSettings;
 use crate::core::chat::ChatMessage;
+use crate::core::lock;
 use crate::storage::{SettingsStore, StorageError};
 
 pub struct AppState {
@@ -55,14 +56,6 @@ impl AppState {
     }
 }
 
-/// Um mutex envenenado não deve derrubar o app: o dado protegido é simples e
-/// continua consistente, então seguimos com o valor de dentro.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +84,7 @@ mod tests {
             .save(&AppSettings {
                 anthropic_api_key: "sk-teste".to_owned(),
                 assistant_name: "Sexta-feira".to_owned(),
+                ..AppSettings::default()
             })
             .expect("salva");
 
@@ -119,6 +113,7 @@ mod tests {
             .save_settings(AppSettings {
                 anthropic_api_key: "sk-nova".to_owned(),
                 assistant_name: "Jarvis".to_owned(),
+                ..AppSettings::default()
             })
             .expect("salva");
 

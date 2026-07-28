@@ -4,9 +4,15 @@ export interface AppSettings {
   anthropicApiKey: string
   /** Vira parte do system prompt quando o agente real entrar. */
   assistantName: string
+  /** Key da ElevenLabs, usada pelo TTS. */
+  elevenLabsApiKey: string
+  /** Vazio = o backend usa a primeira voz da conta. */
+  ttsVoiceId: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   anthropicApiKey: '',
   assistantName: 'Jarvis',
+  elevenLabsApiKey: '',
+  ttsVoiceId: '',
 }

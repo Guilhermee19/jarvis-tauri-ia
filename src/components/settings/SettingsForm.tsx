@@ -20,6 +20,7 @@ interface SettingsFormProps {
 export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: SettingsFormProps) {
   const [apiKey, setApiKey] = useState(initial.anthropicApiKey)
   const [assistantName, setAssistantName] = useState(initial.assistantName)
+  const [elevenLabsKey, setElevenLabsKey] = useState(initial.elevenLabsApiKey)
 
   return (
     <div className="flex flex-col gap-4">
@@ -30,6 +31,15 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setApiKey(event.target.value)}
         placeholder="sk-ant-…"
         hint="Guardada em texto puro no arquivo de config do app. Ainda não é validada nem usada."
+      />
+
+      <Input
+        label="API key da ElevenLabs"
+        type="password"
+        value={elevenLabsKey}
+        onChange={(event) => setElevenLabsKey(event.target.value)}
+        placeholder="sk_…"
+        hint="Usada pelo TTS. Sem ela, o teste de voz no Diagnóstico fica inerte."
       />
 
       <Input
@@ -47,7 +57,11 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         <Button
           onClick={() =>
             onSubmit({
+              // `initial` primeiro para não apagar o que o form não edita — a voz do
+              // TTS é escolhida no Diagnóstico, não aqui.
+              ...initial,
               anthropicApiKey: apiKey.trim(),
+              elevenLabsApiKey: elevenLabsKey.trim(),
               assistantName: assistantName.trim() || DEFAULT_SETTINGS.assistantName,
             })
           }

@@ -4,20 +4,24 @@ import { isTauriRuntime } from './client'
 /**
  * Eventos que o backend empurra para a UI (o caminho inverso do `invoke`).
  *
- * Hoje só a bandeja usa. As features de voz vão publicar aqui também
- * (`jarvis://wake-word`, `jarvis://transcript`), e o streaming do agente idem.
+ * Evento é para o que a UI não pergunta, só desenha. O nível do microfone é o
+ * primeiro caso real disso; a wake word e o streaming do agente entram aqui depois.
  */
 export const JarvisEvent = {
   /** Emitido pelo item "Configurações" do menu da bandeja (`src-tauri/src/tray.rs`). */
   OpenSettings: 'jarvis://open-settings',
+  /** Pico do microfone (0–1), ~20×/s enquanto há gravação em andamento. */
+  MicLevel: 'jarvis://mic-level',
 } as const
+
+type JarvisEventName = (typeof JarvisEvent)[keyof typeof JarvisEvent]
 
 const NOOP_UNLISTEN: UnlistenFn = () => {}
 
-export async function onJarvisEvent(
-  event: (typeof JarvisEvent)[keyof typeof JarvisEvent],
-  handler: () => void,
+export async function onJarvisEvent<T = void>(
+  event: JarvisEventName,
+  handler: (payload: T) => void,
 ): Promise<UnlistenFn> {
   if (!isTauriRuntime()) return NOOP_UNLISTEN
-  return listen(event, () => handler())
+  return listen<T>(event, (received) => handler(received.payload))
 }

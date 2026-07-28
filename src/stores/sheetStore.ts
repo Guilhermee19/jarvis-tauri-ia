@@ -9,7 +9,7 @@ import { create } from 'zustand'
  * quiser; as configurações são uma gaveta na borda direita, que se lê e se fecha.
  * Adicionar uma feature nova (voz, automação) é adicionar um id aqui.
  */
-export type SheetId = 'chat' | 'settings'
+export type SheetId = 'chat' | 'diagnostics' | 'settings'
 
 interface SheetState {
   activeSheet: SheetId | null

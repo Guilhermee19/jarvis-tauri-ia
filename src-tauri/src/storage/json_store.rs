@@ -65,6 +65,7 @@ mod tests {
         let settings = AppSettings {
             anthropic_api_key: "sk-disco".to_owned(),
             assistant_name: "Sexta-feira".to_owned(),
+            ..AppSettings::default()
         };
 
         // `save` cria a pasta de config: na primeira execução ela não existe.

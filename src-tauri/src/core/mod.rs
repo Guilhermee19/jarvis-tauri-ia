@@ -8,3 +8,12 @@ pub mod agent;
 pub mod automation;
 pub mod chat;
 pub mod voice;
+
+use std::sync::{Mutex, MutexGuard};
+
+/// Um mutex envenenado não deve derrubar o app: os dados protegidos aqui são
+/// simples (uma gravação, uma câmera, um histórico) e continuam consistentes,
+/// então seguimos com o valor de dentro.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}

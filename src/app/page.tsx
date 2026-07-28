@@ -2,6 +2,7 @@
 
 import { ChatWindow } from '@/components/chat/ChatWindow'
 import { HomeScreen } from '@/components/home/HomeScreen'
+import { DiagnosticsSheet } from '@/components/sheets/DiagnosticsSheet'
 import { SettingsSheet } from '@/components/sheets/SettingsSheet'
 import { BottomNav } from '@/components/tray-window/BottomNav'
 import { HudFrame } from '@/components/tray-window/HudFrame'
@@ -29,6 +30,7 @@ export default function HomePage() {
       <div className="relative min-h-0 flex-1">
         <HomeScreen />
         <ChatWindow />
+        <DiagnosticsSheet />
         <SettingsSheet />
       </div>
 

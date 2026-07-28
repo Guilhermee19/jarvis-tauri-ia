@@ -1,6 +1,6 @@
 'use client'
 
-import { ChatIcon, HomeIcon, PowerIcon, SettingsIcon } from '@/components/ui/icons'
+import { ChatIcon, HomeIcon, PowerIcon, PulseIcon, SettingsIcon } from '@/components/ui/icons'
 import { quitApp } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useChatStore, useSheetStore, type SheetId } from '@/stores'
@@ -19,6 +19,7 @@ interface NavItem {
  */
 const ITEMS: NavItem[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
+  { id: 'diagnostics', label: 'Diagnóstico', Icon: PulseIcon },
   { id: 'settings', label: 'Configurações', Icon: SettingsIcon },
 ]
 

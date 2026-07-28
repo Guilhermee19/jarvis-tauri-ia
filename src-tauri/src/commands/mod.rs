@@ -4,6 +4,8 @@
 //! `core`/`storage` e traduz o erro para `String` (que o frontend embrulha em
 //! `TauriCommandError`). Os wrappers tipados do outro lado ficam em `src/lib/tauri/`.
 
+pub mod automation;
 pub mod chat;
 pub mod settings;
 pub mod system;
+pub mod voice;
