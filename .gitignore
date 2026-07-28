@@ -1,0 +1,33 @@
+# dependências
+/node_modules
+/.pnp
+.pnp.*
+
+# build do Next
+/.next/
+/out/
+next-env.d.ts
+
+# build do Tauri
+/src-tauri/target/
+/src-tauri/gen/
+
+# ambiente
+.env
+.env.*
+!.env.example
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# typescript
+*.tsbuildinfo

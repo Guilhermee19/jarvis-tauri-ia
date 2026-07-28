@@ -1,0 +1,245 @@
+﻿@import 'tailwindcss';
+
+/* ExplÃ­cito porque este arquivo mora em `src/styles/`, e nÃ£o na raiz do projeto. */
+@source '../';
+
+/*
+ * Tailwind v4: o tema Ã© configurado aqui, em CSS, nÃ£o em `tailwind.config.js`.
+ * Cada token vira utilitÃ¡rio automaticamente (`--color-surface` â†’ `bg-surface`).
+ *
+ * Paleta HUD: quase-preto azulado com um Ãºnico acento ciano. Tudo que brilha na
+ * tela usa `--color-accent`; nada mais introduz cor.
+ */
+@theme {
+  --color-base: #04070d;
+  --color-surface: #0a121c;
+  --color-surface-hover: #111d2b;
+  --color-border-soft: #17293a;
+  --color-content: #dbe9f5;
+  --color-muted: #6a8399;
+  --color-accent: #5ec8ff;
+  --color-accent-strong: #0b7fc0;
+  --color-danger: #ff6b6b;
+
+  --font-sans:
+    ui-sans-serif, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji';
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-base);
+  color: var(--color-content);
+  font-family: var(--font-sans);
+  overflow: hidden; /* a janela Ã© o app inteiro: quem rola Ã© a lista de mensagens */
+}
+
+/* A janela Ã© `decorations: false`; selecionar texto do chrome atrapalha o arrasto. */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-soft) transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-soft);
+  border-radius: 9999px;
+}
+
+/* ---------------------------------------------------------------- HUD ---- */
+
+/* Grade de fundo. Fica atrÃ¡s de tudo, no shell da janela. */
+.hud-grid {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--color-accent) 13%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--color-accent) 13%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 22px 22px;
+}
+
+/* Brilho central que dÃ¡ profundidade e apaga a grade nas bordas. */
+.hud-vignette {
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--color-accent) 9%, transparent),
+      transparent 55%
+    ),
+    /* Escurece as bordas sem apagar a grade: o preto das pontas Ã© parcial. */
+    radial-gradient(
+        circle at 50% 50%,
+        transparent 42%,
+        color-mix(in srgb, var(--color-base) 72%, transparent) 100%
+      );
+}
+
+.hud-glow {
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+/* RotaÃ§Ã£o de elementos SVG: sem `view-box` o giro sai do canto, nÃ£o do centro. */
+.hud-rotor {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+@keyframes hud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hud-spin-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes hud-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-hud-slow {
+  animation: hud-spin 38s linear infinite;
+}
+
+.animate-hud-medium {
+  animation: hud-spin-reverse 22s linear infinite;
+}
+
+.animate-hud-fast {
+  animation: hud-spin 11s linear infinite;
+}
+
+.animate-hud-breathe {
+  animation: hud-breathe 4.5s ease-in-out infinite;
+}
+
+/* -------------------------------------------------------------- Sheet ---- */
+
+/* O Radix segura a desmontagem até a animação de saída terminar, então basta
+   reagir ao `data-state`. Curva de saída rápida, entrada com desaceleração. */
+@keyframes sheet-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-slide-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes sheet-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.sheet-panel[data-state='open'] {
+  animation: sheet-slide-in 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sheet-panel[data-state='closed'] {
+  animation: sheet-slide-out 240ms ease-in;
+}
+
+.sheet-overlay[data-state='open'] {
+  animation: sheet-fade-in 220ms ease-out;
+}
+
+.sheet-overlay[data-state='closed'] {
+  animation: sheet-fade-out 200ms ease-in;
+}
+
+/* ------------------------------------------------ Janelinha do chat ---- */
+
+/* Só opacidade: enquanto não foi arrastada, a janelinha é centralizada por
+   `translate`, e animar `transform` aqui brigaria com esse centro. */
+@keyframes panel-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.floating-panel {
+  animation: panel-fade-in 160ms ease-out;
+}
+
+@keyframes bounce-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.animate-bounce-dot {
+  animation: bounce-dot 1.2s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hud-slow,
+  .animate-hud-medium,
+  .animate-hud-fast,
+  .animate-hud-breathe,
+  .animate-bounce-dot,
+  .floating-panel,
+  .sheet-panel[data-state='open'],
+  .sheet-panel[data-state='closed'],
+  .sheet-overlay[data-state='open'],
+  .sheet-overlay[data-state='closed'] {
+    animation: none;
+  }
+}

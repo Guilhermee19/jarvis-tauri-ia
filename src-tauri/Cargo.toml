@@ -1,0 +1,35 @@
+[package]
+name = "jarvis"
+version = "0.1.0"
+description = "Jarvis — assistente desktop"
+authors = ["Guilherme Santana"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+# O binário é um shim; a lógica mora na lib para poder ser testada e reusada.
+name = "jarvis_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+thiserror = "2"
+cpal = "0.17"
+hound = "3.5"
+xcap = "0.9"
+image = "0.25"
+base64 = "0.23"
+async-trait = "0.1"
+rodio = { version = "0.21", features = ["symphonia-mp3"] }
+nokhwa = { version = "0.10", features = ["input-native"] }
+reqwest = { version = "0.13", features = ["json"] }
+
+[lints.clippy]
+all = "deny"
