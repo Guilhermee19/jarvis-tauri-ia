@@ -35,6 +35,11 @@ pub enum MusicError {
     SemBusca,
     #[error("não achei \"{0}\" no Spotify")]
     NaoAchei(String),
+    /// Separado do [`MusicError::NaoAchei`] porque as duas causas são OPOSTAS — uma é
+    /// "a busca rodou e voltou vazia", a outra é "a busca nem rodou". Compartilhando a
+    /// mensagem, o log mentia e a investigação ia para o lado errado.
+    #[error("sem credenciais do Spotify — preencha Client ID e Secret em Configurações")]
+    SemCredencial,
     #[error("o Spotify recusou a busca (HTTP {status}) — confira as credenciais em Configurações")]
     Recusado { status: u16 },
     #[error("sem internet para procurar a música: {0}")]
@@ -155,7 +160,7 @@ pub async fn buscar(
         return Err(MusicError::SemBusca);
     }
     if client_id.trim().is_empty() || client_secret.trim().is_empty() {
-        return Err(MusicError::NaoAchei(busca.to_owned()));
+        return Err(MusicError::SemCredencial);
     }
 
     let token = autenticar(http, client_id.trim(), client_secret.trim()).await?;
@@ -270,17 +275,22 @@ async fn procurar(http: &reqwest::Client, token: &str, busca: &str) -> Result<Fa
         });
     }
 
-    let corpo: Resposta = resposta
-        .json()
+    // Lê como TEXTO antes de desserializar: quando a busca volta vazia, o corpo é a
+    // única coisa que diz por quê, e `.json()` o consumiria sem deixar rastro.
+    let texto = resposta
+        .text()
         .await
         .map_err(|erro| MusicError::Rede(erro.to_string()))?;
 
-    let item = corpo
-        .tracks
-        .items
-        .into_iter()
-        .next()
-        .ok_or_else(|| MusicError::NaoAchei(busca.to_owned()))?;
+    let corpo: Resposta = serde_json::from_str(&texto).map_err(|erro| {
+        eprintln!("[jarvis] busca não desserializou ({erro}); corpo: {texto:.400}");
+        MusicError::Rede(erro.to_string())
+    })?;
+
+    let item = corpo.tracks.items.into_iter().next().ok_or_else(|| {
+        eprintln!("[jarvis] busca vazia para {busca:?}; url={url}");
+        MusicError::NaoAchei(busca.to_owned())
+    })?;
 
     // A menor capa que sirva: o widget mostra ~64px, e a maior do Spotify é 640×640 —
     // baixar meio megabyte de arte para exibir num quadradinho é desperdício.

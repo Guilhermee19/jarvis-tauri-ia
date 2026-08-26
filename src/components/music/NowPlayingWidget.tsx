@@ -123,8 +123,6 @@ export function NowPlayingWidget() {
         <Transporte tecla="next" rotulo="Próxima faixa">
           <NextIcon className="h-3.5 w-3.5" />
         </Transporte>
-
-        <span className="text-muted/60 ml-1 text-[9px] tracking-[0.16em] uppercase">Spotify</span>
       </div>
 
       {/* A barra só aparece quando sabemos ONDE a música está — ou seja, quando vimos

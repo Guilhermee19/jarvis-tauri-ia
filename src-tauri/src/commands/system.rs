@@ -85,14 +85,27 @@ pub async fn identify_track(
 ) -> Result<Option<music::Faixa>, String> {
     let settings = state.settings();
 
-    Ok(music::buscar(
+    let achada = music::buscar(
         &state.http(),
         &title,
         &settings.spotify_client_id,
         &settings.spotify_client_secret,
     )
-    .await
-    .ok())
+    .await;
+
+    // Uma linha por identificação, no console do `tauri dev`. "Capa vazia" e "não
+    // identificou" são falhas silenciosas na tela — o widget mostra um quadrado
+    // cinza e não dá pista nenhuma de qual dos dois aconteceu.
+    match &achada {
+        Ok(faixa) => eprintln!(
+            "[jarvis] identify_track {title:?} -> {} · capa={}",
+            faixa.como_texto(),
+            faixa.capa.as_deref().unwrap_or("(vazia)")
+        ),
+        Err(erro) => eprintln!("[jarvis] identify_track {title:?} -> {erro}"),
+    }
+
+    Ok(achada.ok())
 }
 
 /// Botões de transporte do widget. Mesma tecla de mídia que o agente usa — quem
