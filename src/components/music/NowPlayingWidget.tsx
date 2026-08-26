@@ -81,7 +81,7 @@ export function NowPlayingWidget() {
       onPointerCancel={soltar}
       style={posicao ? { left: posicao.x, top: posicao.y } : undefined}
       className={cn(
-        'no-select border-accent/25 bg-surface/95 absolute z-40 flex w-[270px] cursor-grab',
+        'no-select border-accent/25 bg-surface/95 absolute z-40 flex w-[300px] cursor-grab',
         'flex-col gap-2 rounded-xl border p-3 shadow-2xl shadow-black/60 backdrop-blur-md',
         'active:cursor-grabbing',
         // Enquanto ninguém arrastou, nasce no canto de baixo à direita — longe do
@@ -91,7 +91,7 @@ export function NowPlayingWidget() {
       role="region"
       aria-label="Tocando agora"
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <Capa url={faixa.capa} />
 
         <div className="min-w-0 flex-1">
@@ -111,7 +111,7 @@ export function NowPlayingWidget() {
         </button>
       </div>
 
-      <div className="flex items-center justify-center gap-2">
+      <div className="-mt-5 flex items-center justify-center gap-2">
         <Transporte tecla="previous" rotulo="Faixa anterior">
           <PrevIcon className="h-3.5 w-3.5" />
         </Transporte>
@@ -152,7 +152,7 @@ export function NowPlayingWidget() {
 
 function Capa({ url }: { url: string | null }) {
   if (!url) {
-    return <div className="border-border-soft bg-base h-12 w-12 shrink-0 rounded-md border" />
+    return <div className="border-border-soft bg-base h-14 w-14 shrink-0 rounded-md border" />
   }
 
   return (
@@ -162,7 +162,7 @@ function Capa({ url }: { url: string | null }) {
     <img
       src={url}
       alt=""
-      className="border-border-soft h-12 w-12 shrink-0 rounded-md border object-cover"
+      className="border-border-soft h-14 w-14 shrink-0 rounded-md border object-cover"
     />
   )
 }

@@ -29,7 +29,17 @@ impl SettingsStore for JsonSettingsStore {
         }
 
         let raw = fs::read_to_string(&self.path)?;
-        Ok(serde_json::from_str(&raw)?)
+
+        // O BOM tem que sair ANTES do parse: o `serde_json` recusa com um
+        // "expected value at line 1 column 1" que não diz nada sobre bytes invisíveis,
+        // e o `AppState` cai nos padrões — perdendo TODAS as chaves de uma vez, em
+        // silêncio. Custou uma investigação inteira: a capa do álbum sumiu do widget
+        // porque este arquivo tinha três bytes a mais no começo.
+        //
+        // E o caminho é comum: Bloco de Notas, `Set-Content -Encoding utf8` do
+        // PowerShell 5.1 e vários editores gravam UTF-8 COM BOM por padrão. Quem abre
+        // o `settings.json` para colar uma chave na mão cai nisso.
+        Ok(serde_json::from_str(raw.trim_start_matches('\u{feff}'))?)
     }
 
     fn save(&self, settings: &AppSettings) -> Result<(), StorageError> {
@@ -50,6 +60,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jarvis-test-{name}"));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// O Bloco de Notas e o `Set-Content -Encoding utf8` do PowerShell 5.1 gravam
+    /// UTF-8 COM BOM. Sem tolerar isso, editar o arquivo à mão apaga silenciosamente
+    /// todas as chaves — o app volta aos padrões e não reclama em lugar nenhum que o
+    /// usuário veja.
+    #[test]
+    fn arquivo_com_bom_ainda_carrega() {
+        let dir = temp_dir("bom");
+        fs::create_dir_all(&dir).expect("cria a pasta");
+
+        let com_bom = format!(
+            "\u{feff}{}",
+            r#"{"spotifyClientId":"abc","assistantName":"Sexta-feira"}"#
+        );
+        fs::write(dir.join(SETTINGS_FILE), com_bom).expect("escreve");
+
+        let carregado = JsonSettingsStore::new(&dir)
+            .load()
+            .expect("carrega mesmo com BOM");
+
+        assert_eq!(carregado.spotify_client_id, "abc");
+        assert_eq!(carregado.assistant_name, "Sexta-feira");
     }
 
     #[test]
