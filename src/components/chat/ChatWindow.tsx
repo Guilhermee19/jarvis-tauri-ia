@@ -12,6 +12,9 @@ export function ChatWindow() {
   // e a janelinha precisa reabrir onde e do jeito que o usuário a deixou.
   const [position, setPosition] = useState<PanelPosition | null>(null)
   const [size, setSize] = useState<PanelSize | null>(null)
+  // Maximizar não mexe em `position` nem em `size`: eles ficam guardados intactos, e
+  // restaurar é só voltar a desenhá-los. Sem estado extra para reconciliar.
+  const [maximized, setMaximized] = useState(false)
 
   return (
     <FloatingPanel
@@ -21,6 +24,8 @@ export function ChatWindow() {
       onPositionChange={setPosition}
       size={size}
       onSizeChange={setSize}
+      maximized={maximized}
+      onMaximizedChange={setMaximized}
       title="Conversa"
       description="Converse com o assistente por texto."
       actions={<ClearHistoryAction />}

@@ -33,6 +33,29 @@ pub fn minimize(app: &AppHandle) -> Result<(), String> {
     main_window(app)?.minimize().map_err(to_message)
 }
 
+/// Alterna maximizar/restaurar e devolve o estado NOVO.
+///
+/// Devolver o estado em vez de `()` poupa a UI de uma segunda chamada só para saber
+/// que ícone desenhar — e evita a janela de tempo em que o botão mostra o desenho
+/// errado.
+pub fn toggle_maximize(app: &AppHandle) -> Result<bool, String> {
+    let window = main_window(app)?;
+
+    if window.is_maximized().map_err(to_message)? {
+        window.unmaximize().map_err(to_message)?;
+        Ok(false)
+    } else {
+        window.maximize().map_err(to_message)?;
+        Ok(true)
+    }
+}
+
+/// Existe porque o usuário maximiza por fora também — Win+↑, duplo clique na barra,
+/// atalho do gerenciador de janelas. Sem consultar, o ícone dessincroniza.
+pub fn is_maximized(app: &AppHandle) -> Result<bool, String> {
+    main_window(app)?.is_maximized().map_err(to_message)
+}
+
 pub fn toggle(app: &AppHandle) -> Result<(), String> {
     let window = main_window(app)?;
 

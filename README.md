@@ -250,7 +250,7 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 | ---------------------------------------------------------------------------------------------- | ------------------------ |
 | `send_message`, `get_history`, `clear_history`                                                 | `commands/chat.rs`       |
 | `get_settings`, `save_settings`                                                                | `commands/settings.rs`   |
-| `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `quit_app`                   | `commands/system.rs`     |
+| `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs` |
 | `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text` | `commands/voice.rs`      |
 | `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`  | `commands/automation.rs` |
 

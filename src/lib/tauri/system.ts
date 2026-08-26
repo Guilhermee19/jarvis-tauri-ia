@@ -18,6 +18,16 @@ export function minimizeWindow(): Promise<void> {
   return call<void>('minimize_window')
 }
 
+/** Alterna e devolve o estado NOVO — o botão troca de ícone sem uma segunda viagem. */
+export function toggleMaximizeWindow(): Promise<boolean> {
+  return call<boolean>('toggle_maximize_window')
+}
+
+/** Para ressincronizar quando o usuário maximiza por fora (Win+↑, duplo clique). */
+export function isWindowMaximized(): Promise<boolean> {
+  return call<boolean>('is_window_maximized')
+}
+
 export function quitApp(): Promise<void> {
   return call<void>('quit_app')
 }

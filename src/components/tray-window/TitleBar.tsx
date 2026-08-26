@@ -1,6 +1,7 @@
 'use client'
 
-import { hideWindow, minimizeWindow } from '@/lib/tauri'
+import { useEffect, useState } from 'react'
+import { hideWindow, isWindowMaximized, minimizeWindow, toggleMaximizeWindow } from '@/lib/tauri'
 import { useSettingsStore } from '@/stores'
 
 /**
@@ -11,6 +12,24 @@ import { useSettingsStore } from '@/stores'
  */
 export function TitleBar() {
   const assistantName = useSettingsStore((state) => state.settings.assistantName)
+  const [isMaximized, setIsMaximized] = useState(false)
+
+  // O usuário maximiza por fora também — Win+↑, arrastar para o topo, atalho do
+  // gerenciador de janelas. O `resize` do webview dispara em todos esses casos, e
+  // reperguntar ao backend é o que impede o ícone de mentir.
+  useEffect(() => {
+    function sincronizar() {
+      void isWindowMaximized()
+        .then(setIsMaximized)
+        // Fora do runtime do Tauri (`localhost:3000` no navegador) isto sempre falha.
+        // Silenciar é o certo: a barra de título continua desenhando.
+        .catch(() => {})
+    }
+
+    sincronizar()
+    window.addEventListener('resize', sincronizar)
+    return () => window.removeEventListener('resize', sincronizar)
+  }, [])
 
   return (
     <header
@@ -31,6 +50,19 @@ export function TitleBar() {
         <TitleBarButton label="Minimizar" onClick={() => void minimizeWindow()}>
           —
         </TitleBarButton>
+
+        <TitleBarButton
+          label={isMaximized ? 'Restaurar' : 'Maximizar'}
+          onClick={() => {
+            void toggleMaximizeWindow()
+              .then(setIsMaximized)
+              .catch(() => {})
+          }}
+        >
+          {/* Dois quadrados sobrepostos quando maximizado, como no Windows. */}
+          {isMaximized ? '❐' : '▢'}
+        </TitleBarButton>
+
         {/* O X esconde para a bandeja em vez de encerrar (mesmo comportamento do
             `CloseRequested` interceptado em `src-tauri/src/window.rs`). */}
         <TitleBarButton label="Esconder na bandeja" onClick={() => void hideWindow()}>

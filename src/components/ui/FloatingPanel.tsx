@@ -38,6 +38,9 @@ interface FloatingPanelProps {
   /** `null` enquanto ninguém redimensionou: o tamanho vem das classes. */
   size: PanelSize | null
   onSizeChange: (size: PanelSize) => void
+  /** Ocupa a área inteira. Posição e tamanho ficam GUARDADOS para o restaurar. */
+  maximized: boolean
+  onMaximizedChange: (maximized: boolean) => void
   onClose: () => void
   children: React.ReactNode
 }
@@ -61,6 +64,8 @@ export function FloatingPanel({
   onPositionChange,
   size,
   onSizeChange,
+  maximized,
+  onMaximizedChange,
   onClose,
   children,
 }: FloatingPanelProps) {
@@ -136,7 +141,8 @@ export function FloatingPanel({
 
   function startDrag(event: ReactPointerEvent<HTMLElement>) {
     // Fechar e limpar histórico moram no cabeçalho: clicar neles não é arrastar.
-    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
+    // Maximizada não se arrasta — ela ocupa tudo, não há para onde ir.
+    if (maximized || event.button !== 0 || (event.target as HTMLElement).closest('button')) return
 
     const panel = panelRef.current
     if (!panel) return
@@ -241,18 +247,24 @@ export function FloatingPanel({
       aria-label={title}
       aria-describedby={descriptionId}
       tabIndex={-1}
-      style={{
-        ...(position ? { left: position.x, top: position.y } : {}),
-        ...(size ? { width: size.width, height: size.height } : {}),
-      }}
+      style={
+        maximized
+          ? { left: 0, top: 0, width: '100%', height: '100%' }
+          : {
+              ...(position ? { left: position.x, top: position.y } : {}),
+              ...(size ? { width: size.width, height: size.height } : {}),
+            }
+      }
       className={cn(
         'floating-panel border-accent/25 bg-surface/95 absolute z-30 flex flex-col',
+        'border shadow-2xl shadow-black/60 backdrop-blur-md focus:outline-none',
+        // Maximizada encosta nas bordas: canto arredondado ali vira falha de pintura.
+        maximized ? 'rounded-none' : 'rounded-lg',
         // Só valem enquanto ninguém redimensionou — depois disso o `style` manda.
-        !size && 'h-[min(420px,calc(100%-1.5rem))] w-[min(340px,calc(100%-1.5rem))]',
-        'rounded-lg border shadow-2xl shadow-black/60 backdrop-blur-md focus:outline-none',
+        !maximized && !size && 'h-[min(420px,calc(100%-1.5rem))] w-[min(340px,calc(100%-1.5rem))]',
         // Enquanto ninguém arrastou não há pixel para usar: o centro vem do CSS, e o
         // primeiro arrasto converte a posição real em coordenadas.
-        !position && 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
+        !maximized && !position && 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
       )}
     >
       {/* Sem `data-tauri-drag-region` aqui — ao contrário da `TitleBar`, este
@@ -262,7 +274,14 @@ export function FloatingPanel({
         onPointerMove={drag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        className="border-border-soft no-select flex shrink-0 cursor-grab items-center gap-2 rounded-t-lg border-b px-3 py-2 active:cursor-grabbing"
+        // Duplo clique alterna maximizar, como na barra de título do Windows.
+        onDoubleClick={(event) => {
+          if (!(event.target as HTMLElement).closest('button')) onMaximizedChange(!maximized)
+        }}
+        className={cn(
+          'border-border-soft no-select flex shrink-0 items-center gap-2 border-b px-3 py-2',
+          maximized ? 'cursor-default' : 'cursor-grab rounded-t-lg active:cursor-grabbing',
+        )}
       >
         <span aria-hidden className="text-muted/70 shrink-0 text-[11px] leading-none">
           ⠿
@@ -272,6 +291,16 @@ export function FloatingPanel({
         </h2>
 
         {actions}
+
+        <button
+          type="button"
+          onClick={() => onMaximizedChange(!maximized)}
+          aria-label={maximized ? 'Restaurar o tamanho' : 'Maximizar'}
+          title={maximized ? 'Restaurar' : 'Maximizar'}
+          className="text-muted hover:bg-surface-hover hover:text-content flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] transition-colors"
+        >
+          {maximized ? '❐' : '▢'}
+        </button>
 
         <button
           type="button"
@@ -290,19 +319,22 @@ export function FloatingPanel({
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
 
       {/* Alça no canto de baixo à direita, como nas janelas do Windows. É um `button`
-          de verdade para o teclado alcançar — as setas redimensionam. */}
-      <button
-        type="button"
-        onPointerDown={startResize}
-        onPointerMove={resize}
-        onPointerUp={endResize}
-        onPointerCancel={endResize}
-        onKeyDown={resizeByKeyboard}
-        aria-label="Redimensionar a janela (use as setas)"
-        className="text-muted/50 hover:text-accent focus-visible:text-accent absolute right-0 bottom-0 flex h-4 w-4 cursor-nwse-resize items-center justify-center rounded-br-lg text-[9px] leading-none transition-colors focus:outline-none"
-      >
-        ◢
-      </button>
+          de verdade para o teclado alcançar — as setas redimensionam.
+          Some quando maximizada: não há o que redimensionar ocupando tudo. */}
+      {maximized ? null : (
+        <button
+          type="button"
+          onPointerDown={startResize}
+          onPointerMove={resize}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          onKeyDown={resizeByKeyboard}
+          aria-label="Redimensionar a janela (use as setas)"
+          className="text-muted/50 hover:text-accent focus-visible:text-accent absolute right-0 bottom-0 flex h-4 w-4 cursor-nwse-resize items-center justify-center rounded-br-lg text-[9px] leading-none transition-colors focus:outline-none"
+        >
+          ◢
+        </button>
+      )}
     </div>
   )
 }

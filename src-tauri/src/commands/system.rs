@@ -25,6 +25,18 @@ pub fn minimize_window(app: AppHandle) -> Result<(), String> {
     window::minimize(&app)
 }
 
+/// Devolve o estado depois de alternar, para o botão trocar de ícone sem uma segunda
+/// viagem pelo IPC.
+#[tauri::command]
+pub fn toggle_maximize_window(app: AppHandle) -> Result<bool, String> {
+    window::toggle_maximize(&app)
+}
+
+#[tauri::command]
+pub fn is_window_maximized(app: AppHandle) -> Result<bool, String> {
+    window::is_maximized(&app)
+}
+
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);

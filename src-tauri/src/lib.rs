@@ -81,6 +81,8 @@ pub fn run() {
             commands::system::hide_window,
             commands::system::toggle_window,
             commands::system::minimize_window,
+            commands::system::toggle_maximize_window,
+            commands::system::is_window_maximized,
             commands::system::quit_app,
             commands::voice::start_recording,
             commands::voice::stop_recording,
