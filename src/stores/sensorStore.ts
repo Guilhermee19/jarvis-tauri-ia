@@ -32,6 +32,12 @@ interface SensorState {
   webcamFrame: string | null
   webcamError: string | null
   toggleWebcam: () => Promise<void>
+  /**
+   * Liga ou desliga explicitamente. Existe para o agente ("abre a webcam") passar
+   * pelo MESMO caminho do botão — alternar às cegas desligaria a câmera se ela já
+   * estivesse ligada, que é o oposto do pedido.
+   */
+  setWebcam: (on: boolean) => Promise<void>
 
   isMicOn: boolean
   isMicBusy: boolean
@@ -105,20 +111,22 @@ export const useSensorStore = create<SensorState>((set, get) => {
     webcamFrame: null,
     webcamError: null,
 
-    toggleWebcam: async () => {
-      if (get().isWebcamBusy) return
+    toggleWebcam: async () => get().setWebcam(!get().isWebcamOn),
+
+    setWebcam: async (on: boolean) => {
+      if (get().isWebcamBusy || get().isWebcamOn === on) return
       set({ isWebcamBusy: true, webcamError: null })
 
       try {
-        if (get().isWebcamOn) {
+        if (on) {
+          await openWebcam()
+          set({ isWebcamOn: true })
+          runPreviewLoop()
+        } else {
           // Desliga antes de fechar: o laço checa esta flag e para sozinho.
           stopPreviewLoop()
           set({ isWebcamOn: false, webcamFrame: null })
           await closeWebcam()
-        } else {
-          await openWebcam()
-          set({ isWebcamOn: true })
-          runPreviewLoop()
         }
       } catch (cause) {
         stopPreviewLoop()

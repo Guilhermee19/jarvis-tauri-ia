@@ -56,12 +56,36 @@ pub enum AgentError {
     NaoEntendi(String),
 }
 
+/// Coisa que só a UI sabe fazer.
+///
+/// A câmera é o caso: quem é dono do laço de preview é o `sensorStore`, não o Rust.
+/// Abrir o dispositivo aqui deixaria a câmera ligada com o botão apagado e a tela
+/// vazia — o estado da UI é que manda. Então o agente PEDE, e a UI faz exatamente o
+/// que o botão faria.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcaoDeUi {
+    AbrirWebcam,
+    FecharWebcam,
+}
+
+impl AcaoDeUi {
+    /// O que viaja no evento. Espelhado em `src/lib/tauri/events.ts`.
+    pub fn como_texto(self) -> &'static str {
+        match self {
+            Self::AbrirWebcam => "webcam-on",
+            Self::FecharWebcam => "webcam-off",
+        }
+    }
+}
+
 /// O que [`handle`] devolve: a fala, e o log quando houve comando ou mudança na memória.
 pub struct Outcome {
     /// `None` em conversa que não mexeu em nada. Uma caixa de log embaixo de cada
     /// "bom dia" é o ruído que faz o log inteiro passar a ser ignorado.
     pub trace: Option<String>,
     pub reply: String,
+    /// `Some` quando o comando só se completa do lado da UI.
+    pub ui: Option<AcaoDeUi>,
 }
 
 pub async fn handle(
@@ -76,6 +100,7 @@ pub async fn handle(
         return Ok(Outcome {
             trace: None,
             reply: crate::core::chat::mock_reply_text(&settings.assistant_name, dito),
+            ui: None,
         });
     }
 
@@ -91,6 +116,7 @@ pub async fn handle(
     let pensou = relogio.elapsed();
 
     let mut log = Log::novo(dito, model, pensou);
+    let mut ui = None;
 
     let reply = match &acao {
         Intent::Reply {} => conversar(http, settings, memoria, dito, &mut log).await?,
@@ -159,6 +185,33 @@ pub async fn handle(
             }
         }
 
+        // A câmera é da UI. O agente registra a ação e pede; quem liga é o
+        // `sensorStore`, pelo mesmo caminho do botão da barra de ícones.
+        Intent::WebcamOn {} | Intent::WebcamOff {} => {
+            log.acao(&acao);
+
+            let ligar = matches!(acao, Intent::WebcamOn {});
+            ui = Some(if ligar {
+                AcaoDeUi::AbrirWebcam
+            } else {
+                AcaoDeUi::FecharWebcam
+            });
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: true,
+            });
+            memoria.atualizar_rotinas();
+
+            if ligar {
+                "Ligando a câmera.".to_owned()
+            } else {
+                "Câmera desligada.".to_owned()
+            }
+        }
+
         // ---- memória explícita: o caminho confiável ----------------------
         Intent::Remember { fact } => {
             log.acao(&acao);
@@ -218,6 +271,7 @@ pub async fn handle(
     Ok(Outcome {
         trace: log.render(),
         reply,
+        ui,
     })
 }
 
@@ -461,6 +515,8 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         Intent::Reply {}
         | Intent::WebSearch { .. }
         | Intent::PlayMusic { .. }
+        | Intent::WebcamOn {}
+        | Intent::WebcamOff {}
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. } => String::new(),

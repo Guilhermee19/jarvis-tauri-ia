@@ -58,6 +58,11 @@ pub enum Intent {
     PlayMusic {
         query: String,
     },
+    /// Liga a câmera na tela, exatamente como o botão da barra de ícones. NÃO é
+    /// [`Intent::OpenApp`] com "camera": o dono do preview é a UI, e abrir o
+    /// dispositivo pelo Rust deixaria o botão apagado com a câmera ligada.
+    WebcamOn {},
+    WebcamOff {},
     /// "lembra que eu acordo 6h30". O caminho EXPLÍCITO da memória, e o confiável — a
     /// extração automática em `converse` é best-effort.
     Remember {
@@ -84,8 +89,10 @@ fn um_passo() -> u8 {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 15] = [
+const ACOES: [&str; 17] = [
     "play_music",
+    "webcam_on",
+    "webcam_off",
     "open_site",
     "open_app",
     "volume_up",
@@ -254,6 +261,8 @@ media_next        pular para a PRÓXIMA música/faixa.
 media_previous    voltar para a música/faixa ANTERIOR.
 play_music        TOCAR uma música específica que ele nomeou. `query` = artista e nome
                   da música, sem \"toca\", sem \"põe\" e sem \"no spotify\".
+webcam_on         ligar a câmera na tela.
+webcam_off        desligar a câmera.
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
@@ -271,6 +280,12 @@ Perguntas se dividem em duas: sobre o MUNDO (fatos, pessoas, coisas, notícias) 
 web_search; sobre ELE ou sobre vocês dois vai para reply, porque a resposta está na
 memória e não na internet.
 
+\"abre o X\" também se divide em duas, e errar aqui não abre nada:
+- X é um SITE ou serviço da web (youtube, gmail, netflix, globo, chatgpt, instagram)
+  -> open_site, com a URL completa.
+- X é um PROGRAMA instalado no PC (spotify, notepad, calculadora, steam, discord)
+  -> open_app, só o nome.
+
 Nunca invente uma ação, e nunca invente termos que o usuário não disse.
 
 Exemplos de COMANDO:
@@ -285,6 +300,10 @@ Exemplos de COMANDO:
 \"põe Bohemian Rhapsody pra tocar\"   -> {{\"action\":\"play_music\",\"query\":\"Queen Bohemian Rhapsody\"}}
 \"coloca uma música do Djavan\"       -> {{\"action\":\"play_music\",\"query\":\"Djavan\"}}
 \"abre o spotify\"                    -> {{\"action\":\"open_app\",\"name\":\"spotify\"}}
+\"abre a webcam\"                     -> {{\"action\":\"webcam_on\"}}
+\"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
+\"desliga a câmera\"                  -> {{\"action\":\"webcam_off\"}}
+\"fecha a webcam\"                    -> {{\"action\":\"webcam_off\"}}
 \"lembra que eu acordo 6h30\"         -> {{\"action\":\"remember\",\"fact\":\"Acorda 6h30.\"}}
 \"esquece a academia\"                -> {{\"action\":\"forget\",\"about\":\"academia\"}}
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
@@ -403,6 +422,8 @@ mod tests {
                     target: "steam".to_owned(),
                 },
             ),
+            (r#"{"action":"webcam_on"}"#, Intent::WebcamOn {}),
+            (r#"{"action":"webcam_off"}"#, Intent::WebcamOff {}),
             (r#"{"action":"reply"}"#, Intent::Reply {}),
         ];
 

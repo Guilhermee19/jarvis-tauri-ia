@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::core::agent::{self, AgentError};
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
@@ -11,9 +11,14 @@ use crate::state::AppState;
 /// Uma jogada pode empurrar DUAS mensagens no histórico: o log do gatilho e a
 /// resposta. A assinatura não muda por causa disso — o frontend recarrega o histórico
 /// depois de enviar, que é o que mantém o espelho fiel sem inventar um segundo canal.
+/// Pedido do agente para a UI fazer algo que só ela sabe fazer — hoje, ligar e
+/// desligar a câmera. Escutado por `src/hooks/useSensorEvents.ts`.
+const UI_ACTION_EVENT: &str = "jarvis://ui-action";
+
 #[tauri::command]
 pub async fn send_message(
     content: String,
+    app: AppHandle,
     state: State<'_, AppState>,
     memoria: State<'_, Memoria>,
     services: State<'_, Services>,
@@ -43,6 +48,12 @@ pub async fn send_message(
     // usuário → o que ele entendeu, fez e guardou → o que ele respondeu.
     if let Some(trace) = outcome.trace {
         memoria.push_message(ChatMessage::new(Role::System, trace));
+    }
+
+    // O `core` não conhece Tauri, então quem emite é a fronteira. Falha de emissão é
+    // engolida: a resposta já está composta, e sem UI escutando não há o que fazer.
+    if let Some(acao) = outcome.ui {
+        let _ = app.emit(UI_ACTION_EVENT, acao.como_texto());
     }
 
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);

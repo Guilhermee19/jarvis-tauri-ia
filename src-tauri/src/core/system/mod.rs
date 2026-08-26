@@ -50,10 +50,51 @@ pub fn open_url(raw: &str) -> Result<(), SystemError> {
     shell_open(target::site(raw)?.as_str())
 }
 
+/// Serviços que são SITE, não programa — e que o roteador insiste em mandar como
+/// programa. Medido: com a regra explícita no prompt, `abre o youtube` passou a
+/// acertar, mas `abre o gmail` e `abre a netflix` continuaram vindo como `open_app`.
+///
+/// Isto é consultado só DEPOIS de o Windows não achar o programa, então quem tem o
+/// app da Netflix instalado continua abrindo o app. É fallback, não desvio.
+///
+/// ponytail: lista curta e à mão. A cauda longa já tem solução melhor — o usuário
+/// ensina ("netflix é o site netflix.com") e o apelido entra no prompt do roteador.
+const SERVICOS_WEB: [(&str, &str); 10] = [
+    ("gmail", "https://mail.google.com"),
+    ("youtube", "https://www.youtube.com"),
+    ("netflix", "https://www.netflix.com"),
+    ("instagram", "https://www.instagram.com"),
+    ("chatgpt", "https://chatgpt.com"),
+    ("github", "https://github.com"),
+    ("linkedin", "https://www.linkedin.com"),
+    ("drive", "https://drive.google.com"),
+    ("maps", "https://maps.google.com"),
+    ("outlook", "https://outlook.live.com"),
+];
+
 /// Abre um programa pelo nome, deixando o Windows resolver onde ele mora — PATH e a
 /// chave `App Paths` do registro, que é o mesmo caminho do Win+R.
 pub fn open_app(raw: &str) -> Result<(), SystemError> {
-    shell_open(&target::app(raw)?)
+    let nome = target::app(raw)?;
+
+    match shell_open(&nome) {
+        // Só o "não encontrei" cai para o site. Acesso negado e erro de DLL são
+        // problemas do programa que EXISTE, e mascará-los com uma aba de navegador
+        // esconderia a causa real.
+        Err(SystemError::NaoEncontrado(_)) => match site_conhecido(&nome) {
+            Some(url) => shell_open(url),
+            None => Err(SystemError::NaoEncontrado(nome)),
+        },
+        outro => outro,
+    }
+}
+
+fn site_conhecido(nome: &str) -> Option<&'static str> {
+    let nome = nome.trim().trim_end_matches(".exe");
+    SERVICOS_WEB
+        .iter()
+        .find(|(servico, _)| servico.eq_ignore_ascii_case(nome))
+        .map(|(_, url)| *url)
 }
 
 /// Pesquisa no Google abrindo o navegador padrão.
@@ -148,6 +189,28 @@ fn shell_open(alvo: &str) -> Result<(), SystemError> {
             detalhe: format!("código {outro} do Windows"),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O roteador manda `gmail` e `netflix` como programa por mais que o prompt peça
+    /// o contrário. Errar aqui é o usuário ouvir "não encontrei o programa gmail".
+    #[test]
+    fn conhece_os_servicos_que_sao_site() {
+        assert_eq!(site_conhecido("gmail"), Some("https://mail.google.com"));
+        assert_eq!(site_conhecido("NETFLIX"), Some("https://www.netflix.com"));
+        // O roteador às vezes acrescenta a extensão.
+        assert_eq!(
+            site_conhecido("youtube.exe"),
+            Some("https://www.youtube.com")
+        );
+
+        // Programa de verdade não pode ser sequestrado para o navegador.
+        assert_eq!(site_conhecido("spotify"), None);
+        assert_eq!(site_conhecido("notepad"), None);
+    }
 }
 
 #[cfg(not(windows))]

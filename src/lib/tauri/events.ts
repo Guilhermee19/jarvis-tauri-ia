@@ -12,7 +12,15 @@ export const JarvisEvent = {
   OpenSettings: 'jarvis://open-settings',
   /** Pico do microfone (0–1), ~20×/s enquanto há gravação em andamento. */
   MicLevel: 'jarvis://mic-level',
+  /**
+   * O agente pedindo à UI algo que só ela sabe fazer — quem é dono do laço de preview
+   * da câmera é o `sensorStore`, não o Rust. Emitido por `commands/chat.rs`.
+   */
+  UiAction: 'jarvis://ui-action',
 } as const
+
+/** Carga do {@link JarvisEvent.UiAction}. Espelha `AcaoDeUi::como_texto` no Rust. */
+export type UiAction = 'webcam-on' | 'webcam-off'
 
 type JarvisEventName = (typeof JarvisEvent)[keyof typeof JarvisEvent]
 

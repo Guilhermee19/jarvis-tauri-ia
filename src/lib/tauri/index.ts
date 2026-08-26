@@ -10,7 +10,7 @@ export {
   toggleMaximizeWindow,
   toggleWindow,
 } from './system'
-export { JarvisEvent, onJarvisEvent } from './events'
+export { JarvisEvent, onJarvisEvent, type UiAction } from './events'
 export {
   isRecording,
   listVoices,
