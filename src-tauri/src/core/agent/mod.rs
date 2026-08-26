@@ -70,24 +70,24 @@ pub enum AgentError {
 
 /// Coisa que só a UI sabe fazer.
 ///
-/// A câmera é o caso: quem é dono do laço de preview é o `sensorStore`, não o Rust.
-/// Abrir o dispositivo aqui deixaria a câmera ligada com o botão apagado e a tela
-/// vazia — o estado da UI é que manda. Então o agente PEDE, e a UI faz exatamente o
-/// que o botão faria.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A câmera é o caso claro: quem é dono do laço de preview é o `sensorStore`, não o
+/// Rust. Abrir o dispositivo aqui deixaria a câmera ligada com o botão apagado e a
+/// tela vazia — o estado da UI é que manda. Então o agente PEDE, e a UI faz
+/// exatamente o que o botão faria. O widget de música segue a mesma ideia.
+///
+/// Serializado como `{"tipo":"...", ...}` e espelhado em `src/lib/tauri/events.ts`.
+/// A tag INTERNA é o que deixa uma variante carregar dados (a faixa) sem os outros
+/// casos ganharem um nível de aninhamento à toa — do lado do TypeScript isso vira uma
+/// união discriminada, com o `switch` exaustivo de graça.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "tipo", rename_all = "kebab-case")]
 pub enum AcaoDeUi {
-    AbrirWebcam,
-    FecharWebcam,
-}
-
-impl AcaoDeUi {
-    /// O que viaja no evento. Espelhado em `src/lib/tauri/events.ts`.
-    pub fn como_texto(self) -> &'static str {
-        match self {
-            Self::AbrirWebcam => "webcam-on",
-            Self::FecharWebcam => "webcam-off",
-        }
-    }
+    WebcamOn,
+    WebcamOff,
+    /// Abre o widget de "tocando agora" com a faixa que acabou de começar.
+    Tocando {
+        faixa: music::Faixa,
+    },
 }
 
 /// O que [`handle`] devolve: a fala, e o log quando houve comando ou mudança na memória.
@@ -188,7 +188,13 @@ pub async fn handle(
 
             match tocando {
                 Ok(tocando) => match tocando.faixa {
-                    Some(faixa) => format!("Tocando {faixa}."),
+                    Some(faixa) => {
+                        let frase = format!("Tocando {}.", faixa.como_texto());
+                        ui = Some(AcaoDeUi::Tocando { faixa });
+                        frase
+                    }
+                    // Sem credencial não há faixa, e sem faixa não há widget: mostrar
+                    // uma capa vazia com "?" seria pior que não mostrar nada.
                     None => format!(
                         "Abri a busca por \"{query}\" no Spotify — é só dar play. Para eu \
                          tocar direto, ponha as credenciais do Spotify em Configurações."
@@ -205,9 +211,9 @@ pub async fn handle(
 
             let ligar = matches!(acao, Intent::WebcamOn {});
             ui = Some(if ligar {
-                AcaoDeUi::AbrirWebcam
+                AcaoDeUi::WebcamOn
             } else {
-                AcaoDeUi::FecharWebcam
+                AcaoDeUi::WebcamOff
             });
 
             memoria.registrar_acao(Acao {
@@ -251,7 +257,7 @@ pub async fn handle(
                 Ok(descricao) => {
                     // Só mostra a câmera se deu certo — ligar a webcam para em seguida
                     // dizer "não consegui ver" é o pior dos dois mundos.
-                    ui = Some(AcaoDeUi::AbrirWebcam);
+                    ui = Some(AcaoDeUi::WebcamOn);
                     descricao
                 }
                 Err(erro) => erro.to_string(),

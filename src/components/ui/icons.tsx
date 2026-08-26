@@ -9,12 +9,18 @@ interface IconProps {
   className?: string
 }
 
-function Svg({ className, children }: IconProps & { children: React.ReactNode }) {
+function Svg({
+  className,
+  children,
+  // Traçado é o padrão da casa; os de mídia invertem para preenchido.
+  fill = 'none',
+  stroke = 'currentColor',
+}: IconProps & { children: React.ReactNode; fill?: string; stroke?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
+      fill={fill}
+      stroke={stroke}
       strokeWidth={1.7}
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -41,6 +47,44 @@ export function SettingsIcon(props: IconProps) {
       <circle cx="14.5" cy="6.5" r="2.1" />
       <circle cx="9.5" cy="12" r="2.1" />
       <circle cx="14.5" cy="17.5" r="2.1" />
+    </Svg>
+  )
+}
+
+/* Os três de mídia são preenchidos, e não traçados: nesse tamanho um triângulo em
+   contorno some, e o pictograma de player é sólido em todo lugar. */
+
+export function PlayIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" stroke="none">
+      <path d="M8 5.4v13.2l10.5-6.6z" />
+    </Svg>
+  )
+}
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" stroke="none">
+      <rect x="7" y="5" width="3.6" height="14" rx="1" />
+      <rect x="13.4" y="5" width="3.6" height="14" rx="1" />
+    </Svg>
+  )
+}
+
+export function PrevIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" stroke="none">
+      <rect x="5" y="5.5" width="2.4" height="13" rx="1" />
+      <path d="M19 5.9v12.2L9.2 12z" />
+    </Svg>
+  )
+}
+
+export function NextIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" stroke="none">
+      <path d="M5 5.9v12.2L14.8 12z" />
+      <rect x="16.6" y="5.5" width="2.4" height="13" rx="1" />
     </Svg>
   )
 }

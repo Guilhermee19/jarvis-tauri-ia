@@ -19,8 +19,23 @@ export const JarvisEvent = {
   UiAction: 'jarvis://ui-action',
 } as const
 
-/** Carga do {@link JarvisEvent.UiAction}. Espelha `AcaoDeUi::como_texto` no Rust. */
-export type UiAction = 'webcam-on' | 'webcam-off'
+/** Uma faixa do Spotify. Espelha `core::music::Faixa`. */
+export interface Faixa {
+  id: string
+  titulo: string
+  artista: string
+  /** URL da arte do álbum, ou `null` em faixa sem capa cadastrada. */
+  capa: string | null
+  duracaoMs: number
+}
+
+/**
+ * Carga do {@link JarvisEvent.UiAction}. Espelha o enum `AcaoDeUi` do Rust, que é
+ * serializado com tag externa — por isso o `tipo` discrimina e só uma das variantes
+ * carrega dados.
+ */
+export type UiAction =
+  { tipo: 'webcam-on' } | { tipo: 'webcam-off' } | { tipo: 'tocando'; faixa: Faixa }
 
 type JarvisEventName = (typeof JarvisEvent)[keyof typeof JarvisEvent]
 

@@ -2,6 +2,7 @@
 
 import { ChatWindow } from '@/components/chat/ChatWindow'
 import { HomeScreen } from '@/components/home/HomeScreen'
+import { NowPlayingWidget } from '@/components/music/NowPlayingWidget'
 import { WebcamStage } from '@/components/home/WebcamStage'
 import { DiagnosticsSheet } from '@/components/sheets/DiagnosticsSheet'
 import { SettingsSheet } from '@/components/sheets/SettingsSheet'
@@ -9,6 +10,7 @@ import { BottomNav } from '@/components/tray-window/BottomNav'
 import { HudFrame } from '@/components/tray-window/HudFrame'
 import { TitleBar } from '@/components/tray-window/TitleBar'
 import { useBootstrap } from '@/hooks/useBootstrap'
+import { useNowPlaying } from '@/hooks/useNowPlaying'
 import { useSensorEvents } from '@/hooks/useSensorEvents'
 import { useTrayEvents } from '@/hooks/useTrayEvents'
 
@@ -16,6 +18,7 @@ export default function HomePage() {
   useBootstrap()
   useTrayEvents()
   useSensorEvents()
+  useNowPlaying()
 
   return (
     // Sem `bg-base` aqui de propósito: o fundo do `main` seria pintado por cima
@@ -38,6 +41,7 @@ export default function HomePage() {
         <ChatWindow />
         <DiagnosticsSheet />
         <SettingsSheet />
+        <NowPlayingWidget />
       </div>
 
       <BottomNav />

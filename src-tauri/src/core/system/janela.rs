@@ -164,6 +164,45 @@ mod tests {
         }
     }
 
+    /// Descobre se PAUSAR muda o título — é o que decidiu se dava para mostrar uma
+    /// barra de progresso honesta, ou se ela mentiria quando o usuário pausa pelo
+    /// Spotify.
+    ///
+    /// Resultado: `"Rodox - Iluminado"` tocando, `"Spotify Premium"` pausado. É por
+    /// isso que o widget congela o contador em vez de seguir contando.
+    ///
+    /// ```text
+    /// cargo test o_titulo_quando_pausa -- --ignored --nocapture
+    /// ```
+    ///
+    /// Pausa e despausa de volta, então não deixa a música parada.
+    #[test]
+    #[ignore = "precisa do Spotify TOCANDO; pausa e retoma"]
+    fn o_titulo_quando_pausa() {
+        use crate::core::system::{press, MediaKey};
+        use std::{thread::sleep, time::Duration};
+
+        let tocando = titulo_do_spotify().expect("o Spotify precisa estar aberto");
+        println!(
+            "tocando : {tocando:?}  (parado = {})",
+            esta_parado(&tocando)
+        );
+
+        press(MediaKey::PlayPause).expect("manda o play/pause");
+        sleep(Duration::from_millis(1500));
+
+        let pausado = titulo_do_spotify().unwrap_or_default();
+        println!(
+            "pausado : {pausado:?}  (parado = {})",
+            esta_parado(&pausado)
+        );
+
+        // Devolve como estava.
+        press(MediaKey::PlayPause).expect("volta o play/pause");
+        sleep(Duration::from_millis(1000));
+        println!("de volta: {:?}", titulo_do_spotify().unwrap_or_default());
+    }
+
     /// Precisa do Spotify aberto, então fica fora do `cargo test` normal:
     ///
     /// ```text

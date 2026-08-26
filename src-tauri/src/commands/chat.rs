@@ -61,7 +61,7 @@ pub async fn send_message(
     // O `core` não conhece Tauri, então quem emite é a fronteira. Falha de emissão é
     // engolida: a resposta já está composta, e sem UI escutando não há o que fazer.
     if let Some(acao) = outcome.ui {
-        let _ = app.emit(UI_ACTION_EVENT, acao.como_texto());
+        let _ = app.emit(UI_ACTION_EVENT, acao);
     }
 
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);

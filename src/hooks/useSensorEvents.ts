@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { JarvisEvent, onJarvisEvent, type UiAction } from '@/lib/tauri'
-import { useSensorStore } from '@/stores'
+import { useNowPlayingStore, useSensorStore } from '@/stores'
 
 /**
  * Assina os eventos de sensor uma vez só, no shell da janela.
@@ -15,6 +15,7 @@ import { useSensorStore } from '@/stores'
 export function useSensorEvents() {
   const setMicLevel = useSensorStore((state) => state.setMicLevel)
   const setWebcam = useSensorStore((state) => state.setWebcam)
+  const mostrarFaixa = useNowPlayingStore((state) => state.mostrar)
 
   useEffect(() => {
     const pendentes: UnlistenFn[] = []
@@ -30,12 +31,21 @@ export function useSensorEvents() {
 
     assinar(onJarvisEvent<number>(JarvisEvent.MicLevel, setMicLevel))
 
-    // "abre a webcam" chega por aqui e cai no MESMO caminho do botão da barra de
-    // ícones — é isso que mantém o botão aceso e o preview rodando.
+    // O agente pedindo à UI. "abre a webcam" cai no MESMO caminho do botão da barra
+    // de ícones — é isso que mantém o botão aceso e o preview rodando.
     assinar(
       onJarvisEvent<UiAction>(JarvisEvent.UiAction, (acao) => {
-        if (acao === 'webcam-on') void setWebcam(true)
-        if (acao === 'webcam-off') void setWebcam(false)
+        switch (acao.tipo) {
+          case 'webcam-on':
+            void setWebcam(true)
+            break
+          case 'webcam-off':
+            void setWebcam(false)
+            break
+          case 'tocando':
+            mostrarFaixa(acao.faixa)
+            break
+        }
       }),
     )
 
@@ -43,5 +53,5 @@ export function useSensorEvents() {
       cancelled = true
       pendentes.forEach((fn) => fn())
     }
-  }, [setMicLevel, setWebcam])
+  }, [setMicLevel, setWebcam, mostrarFaixa])
 }

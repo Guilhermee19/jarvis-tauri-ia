@@ -3,14 +3,19 @@ export { clearHistory, getHistory, sendMessage } from './chat'
 export { getSettings, saveSettings } from './settings'
 export {
   hideWindow,
+  identifyTrack,
   isWindowMaximized,
   minimizeWindow,
+  nowPlaying,
+  pressMediaKey,
   quitApp,
   showWindow,
   toggleMaximizeWindow,
   toggleWindow,
+  type MediaKey,
+  type NowPlaying,
 } from './system'
-export { JarvisEvent, onJarvisEvent, type UiAction } from './events'
+export { JarvisEvent, onJarvisEvent, type Faixa, type UiAction } from './events'
 export {
   isRecording,
   listVoices,

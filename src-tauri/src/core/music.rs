@@ -47,7 +47,26 @@ pub enum MusicError {
 /// abrir a busca — a diferença entre "tocando" e "achei, é só dar play".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tocando {
-    pub faixa: Option<String>,
+    pub faixa: Option<Faixa>,
+}
+
+/// O que o widget precisa mostrar. `capa` e `duracao_ms` vêm de graça na resposta da
+/// busca — não custam uma chamada a mais.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Faixa {
+    pub id: String,
+    pub titulo: String,
+    pub artista: String,
+    /// URL da arte do álbum. `None` em faixa sem capa cadastrada.
+    pub capa: Option<String>,
+    pub duracao_ms: u64,
+}
+
+impl Faixa {
+    pub fn como_texto(&self) -> String {
+        format!("{} — {}", self.artista, self.titulo)
+    }
 }
 
 pub async fn tocar(
@@ -76,9 +95,7 @@ pub async fn tocar(
     system::abrir_no_spotify(&format!("spotify:track:{}", faixa.id))?;
     garantir_play().await;
 
-    Ok(Tocando {
-        faixa: Some(format!("{} — {}", faixa.artista, faixa.nome)),
-    })
+    Ok(Tocando { faixa: Some(faixa) })
 }
 
 /// Espera o Spotify ficar pronto e, se ele não começou sozinho, aperta o play.
@@ -122,6 +139,29 @@ async fn garantir_play() {
     let _ = system::press(system::MediaKey::PlayPause);
 }
 
+/// Metadados de uma faixa a partir de um texto, sem tocar nada.
+///
+/// Serve para descobrir capa e duração da música que JÁ estava tocando — o título da
+/// janela do Spotify dá `"Artista - Música"`, e é isso que vira a consulta. Sem essa
+/// ponte, tudo que o Jarvis não iniciou apareceria no widget como um quadrado cinza.
+pub async fn buscar(
+    http: &reqwest::Client,
+    busca: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<Faixa, MusicError> {
+    let busca = busca.trim();
+    if busca.is_empty() {
+        return Err(MusicError::SemBusca);
+    }
+    if client_id.trim().is_empty() || client_secret.trim().is_empty() {
+        return Err(MusicError::NaoAchei(busca.to_owned()));
+    }
+
+    let token = autenticar(http, client_id.trim(), client_secret.trim()).await?;
+    procurar(http, &token, busca).await
+}
+
 /// Nome da fonte para o log de ações.
 pub fn modo(client_id: &str, client_secret: &str) -> &'static str {
     if client_id.trim().is_empty() || client_secret.trim().is_empty() {
@@ -129,12 +169,6 @@ pub fn modo(client_id: &str, client_secret: &str) -> &'static str {
     } else {
         "faixa exata"
     }
-}
-
-struct Faixa {
-    id: String,
-    nome: String,
-    artista: String,
 }
 
 /// *Client credentials*: sem usuário, sem redirect, sem consentimento. Só dá acesso a
@@ -194,10 +228,24 @@ async fn procurar(http: &reqwest::Client, token: &str, busca: &str) -> Result<Fa
         id: String,
         name: String,
         artists: Vec<Artista>,
+        #[serde(default)]
+        duration_ms: u64,
+        album: Album,
     }
     #[derive(Deserialize)]
     struct Artista {
         name: String,
+    }
+    #[derive(Deserialize)]
+    struct Album {
+        #[serde(default)]
+        images: Vec<Imagem>,
+    }
+    #[derive(Deserialize)]
+    struct Imagem {
+        url: String,
+        #[serde(default)]
+        width: u32,
     }
 
     // `market=BR` importa: sem ele o Spotify devolve faixas indisponíveis por aqui, e
@@ -234,13 +282,26 @@ async fn procurar(http: &reqwest::Client, token: &str, busca: &str) -> Result<Fa
         .next()
         .ok_or_else(|| MusicError::NaoAchei(busca.to_owned()))?;
 
+    // A menor capa que sirva: o widget mostra ~64px, e a maior do Spotify é 640×640 —
+    // baixar meio megabyte de arte para exibir num quadradinho é desperdício.
+    let capa = item
+        .album
+        .images
+        .iter()
+        .filter(|imagem| imagem.width >= 160)
+        .min_by_key(|imagem| imagem.width)
+        .or_else(|| item.album.images.first())
+        .map(|imagem| imagem.url.clone());
+
     Ok(Faixa {
         id: item.id,
-        nome: item.name,
+        titulo: item.name,
         artista: item
             .artists
             .first()
             .map_or_else(|| "?".to_owned(), |a| a.name.clone()),
+        capa,
+        duracao_ms: item.duration_ms,
     })
 }
 
