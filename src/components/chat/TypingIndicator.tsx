@@ -12,7 +12,7 @@ export function TypingIndicator({ assistantName }: { assistantName: string }) {
           />
         ))}
       </div>
-      <span className="text-muted text-[11px]">{assistantName} está digitando…</span>
+      <span className="text-muted text-[11px]">{assistantName} está pensando…</span>
     </div>
   )
 }
