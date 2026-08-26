@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::core::agent::{self, AgentError};
+use crate::core::automation::AutomationState;
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
 use crate::core::memory::Memoria;
 use crate::core::services::Services;
@@ -22,6 +23,7 @@ pub async fn send_message(
     state: State<'_, AppState>,
     memoria: State<'_, Memoria>,
     services: State<'_, Services>,
+    automation: State<'_, AutomationState>,
 ) -> Result<ChatResponse, String> {
     let content = content.trim().to_owned();
     if content.is_empty() {
@@ -40,9 +42,15 @@ pub async fn send_message(
         let _ = services.ensure_ollama(&http, &settings.ollama_url).await;
     }
 
-    let outcome = agent::handle(&http, &settings, memoria.inner(), &content)
-        .await
-        .map_err(stringify)?;
+    let outcome = agent::handle(
+        &http,
+        &settings,
+        memoria.inner(),
+        automation.inner(),
+        &content,
+    )
+    .await
+    .map_err(stringify)?;
 
     // Ordem importa: o log entra ANTES da resposta, então a conversa se lê como
     // usuário → o que ele entendeu, fez e guardou → o que ele respondeu.

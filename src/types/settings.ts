@@ -10,7 +10,7 @@ export interface AppSettings {
   ttsVoiceId: string
   /** Onde o Ollama escuta. Aponta para outra máquina se o Ollama não roda aqui. */
   ollamaUrl: string
-  /** Modelo que interpreta os comandos. Vazio DESLIGA o intérprete. */
+  /** Modelo que interpreta, conversa E enxerga. Vazio DESLIGA o intérprete. */
   ollamaModel: string
   /** Pasta da memória em markdown. Vazio = `memoria/` no projeto. */
   memoriaPath: string
@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   elevenLabsApiKey: '',
   ttsVoiceId: '',
   ollamaUrl: 'http://localhost:11434',
-  ollamaModel: 'qwen2.5:3b',
+  ollamaModel: 'qwen2.5vl:3b',
   memoriaPath: '',
   braveApiKey: '',
   spotifyClientId: '',

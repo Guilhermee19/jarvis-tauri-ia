@@ -63,6 +63,9 @@ pub enum Intent {
     /// dispositivo pelo Rust deixaria o botão apagado com a câmera ligada.
     WebcamOn {},
     WebcamOff {},
+    /// "o que é isso?", "olha isso aqui". Liga a câmera, tira um quadro e conta o que
+    /// vê. Diferente de [`Intent::WebcamOn`], que só liga e mostra.
+    Look {},
     /// "lembra que eu acordo 6h30". O caminho EXPLÍCITO da memória, e o confiável — a
     /// extração automática em `converse` é best-effort.
     Remember {
@@ -89,10 +92,11 @@ fn um_passo() -> u8 {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 17] = [
+const ACOES: [&str; 18] = [
     "play_music",
     "webcam_on",
     "webcam_off",
+    "look",
     "open_site",
     "open_app",
     "volume_up",
@@ -143,7 +147,7 @@ const TIMEOUT: Duration = Duration::from_secs(180);
 /// Quanto tempo o Ollama mantém o modelo na memória depois da última chamada. O padrão
 /// dele é 5 minutos, e pagar 90 s de recarga porque o usuário foi almoçar é justamente
 /// o que estraga a experiência.
-pub(super) const KEEP_ALIVE: &str = "2h";
+pub(crate) const KEEP_ALIVE: &str = "2h";
 
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -154,7 +158,7 @@ pub fn client() -> reqwest::Client {
 
 /// POST cru ao `/api/chat`, devolvendo o `message.content`. Compartilhado com
 /// `converse`, para os erros do Ollama serem traduzidos num lugar só.
-pub(super) async fn pedir(
+pub(crate) async fn pedir(
     http: &reqwest::Client,
     url: &str,
     model: &str,
@@ -263,6 +267,8 @@ play_music        TOCAR uma música específica que ele nomeou. `query` = artist
                   da música, sem \"toca\", sem \"põe\" e sem \"no spotify\".
 webcam_on         ligar a câmera na tela.
 webcam_off        desligar a câmera.
+look              OLHAR pela câmera e dizer o que está vendo. É quando ele aponta algo
+                  para a webcam e pergunta o que é.
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
@@ -304,6 +310,10 @@ Exemplos de COMANDO:
 \"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
 \"desliga a câmera\"                  -> {{\"action\":\"webcam_off\"}}
 \"fecha a webcam\"                    -> {{\"action\":\"webcam_off\"}}
+\"o que é isso?\"                     -> {{\"action\":\"look\"}}
+\"olha isso aqui\"                    -> {{\"action\":\"look\"}}
+\"o que você está vendo?\"            -> {{\"action\":\"look\"}}
+\"que objeto é esse na minha mão\"    -> {{\"action\":\"look\"}}
 \"lembra que eu acordo 6h30\"         -> {{\"action\":\"remember\",\"fact\":\"Acorda 6h30.\"}}
 \"esquece a academia\"                -> {{\"action\":\"forget\",\"about\":\"academia\"}}
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
@@ -424,6 +434,7 @@ mod tests {
             ),
             (r#"{"action":"webcam_on"}"#, Intent::WebcamOn {}),
             (r#"{"action":"webcam_off"}"#, Intent::WebcamOff {}),
+            (r#"{"action":"look"}"#, Intent::Look {}),
             (r#"{"action":"reply"}"#, Intent::Reply {}),
         ];
 

@@ -19,13 +19,19 @@ use chrono::Utc;
 
 pub use intent::client;
 
+/// Reexportados para `core::vision`, que fala com o MESMO modelo já quente — em 4 GB
+/// de VRAM não cabe um segundo.
+pub(crate) use intent::{pedir as pedir_ao_modelo, KEEP_ALIVE};
+
 use intent::Intent;
 
 use crate::config::AppSettings;
+use crate::core::automation::AutomationState;
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
 use crate::core::search;
 use crate::core::system::{self, MediaKey, SystemError};
+use crate::core::vision;
 
 /// Um passo de volume. A tecla do Windows anda ~2%, o que é imperceptível quando
 /// alguém fala "aumenta o volume" — em comando de voz um passo precisa ser um passo.
@@ -54,6 +60,12 @@ pub enum AgentError {
     Rede(String),
     #[error("o modelo devolveu algo que não é uma ação válida: {0}")]
     NaoEntendi(String),
+    #[error(
+        "o modelo {0} não enxerga imagem. Troque por um multimodal em Configurações — `ollama pull qwen2.5vl:3b` e ponha `qwen2.5vl:3b` no campo do modelo"
+    )]
+    SemVisao(String),
+    #[error("não consegui pegar a imagem da câmera: {0}")]
+    SemCamera(String),
 }
 
 /// Coisa que só a UI sabe fazer.
@@ -92,6 +104,7 @@ pub async fn handle(
     http: &reqwest::Client,
     settings: &AppSettings,
     memoria: &Memoria,
+    automation: &AutomationState,
     dito: &str,
 ) -> Result<Outcome, AgentError> {
     // Modelo vazio desliga o intérprete e volta ao mock. É a saída de emergência sem
@@ -209,6 +222,39 @@ pub async fn handle(
                 "Ligando a câmera.".to_owned()
             } else {
                 "Câmera desligada.".to_owned()
+            }
+        }
+
+        // Olhar pela câmera. A captura vem PRIMEIRO e o pedido de mostrar depois: se
+        // fosse ao contrário, a UI e o Rust disputariam a abertura do dispositivo.
+        // `capture_webcam_frame` abre e fecha sozinho quando a câmera está desligada
+        // — foi desenhado para exatamente este caso.
+        Intent::Look {} => {
+            log.acao(&acao);
+
+            let relogio = Instant::now();
+            let resultado = olhar(http, settings, automation).await;
+            log.desfecho(
+                resultado.as_ref().err().map(ToString::to_string),
+                relogio.elapsed().as_millis(),
+            );
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: resultado.is_ok(),
+            });
+            memoria.atualizar_rotinas();
+
+            match resultado {
+                Ok(descricao) => {
+                    // Só mostra a câmera se deu certo — ligar a webcam para em seguida
+                    // dizer "não consegui ver" é o pior dos dois mundos.
+                    ui = Some(AcaoDeUi::AbrirWebcam);
+                    descricao
+                }
+                Err(erro) => erro.to_string(),
             }
         }
 
@@ -350,6 +396,48 @@ async fn destilar(
 
     memoria.escrever_conhecimento(&assunto, &nota);
     log.memoria(if atual.is_empty() { '+' } else { '~' }, &assunto);
+}
+
+/// Tira um quadro da webcam, descreve, e tenta enriquecer com uma busca.
+///
+/// A busca é BEST-EFFORT de propósito: ela é o "tenta entender" do pedido, mas se a
+/// internet estiver fora ou a Wikipedia não souber do assunto, dizer o que se vê já
+/// vale — e é o que foi pedido primeiro.
+async fn olhar(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    automation: &AutomationState,
+) -> Result<String, AgentError> {
+    // ponytail: chamada bloqueante dentro de `async`. Com a câmera já aberta o `grab`
+    // volta em milissegundos; fechada, o `Session::open` custa algumas centenas. Vira
+    // `spawn_blocking` se algum dia travar a UI de verdade.
+    let quadro = automation
+        .capture_webcam_frame()
+        .map_err(|erro| AgentError::SemCamera(erro.to_string()))?;
+
+    let descricao = vision::descrever(
+        http,
+        &settings.ollama_url,
+        &settings.ollama_model,
+        vision::so_o_base64(&quadro.data_url),
+    )
+    .await?;
+
+    let Ok(achados) = search::pesquisar(http, &descricao, &settings.brave_api_key).await else {
+        return Ok(descricao);
+    };
+
+    let enriquecida = converse::responder_sobre_o_que_viu(
+        http,
+        &settings.ollama_url,
+        &settings.ollama_model,
+        &settings.assistant_name,
+        &descricao,
+        &achados,
+    )
+    .await;
+
+    Ok(enriquecida.unwrap_or(descricao))
 }
 
 /// Frases que pedem a aba do navegador. O resto é pergunta no meio da conversa, e
@@ -517,6 +605,7 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::PlayMusic { .. }
         | Intent::WebcamOn {}
         | Intent::WebcamOff {}
+        | Intent::Look {}
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. } => String::new(),

@@ -12,6 +12,7 @@ pub mod music;
 pub mod search;
 pub mod services;
 pub mod system;
+pub mod vision;
 pub mod voice;
 
 use std::sync::{Mutex, MutexGuard};

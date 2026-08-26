@@ -9,10 +9,23 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_ASSISTANT_NAME: &str = "Jarvis";
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
-/// Escolhido medindo, não por reputação: contra o `llama3.2:3b` ele acertou 12 de 12
-/// comandos falados em português (o llama errou "próxima faixa") e ainda devolveu a
-/// busca com os acentos corrigidos. Latência com o modelo quente: ~0,4 s.
-pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:3b";
+/// Escolhido medindo, em duas rodadas.
+///
+/// Primeiro contra o `llama3.2:3b`, para rotear comando: 12 de 12 em português contra
+/// 11 (o llama errou "próxima faixa"). Depois, quando a visão entrou, contra o
+/// `gemma3:4b` e o `moondream` — e aí o `qwen2.5vl:3b` ganhou de novo, agora nas duas
+/// tarefas ao mesmo tempo:
+///
+/// | modelo         | roteia | enxerga | português | latência da visão |
+/// | -------------- | ------ | ------- | --------- | ----------------- |
+/// | `qwen2.5:3b`   | 13/15  | não     | sim       | —                 |
+/// | `moondream`    | —      | sim     | NÃO       | (troca de modelo) |
+/// | `gemma3:4b`    | —      | inventa nome de app | sim | ~17 s      |
+/// | `qwen2.5vl:3b` | 15/15  | sim     | sim       | ~2–3,5 s          |
+///
+/// Ter UM modelo multimodal não é preferência, é necessidade: com 4 GB de VRAM o
+/// Ollama não segura dois, e a primeira chamada depois de uma troca levou 67 segundos.
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5vl:3b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

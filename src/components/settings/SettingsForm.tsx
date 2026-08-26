@@ -61,7 +61,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         value={ollamaModel}
         onChange={(event) => setOllamaModel(event.target.value)}
         placeholder={DEFAULT_SETTINGS.ollamaModel}
-        hint="Baixe com `ollama pull qwen2.5:3b`. Vazio desliga o intérprete e o Jarvis volta a só conversar."
+        hint="Baixe com `ollama pull qwen2.5vl:3b`. Precisa ser multimodal para o `o que é isso?` funcionar. Vazio desliga o intérprete."
       />
 
       <Input

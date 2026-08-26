@@ -39,15 +39,29 @@ uma decisão do dono da máquina.
 
 ```bash
 winget install Ollama.Ollama
-ollama pull qwen2.5:3b
+ollama pull qwen2.5vl:3b
 ```
 
-O `qwen2.5:3b` (1,9 GB) foi escolhido medindo, não por reputação: contra o `llama3.2:3b`
-ele acertou 12 de 12 comandos falados em português — o llama errou "próxima faixa" — e
-ainda devolveu a busca com os acentos corrigidos. Trocar o modelo é um campo em
-Configurações. Evite modelos com modo de _thinking_ (a família qwen3, por exemplo):
-`think: false` combinado com `format` faz o Ollama descartar silenciosamente a restrição
-de schema, e ligar o raciocínio custa 3–4 s por comando.
+**Um modelo multimodal para tudo**, e isso não é preferência — é o que cabe. Com 4 GB de
+VRAM o Ollama não segura dois modelos, e a primeira chamada depois de uma troca levou
+**67 segundos**. Como o roteador é texto e o "o que é isso?" é imagem, dois modelos
+significariam pagar a troca a cada duas mensagens.
+
+O `qwen2.5vl:3b` foi escolhido medindo, em duas rodadas:
+
+| modelo         | roteia | enxerga             | português | latência da visão |
+| -------------- | ------ | ------------------- | --------- | ----------------- |
+| `qwen2.5:3b`   | 13/15  | não                 | sim       | —                 |
+| `moondream`    | —      | sim                 | **não**   | (força a troca)   |
+| `gemma3:4b`    | —      | inventa nome de app | sim       | ~17 s             |
+| `qwen2.5vl:3b` | 15/15  | sim                 | sim       | ~2–3,5 s          |
+
+Evite modelos com modo de _thinking_ (a família qwen3, por exemplo): `think: false`
+combinado com `format` faz o Ollama descartar silenciosamente a restrição de schema, e
+ligar o raciocínio custa 3–4 s por comando.
+
+Nem o `gemma3:4b` nem o `qwen2.5vl:3b` cabem inteiros nos 4 GB — os dois rodam ~55% em
+CPU (`ollama ps` mostra). O qwen ainda assim responde 5× mais rápido.
 
 **whisper.cpp** — transcreve a fala. Baixe [`whisper-blas-bin-x64.zip`](https://github.com/ggml-org/whisper.cpp/releases)
 e o modelo [`ggml-small-q5_1.bin`](https://huggingface.co/ggerganov/whisper.cpp), e
@@ -246,13 +260,13 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 
 ### Comandos
 
-| Comando                                                                                        | Arquivo                  |
-| ---------------------------------------------------------------------------------------------- | ------------------------ |
-| `send_message`, `get_history`, `clear_history`                                                 | `commands/chat.rs`       |
-| `get_settings`, `save_settings`                                                                | `commands/settings.rs`   |
-| `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs` |
-| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text` | `commands/voice.rs`      |
-| `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`  | `commands/automation.rs` |
+| Comando                                                                                                                       | Arquivo                  |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `send_message`, `get_history`, `clear_history`                                                                                | `commands/chat.rs`       |
+| `get_settings`, `save_settings`                                                                                               | `commands/settings.rs`   |
+| `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs`     |
+| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`                                | `commands/voice.rs`      |
+| `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`                                 | `commands/automation.rs` |
 
 **Controlar o PC não adicionou nenhum comando.** Abrir site, abrir programa, volume e
 mídia são chamados pelo agente dentro do `send_message` — não pelo frontend. É por isso
