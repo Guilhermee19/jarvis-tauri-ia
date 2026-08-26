@@ -35,6 +35,7 @@ body {
   color: var(--color-content);
   font-family: var(--font-sans);
   overflow: hidden; /* a janela Ã© o app inteiro: quem rola Ã© a lista de mensagens */
+  outline: none; /* o foco Ã© visualizado com `ring` no elemento, nÃ£o com contorno */
 }
 
 /* A janela Ã© `decorations: false`; selecionar texto do chrome atrapalha o arrasto. */
