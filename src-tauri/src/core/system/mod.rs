@@ -59,6 +59,34 @@ pub fn search_web(query: &str) -> Result<(), SystemError> {
     shell_open(target::search_url(query)?.as_str())
 }
 
+/// Abre um `spotify:` — a faixa exata, ou a busca dentro do app.
+///
+/// O esquema `spotify:` é registrado pelo próprio app (inclusive na versão da
+/// Microsoft Store, que declara o protocolo no manifesto do pacote), então o
+/// `ShellExecuteW` resolve e sobe o Spotify se ele estiver fechado.
+///
+/// Fronteira de confiança: o termo de busca veio de um modelo interpretando fala. A
+/// allowlist de prefixo é o que impede "toque X" de virar `spotify:` com qualquer
+/// coisa pendurada atrás.
+pub fn abrir_no_spotify(uri: &str) -> Result<(), SystemError> {
+    let e_faixa = uri
+        .strip_prefix("spotify:track:")
+        // ID do Spotify é base62 de 22 caracteres. Qualquer outra coisa não é ID.
+        .is_some_and(|id| id.len() == 22 && id.chars().all(|c| c.is_ascii_alphanumeric()));
+
+    let e_busca = uri
+        .strip_prefix("spotify:search:")
+        .is_some_and(|termo| !termo.trim().is_empty() && termo.len() <= 200);
+
+    // Controle inclui o NUL, e NUL trunca o `PCWSTR`: a mensagem mostraria uma coisa
+    // e o Windows abriria outra.
+    if (!e_faixa && !e_busca) || uri.chars().any(char::is_control) {
+        return Err(SystemError::UrlInvalida(uri.chars().take(80).collect()));
+    }
+
+    shell_open(uri)
+}
+
 #[cfg(windows)]
 fn shell_open(alvo: &str) -> Result<(), SystemError> {
     use windows::core::{w, HSTRING, PCWSTR};

@@ -34,6 +34,18 @@ pub struct AppSettings {
     /// respostas simuladas — é a saída de emergência, no mesmo padrão do
     /// `tts_voice_id`, sem precisar de um booleano só para isso.
     pub ollama_model: String,
+    /// Pasta da memória (markdown, formato Obsidian). Vazio = a pasta `memoria/` do
+    /// projeto em desenvolvimento, ou a de dados do usuário num app instalado.
+    pub memoria_path: String,
+    /// Chave do Brave Search (grátis, 2000 buscas/mês). VAZIO usa a Wikipedia, que não
+    /// precisa de chave e responde bem "quem foi X" e "o que é Y" — mas não sabe preço,
+    /// clima nem notícia. É a chave que transforma isso em busca web de verdade.
+    pub brave_api_key: String,
+    /// Credenciais do Spotify (*client credentials*, sem OAuth). VAZIAS fazem "toque X"
+    /// abrir a busca dentro do app em vez de tocar a faixa — achar o ID exato da música
+    /// não tem caminho sem credencial, e isso foi medido.
+    pub spotify_client_id: String,
+    pub spotify_client_secret: String,
 }
 
 impl Default for AppSettings {
@@ -45,6 +57,10 @@ impl Default for AppSettings {
             tts_voice_id: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
             ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
+            memoria_path: String::new(),
+            brave_api_key: String::new(),
+            spotify_client_id: String::new(),
+            spotify_client_secret: String::new(),
         }
     }
 }

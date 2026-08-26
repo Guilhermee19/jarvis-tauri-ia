@@ -3,14 +3,18 @@
 Assistente desktop pessoal que **entende comandos em português e mexe no PC**: abre sites
 e programas, controla volume e mídia, e pesquisa no Google. Por texto ou por voz.
 
-Tudo local. A interpretação roda num modelo pequeno via **Ollama**, e a transcrição no
-**whisper.cpp** — nenhuma das duas coisas sai da máquina, e nenhuma delas custa por
-chamada. Cada comando deixa um **log no chat** com o que foi ouvido, o que o modelo
-entendeu e no que deu, porque um assistente que abre programas erra em silêncio se
-ninguém puder auditar o que ele achou que foi pedido.
+Ele também **conversa e lembra**. A memória é uma pasta de markdown no formato do
+Obsidian (`memoria/`), que cresce sozinha e que você pode abrir, ler e corrigir.
 
-O que ainda não existe: wake word, memória em SQLite, e o agente da Anthropic com tool
-use — a `anthropicApiKey` continua nas configurações, sem consumidor.
+Tudo local. A interpretação, a conversa e a memória rodam num modelo pequeno via
+**Ollama**, e a transcrição no **whisper.cpp** — nada sai da máquina, e nada custa por
+chamada. Cada comando deixa um **log no chat** com o que foi ouvido, o que o modelo
+entendeu, no que deu e o que entrou ou saiu da memória, porque um assistente que abre
+programas e guarda fatos sobre você erra em silêncio se ninguém puder auditar o que ele
+achou que foi pedido.
+
+O que ainda não existe: wake word e o agente da Anthropic com tool use — a
+`anthropicApiKey` continua nas configurações, sem consumidor.
 
 ---
 
@@ -177,7 +181,8 @@ src-tauri/src/
 ├── commands/             a fronteira do invoke() — chat.rs, settings.rs, system.rs, voice.rs
 ├── core/                 domínio, sem dependência do Tauri
 │   ├── chat.rs           tipos do contrato + o mock (rede de segurança)
-│   ├── agent/            entende e executa: intent.rs (Ollama) + o log de ações
+│   ├── agent/            intent.rs (roteador) + converse.rs (papo e extração) + o log
+│   ├── memory/           a pasta de markdown: nota.rs, busca.rs, rotinas.rs
 │   ├── system/           AGE sobre o SO: target.rs (validação) + audio.rs (COM)
 │   ├── services.rs       sobe e derruba o Ollama e o whisper-server
 │   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (ElevenLabs)
@@ -267,16 +272,150 @@ fazer sentido na wake word, que é o caso de verdade: o Rust empurra sem ningué
 
 ---
 
+## Busca com resumo
+
+Pergunta sobre o mundo abre o Google **e** responde no chat, com as fontes embaixo.
+Quem responde é o modelo local, mas só com os trechos da busca na frente — perguntado
+direto, um 3B inventa data, número e nome com toda a confiança.
+
+O que eu queria era não depender de chave nenhuma. Não dá:
+
+| fonte                        | resultado                                                |
+| ---------------------------- | -------------------------------------------------------- |
+| `html.duckduckgo.com`        | página de desafio anti-bot (`anomaly`, `challenge-form`) |
+| `api.duckduckgo.com`         | `AbstractText` vazio em 4 de 4 consultas reais           |
+| instâncias públicas de SearX | JSON desligado, 403 ou "Too Many Requests"               |
+| **Wikipedia**                | **3 de 4** — falha só no que não é enciclopédico         |
+
+Então **Wikipedia por padrão**, sem configurar nada, e um campo de chave do Brave Search
+(grátis, 2000 buscas/mês) que troca a fonte por busca web de verdade. É a chave que
+resolve "preço do dólar hoje" — a Wikipedia responde isso com "Opções (título)".
+
+**Sem a chave, ele admite que não sabe.** Um teste com temperatura 0.2 devolveu uma
+receita de pão de queijo inventada, com tempo de forno que não estava em trecho nenhum.
+A 0, e com a regra "se pedirem passo a passo e os trechos só tiverem informação geral,
+diga isso", a resposta virou _"os trechos fornecidos não contêm informações específicas
+sobre como fazer pão de queijo"_. Preferir o "não sei" é o ponto.
+
+---
+
+## Memória
+
+Mora em `memoria/`, no próprio projeto, e o formato é o do **Obsidian** — markdown com
+frontmatter e `[[links]]`. Isso não é enfeite: é o que dá dois donos à memória. Ele
+escreve quando aprende; você abre a pasta, lê o que ele entendeu de você, corrige o que
+ficou torto e apaga o que não quer que ele saiba. E entra no git, então dá para ver no
+diff o que ele aprendeu. `memoria/README.md` explica o layout por dentro.
+
+**A memória não é o transcrito da conversa.** Cada nota é um documento sobre um assunto,
+que é reescrito e cresce quando o assunto volta a aparecer. O que foi dito literalmente
+fica em `historico.jsonl`, que serve só para a tela redesenhar as bolhas.
+
+### Quatro chamadas ao modelo, não uma
+
+| quando      | chamada                      | o que faz                                         |
+| ----------- | ---------------------------- | ------------------------------------------------- |
+| sempre      | `intent::interpret`          | classifica a frase em 1 de 14 verbos              |
+| se for papo | `converse::responder`        | responde com histórico e notas relevantes         |
+| se for papo | `converse::destilar_assunto` | decide SE a troca virou conhecimento, e sobre quê |
+| se rendeu   | `converse::escrever_nota`    | reescreve a nota daquele assunto, inteira         |
+
+Separar responder de aprender não foi escolha de gosto, foi medição. Numa chamada só,
+com o schema devolvendo `{resposta, lembrar}`, um modelo de 3B faz um dos dois
+trabalhos: ou papagueia a memória em toda resposta, ou para de aprender, ou — o caso que
+encerrou a discussão — deixa os exemplos do aprendizado vazarem para dentro da resposta
+("adotei um gato" respondido com "Mora em Recife."). Os números estão no topo de
+`core/agent/converse.rs`.
+
+E **destilar é separado de escrever** porque a nota precisa ser um documento: para
+reescrever um documento o modelo tem que ver o que já estava lá, e só dá para buscar o
+texto anterior depois de saber o assunto. Anexar numa chamada só produziria a pilha de
+frases coladas na ordem em que foram ditas — exatamente o que a nota não deve ser.
+
+### O modelo é péssimo em obedecer o formato, então o formato é imposto em código
+
+Mesmo com a regra explícita no prompt, o 3B produziu tudo isto em produção:
+
+| lixo                                        | de onde veio                              |
+| ------------------------------------------- | ----------------------------------------- |
+| nota abrindo com o próprio nome do assunto  | teimosia, apesar de "não repita o título" |
+| `ASSUNTO DA NOTA` como primeira linha       | eco do rótulo do meu prompt               |
+| a lista de notas vizinhas cuspida no começo | eco do bloco de contexto                  |
+| `[[nota nova]]`                             | meu placeholder virou link para o nada    |
+| duas perguntas do assistente coladas no fim | a nota virando ata da conversa            |
+
+`converse::limpar_nota` corta todos, e cada um tem teste. **A regra fica no prompt E o
+corte fica no código** — cinto e suspensório, porque cada um pega o que o outro deixa
+passar. Brigar só com prompt custa rodada e nunca fecha de vez.
+
+### Como ele escolhe o que lembrar na hora
+
+Palavra-chave **mais um salto de `[[link]]`**. Perguntar "que horas eu acordo" casa com
+`rotina-da-manha`; como aquela nota cita `[[academia]]`, a academia entra no prompt sem
+ter sido mencionada. É o salto que transforma uma lista de notas num grafo — e vale
+para os links que VOCÊ escrever na mão.
+
+Não é embedding de propósito: um segundo modelo (`nomic-embed-text`, ~274 MB) disputaria
+os 4 GB de VRAM com o intérprete, e o índice viveria dessincronizado de arquivos que
+você edita por fora.
+
+### Guardar tem dois caminhos, e um é confiável
+
+- **Explícito** — "lembra que eu acordo 6h30". Passa pelo roteador: 11/11 nos testes.
+- **Automático** — ele destila o assunto de cada troca e escreve a nota. É _best-effort_.
+
+O balanço dos exemplos no prompt importa mais que as regras: com 6 negativos contra 4
+positivos, o modelo respondeu "não rende" para tudo, inclusive para "o projeto usa Tauri
+com Next" — que é quase literalmente um dos exemplos positivos. Invertendo o balanço e
+acrescentando "na dúvida, responda true", ele passou a pegar o que importava.
+
+**Ele erra na direção de anotar demais, de propósito.** Uma nota errada você apaga com
+uma frase; conhecimento que nunca foi anotado some sem deixar rastro.
+
+> ⚠️ **O que ele anota pode estar errado.** Uma nota real produzida por ele dizia que
+> "Charlie Brown Jr. é conhecido por composições infantis, tocado em programas
+> educacionais". Um 3B alucina sobre o mundo, e a nota registra fielmente a alucinação.
+> Duas defesas: perguntas sobre o mundo são roteadas para `web_search`, que responde só
+> com o que a busca trouxe; e a pasta é sua para corrigir. Não trate a base como fonte.
+
+### O laço que faz ele melhorar com o uso
+
+Notas do tipo `apelido` entram no prompt do **roteador**. Ensine uma vez —
+"meu jogo é o steam" — e a partir daí `abre meu jogo` sai do modelo já como
+`{"action":"open_app","name":"steam"}`. Nenhum peso é tocado; o que muda é o prompt.
+
+O mesmo vale para as rotinas: toda ação executada vai para `acoes.jsonl`, e agrupar por
+(ação, alvo, período do dia) vira `notas/rotinas-observadas.md`. Três vezes é hábito,
+duas é acaso — e ação que falhou não conta, senão um nome errado repetido viraria
+"rotina" e ele passaria a sugerir o próprio erro.
+
+---
+
 ## Onde plugar cada feature futura
 
-| Feature                       | Entra em                        | Chamado por                                 | Substitui                       |
-| ----------------------------- | ------------------------------- | ------------------------------------------- | ------------------------------- |
-| Comando novo do PC            | `core/system/` + `Intent`       | `core::agent::execute`                      | —                               |
-| Agente Claude + tool use      | `core/agent/`, ao lado do local | `core::agent::handle`                       | o intérprete do Ollama          |
-| Wake word                     | `core/voice/wake_word.rs`       | task de background no `setup` de `lib.rs`   | —                               |
-| Mouse, teclado (`enigo`)      | `core/automation/input.rs`      | `core::agent::execute`, com confirmação     | —                               |
-| Memória persistente (SQLite)  | `src-tauri/src/storage/`        | `state.rs`                                  | o `Vec` em memória do histórico |
-| Personalidade / system prompt | `core/agent/intent.rs`          | montado com o `assistant_name` das settings | —                               |
+| Feature                       | Entra em                        | Chamado por                                 | Substitui                 |
+| ----------------------------- | ------------------------------- | ------------------------------------------- | ------------------------- |
+| Comando novo do PC            | `core/system/` + `Intent`       | `core::agent::execute`                      | —                         |
+| Agente Claude + tool use      | `core/agent/`, ao lado do local | `core::agent::handle`                       | o intérprete do Ollama    |
+| Wake word                     | `core/voice/wake_word.rs`       | task de background no `setup` de `lib.rs`   | —                         |
+| Mouse, teclado (`enigo`)      | `core/automation/input.rs`      | `core::agent::execute`, com confirmação     | —                         |
+| Busca por embedding           | `core/memory/busca.rs`          | `Memoria::contexto`                         | a busca por palavra-chave |
+| Personalidade / system prompt | `core/agent/converse.rs`        | montado com o `assistant_name` das settings | —                         |
+
+### O prompt do roteador é a peça mais frágil, e o teto é o balanço dos exemplos
+
+Um bug real de produção: `"po enquanto nada, quero é ir pra casa pra poder jogar"` foi
+classificado como `media_play_pause` e **pausou a música do usuário no meio de um
+desabafo**. A causa não era a tabela de verbos — era que o prompt tinha 12 exemplos de
+comando contra 2 de conversa, 6 para 1.
+
+Rebalanceando (10 comandos, 4 perguntas do mundo, 9 conversas) e acrescentando a regra
+"mencionar não é mandar", o placar foi de 15/18 com 3 falsos comandos para **23/23 com
+zero**. Mesmo modelo, mesma temperatura.
+
+A lição vale para os outros dois prompts: a extração de memória teve o mesmo
+comportamento, e a correção foi a mesma. **Ao mexer em qualquer prompt aqui, conte os
+exemplos de cada lado antes de reescrever as regras.**
 
 **Adicionar um comando novo do PC são quatro pontos**, e o `cargo test` cobra o quarto: a
 variante no enum `Intent`, o verbo em `ACOES`, o braço no `match` de `execute`, e a linha
@@ -300,9 +439,14 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
   "elevenLabsApiKey": "",
   "ttsVoiceId": "",
   "ollamaUrl": "http://localhost:11434",
-  "ollamaModel": "qwen2.5:3b"
+  "ollamaModel": "qwen2.5:3b",
+  "memoriaPath": "",
+  "braveApiKey": ""
 }
 ```
+
+`memoriaPath` vazio cai na pasta `memoria/` do projeto em desenvolvimento, e no
+diretório de dados do usuário num app instalado (ninguém escreve em Program Files).
 
 `ollamaModel` **vazio desliga o intérprete** e o Jarvis volta às respostas simuladas. É a
 saída de emergência sem precisar de um booleano só para isso — mesmo padrão do

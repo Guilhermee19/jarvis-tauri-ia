@@ -7,6 +7,9 @@
 pub mod agent;
 pub mod automation;
 pub mod chat;
+pub mod memory;
+pub mod music;
+pub mod search;
 pub mod services;
 pub mod system;
 pub mod voice;

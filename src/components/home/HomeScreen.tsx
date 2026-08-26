@@ -39,7 +39,7 @@ export function HomeScreen() {
           />
         </button>
 
-        {/* Com a câmera ligada, o texto de apoio sai de cena: o conteúdo é a imagem. */}
+        {/* Com a câmera ligada, o texto de apoio sai de cena: o conteúdo é a imagem.
         {isWebcamOn ? null : (
           <>
             <p className="text-muted mt-9 text-[10px] tracking-[0.28em] uppercase">
@@ -62,7 +62,7 @@ export function HomeScreen() {
               />
             </dl>
           </>
-        )}
+        )} */}
       </div>
 
       <SensorAlerts />

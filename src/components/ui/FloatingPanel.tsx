@@ -14,6 +14,17 @@ export interface PanelPosition {
   y: number
 }
 
+export interface PanelSize {
+  width: number
+  height: number
+}
+
+/** Abaixo disto o cabeçalho e o campo de texto não cabem mais. */
+const MINIMO: PanelSize = { width: 280, height: 220 }
+
+/** Passo do redimensionamento pelo teclado. */
+const PASSO = 24
+
 interface FloatingPanelProps {
   open: boolean
   title: string
@@ -24,6 +35,9 @@ interface FloatingPanelProps {
   /** `null` enquanto ninguém arrastou: a janelinha nasce centralizada. */
   position: PanelPosition | null
   onPositionChange: (position: PanelPosition) => void
+  /** `null` enquanto ninguém redimensionou: o tamanho vem das classes. */
+  size: PanelSize | null
+  onSizeChange: (size: PanelSize) => void
   onClose: () => void
   children: React.ReactNode
 }
@@ -45,12 +59,16 @@ export function FloatingPanel({
   actions,
   position,
   onPositionChange,
+  size,
+  onSizeChange,
   onClose,
   children,
 }: FloatingPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   /** Distância do ponteiro até o canto do painel, congelada no início do arrasto. */
   const grabRef = useRef<PanelPosition | null>(null)
+  /** Ponteiro e tamanho no instante em que o redimensionamento começou. */
+  const resizeRef = useRef<(PanelPosition & PanelSize) | null>(null)
   const descriptionId = useId()
 
   /** Mantém a janelinha inteira dentro da área de conteúdo — arrastá-la para fora
@@ -65,6 +83,21 @@ export function FloatingPanel({
     return {
       x: Math.min(Math.max(x, 0), maxX),
       y: Math.min(Math.max(y, 0), maxY),
+    }
+  }, [])
+
+  /** Nem menor que o mínimo utilizável, nem maior que o espaço à direita e abaixo. */
+  const clampSize = useCallback((width: number, height: number): PanelSize => {
+    const panel = panelRef.current
+    const bounds = panel?.offsetParent
+    if (!panel || !(bounds instanceof HTMLElement)) return { width, height }
+
+    const maxWidth = Math.max(MINIMO.width, bounds.clientWidth - panel.offsetLeft)
+    const maxHeight = Math.max(MINIMO.height, bounds.clientHeight - panel.offsetTop)
+
+    return {
+      width: Math.min(Math.max(width, MINIMO.width), maxWidth),
+      height: Math.min(Math.max(height, MINIMO.height), maxHeight),
     }
   }, [])
 
@@ -87,18 +120,19 @@ export function FloatingPanel({
     ;(field ?? panel)?.focus()
   }, [open])
 
-  // A janela do app é redimensionável: encolher não pode empurrar a janelinha
-  // para fora do alcance do mouse.
+  // A janela do app é redimensionável: encolher não pode empurrar a janelinha para
+  // fora do alcance do mouse, nem deixá-la maior que a área que sobrou.
   useEffect(() => {
-    if (!open || !position) return
+    if (!open || (!position && !size)) return
 
     function onResize() {
       if (position) onPositionChange(clampIntoBounds(position.x, position.y))
+      if (size) onSizeChange(clampSize(size.width, size.height))
     }
 
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [open, position, onPositionChange, clampIntoBounds])
+  }, [open, position, onPositionChange, clampIntoBounds, size, onSizeChange, clampSize])
 
   function startDrag(event: ReactPointerEvent<HTMLElement>) {
     // Fechar e limpar histórico moram no cabeçalho: clicar neles não é arrastar.
@@ -134,6 +168,69 @@ export function FloatingPanel({
     }
   }
 
+  function startResize(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+
+    const panel = panelRef.current
+    const bounds = panel?.offsetParent
+    if (!panel || !(bounds instanceof HTMLElement)) return
+
+    // Sem posição explícita a janelinha está centralizada por `translate`, e crescer
+    // pelo canto empurraria os DOIS lados. Fixar a posição atual antes de começar faz
+    // o canto de baixo à direita se comportar como no Windows: só ele se move.
+    if (!position) {
+      const rect = panel.getBoundingClientRect()
+      const boundsRect = bounds.getBoundingClientRect()
+      onPositionChange({ x: rect.left - boundsRect.left, y: rect.top - boundsRect.top })
+    }
+
+    resizeRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      width: panel.offsetWidth,
+      height: panel.offsetHeight,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.stopPropagation()
+  }
+
+  function resize(event: ReactPointerEvent<HTMLElement>) {
+    const inicio = resizeRef.current
+    if (!inicio) return
+
+    onSizeChange(
+      clampSize(
+        inicio.width + (event.clientX - inicio.x),
+        inicio.height + (event.clientY - inicio.y),
+      ),
+    )
+  }
+
+  function endResize(event: ReactPointerEvent<HTMLElement>) {
+    resizeRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  /** Arrastar um canto não funciona no teclado, e sem isto a alça seria decorativa
+   *  para quem não usa mouse. */
+  function resizeByKeyboard(event: React.KeyboardEvent<HTMLElement>) {
+    const passos: Record<string, PanelSize> = {
+      ArrowRight: { width: PASSO, height: 0 },
+      ArrowLeft: { width: -PASSO, height: 0 },
+      ArrowDown: { width: 0, height: PASSO },
+      ArrowUp: { width: 0, height: -PASSO },
+    }
+
+    const passo = passos[event.key]
+    const panel = panelRef.current
+    if (!passo || !panel) return
+
+    event.preventDefault()
+    onSizeChange(clampSize(panel.offsetWidth + passo.width, panel.offsetHeight + passo.height))
+  }
+
   if (!open) return null
 
   return (
@@ -144,10 +241,14 @@ export function FloatingPanel({
       aria-label={title}
       aria-describedby={descriptionId}
       tabIndex={-1}
-      style={position ? { left: position.x, top: position.y } : undefined}
+      style={{
+        ...(position ? { left: position.x, top: position.y } : {}),
+        ...(size ? { width: size.width, height: size.height } : {}),
+      }}
       className={cn(
         'floating-panel border-accent/25 bg-surface/95 absolute z-30 flex flex-col',
-        'h-[min(420px,calc(100%-1.5rem))] w-[min(340px,calc(100%-1.5rem))]',
+        // Só valem enquanto ninguém redimensionou — depois disso o `style` manda.
+        !size && 'h-[min(420px,calc(100%-1.5rem))] w-[min(340px,calc(100%-1.5rem))]',
         'rounded-lg border shadow-2xl shadow-black/60 backdrop-blur-md focus:outline-none',
         // Enquanto ninguém arrastou não há pixel para usar: o centro vem do CSS, e o
         // primeiro arrasto converte a posição real em coordenadas.
@@ -187,6 +288,21 @@ export function FloatingPanel({
       </p>
 
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+
+      {/* Alça no canto de baixo à direita, como nas janelas do Windows. É um `button`
+          de verdade para o teclado alcançar — as setas redimensionam. */}
+      <button
+        type="button"
+        onPointerDown={startResize}
+        onPointerMove={resize}
+        onPointerUp={endResize}
+        onPointerCancel={endResize}
+        onKeyDown={resizeByKeyboard}
+        aria-label="Redimensionar a janela (use as setas)"
+        className="text-muted/50 hover:text-accent focus-visible:text-accent absolute right-0 bottom-0 flex h-4 w-4 cursor-nwse-resize items-center justify-center rounded-br-lg text-[9px] leading-none transition-colors focus:outline-none"
+      >
+        ◢
+      </button>
     </div>
   )
 }

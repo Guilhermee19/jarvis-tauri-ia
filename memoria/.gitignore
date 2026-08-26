@@ -1,0 +1,11 @@
+# Estado de máquina, não conhecimento: o histórico exato da UI, o log cru de ações e o
+# marcador de resumo. Regeneráveis ou descartáveis, e barulhentos no diff.
+historico.jsonl
+acoes.jsonl
+estado.json
+
+# O índice é gerado a cada escrita — versioná-lo só criaria conflito em toda conversa.
+MEMORIA.md
+
+# `notas/` FICA versionado de propósito: é o ponto de a memória morar no projeto — dá
+# para ver no diff o que ele aprendeu.

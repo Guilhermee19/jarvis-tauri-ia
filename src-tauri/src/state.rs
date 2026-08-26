@@ -1,18 +1,16 @@
 //! Estado compartilhado da aplicação, injetado nos comandos via `tauri::State`.
 //!
-//! O histórico de conversa vive AQUI, não no frontend. Essa escolha é o que permite
-//! o agente e a memória persistente entrarem depois sem mexer no contrato: hoje o
-//! histórico é um `Vec` em memória, amanhã é uma tabela no SQLite atrás de `storage`.
+//! Configurações e o cliente HTTP do intérprete. O histórico de conversa saiu daqui
+//! e foi para `core::memory`, junto com o resto do que o Jarvis lembra — ele não era
+//! estado de aplicação, era memória, e agora persiste em disco.
 
 use std::sync::Mutex;
 
 use crate::config::AppSettings;
-use crate::core::chat::ChatMessage;
 use crate::core::lock;
 use crate::storage::{SettingsStore, StorageError};
 
 pub struct AppState {
-    history: Mutex<Vec<ChatMessage>>,
     settings: Mutex<AppSettings>,
     store: Box<dyn SettingsStore>,
     /// Cliente do intérprete. Fica aqui pelo mesmo motivo que o do TTS fica no
@@ -29,7 +27,6 @@ impl AppState {
         });
 
         Self {
-            history: Mutex::new(Vec::new()),
             settings: Mutex::new(settings),
             store,
             http: crate::core::agent::client(),
@@ -52,24 +49,11 @@ impl AppState {
         *lock(&self.settings) = next;
         Ok(())
     }
-
-    pub fn history(&self) -> Vec<ChatMessage> {
-        lock(&self.history).clone()
-    }
-
-    pub fn push_message(&self, message: ChatMessage) {
-        lock(&self.history).push(message);
-    }
-
-    pub fn clear_history(&self) {
-        lock(&self.history).clear();
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::chat::Role;
 
     #[derive(Default)]
     struct FakeStore {
@@ -101,18 +85,6 @@ mod tests {
         let state = AppState::new(Box::new(store));
 
         assert_eq!(state.settings().assistant_name, "Sexta-feira");
-    }
-
-    #[test]
-    fn historico_acumula_e_limpa() {
-        let state = AppState::new(Box::new(FakeStore::default()));
-
-        state.push_message(ChatMessage::new(Role::User, "oi"));
-        state.push_message(ChatMessage::new(Role::Assistant, "olá"));
-        assert_eq!(state.history().len(), 2);
-
-        state.clear_history();
-        assert!(state.history().is_empty());
     }
 
     #[test]

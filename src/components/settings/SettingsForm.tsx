@@ -23,6 +23,10 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [elevenLabsKey, setElevenLabsKey] = useState(initial.elevenLabsApiKey)
   const [ollamaUrl, setOllamaUrl] = useState(initial.ollamaUrl)
   const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
+  const [memoriaPath, setMemoriaPath] = useState(initial.memoriaPath)
+  const [braveKey, setBraveKey] = useState(initial.braveApiKey)
+  const [spotifyId, setSpotifyId] = useState(initial.spotifyClientId)
+  const [spotifySecret, setSpotifySecret] = useState(initial.spotifyClientSecret)
 
   return (
     <div className="flex flex-col gap-4">
@@ -61,6 +65,39 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
       />
 
       <Input
+        label="API key do Brave Search"
+        type="password"
+        value={braveKey}
+        onChange={(event) => setBraveKey(event.target.value)}
+        placeholder="BSA…"
+        hint="Sem ela a busca usa a Wikipedia, que responde 'quem foi X' mas não sabe preço nem notícia. Grátis em brave.com/search/api (2000 buscas/mês)."
+      />
+
+      <Input
+        label="Spotify — Client ID"
+        value={spotifyId}
+        onChange={(event) => setSpotifyId(event.target.value)}
+        placeholder="sem isso, 'toque X' só abre a busca"
+        hint="Crie um app em developer.spotify.com/dashboard (grátis, 2 min, sem login de usuário). É o que permite achar a faixa exata e tocar direto."
+      />
+
+      <Input
+        label="Spotify — Client Secret"
+        type="password"
+        value={spotifySecret}
+        onChange={(event) => setSpotifySecret(event.target.value)}
+        placeholder="…"
+      />
+
+      <Input
+        label="Pasta da memória"
+        value={memoriaPath}
+        onChange={(event) => setMemoriaPath(event.target.value)}
+        placeholder="memoria/ do projeto"
+        hint="Onde ele guarda o que aprende, em markdown. Dá para abrir no Obsidian."
+      />
+
+      <Input
         label="Nome do assistente"
         value={assistantName}
         onChange={(event) => setAssistantName(event.target.value)}
@@ -85,6 +122,11 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               // Sem fallback aqui de propósito: vazio é uma escolha válida (desliga
               // o intérprete), diferente do nome e da URL.
               ollamaModel: ollamaModel.trim(),
+              // Vazio também é válido: cai na pasta padrão.
+              memoriaPath: memoriaPath.trim(),
+              braveApiKey: braveKey.trim(),
+              spotifyClientId: spotifyId.trim(),
+              spotifyClientSecret: spotifySecret.trim(),
             })
           }
           disabled={isSaving}

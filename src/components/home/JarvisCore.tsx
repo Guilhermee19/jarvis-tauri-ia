@@ -31,11 +31,6 @@ export function JarvisCore({ label, isActive = true, className }: JarvisCoreProp
 
       <circle cx="100" cy="100" r="86" fill="url(#jarvis-core-glow)" />
 
-      {/* Colchetes de canto: o enquadramento quadrado em volta do círculo. */}
-      <g stroke="currentColor" strokeWidth="1.2" fill="none" opacity="0.45">
-        <path d="M22 44V22h22M156 22h22v22M178 156v22h-22M44 178H22v-22" />
-      </g>
-
       {/* Traços cardeais, alinhados aos colchetes. */}
       <g stroke="currentColor" strokeWidth="1.2" opacity="0.5">
         <path d="M100 14v9M100 177v9M14 100h9M177 100h9" />

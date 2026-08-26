@@ -12,6 +12,13 @@ export interface AppSettings {
   ollamaUrl: string
   /** Modelo que interpreta os comandos. Vazio DESLIGA o intérprete. */
   ollamaModel: string
+  /** Pasta da memória em markdown. Vazio = `memoria/` no projeto. */
+  memoriaPath: string
+  /** Chave do Brave Search. Vazio = Wikipedia (sem chave, mas só enciclopédia). */
+  braveApiKey: string
+  /** Credenciais do Spotify. Vazias = "toque X" abre a busca em vez de tocar. */
+  spotifyClientId: string
+  spotifyClientSecret: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -21,4 +28,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsVoiceId: '',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'qwen2.5:3b',
+  memoriaPath: '',
+  braveApiKey: '',
+  spotifyClientId: '',
+  spotifyClientSecret: '',
 }

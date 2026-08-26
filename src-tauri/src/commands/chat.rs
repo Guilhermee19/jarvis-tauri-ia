@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::core::agent::{self, AgentError};
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
+use crate::core::memory::Memoria;
 use crate::core::services::Services;
 use crate::state::AppState;
 
@@ -14,6 +15,7 @@ use crate::state::AppState;
 pub async fn send_message(
     content: String,
     state: State<'_, AppState>,
+    memoria: State<'_, Memoria>,
     services: State<'_, Services>,
 ) -> Result<ChatResponse, String> {
     let content = content.trim().to_owned();
@@ -21,7 +23,7 @@ pub async fn send_message(
         return Err("mensagem vazia".to_owned());
     }
 
-    state.push_message(ChatMessage::new(Role::User, content.clone()));
+    memoria.push_message(ChatMessage::new(Role::User, content.clone()));
 
     let settings = state.settings();
     let http = state.http();
@@ -33,34 +35,36 @@ pub async fn send_message(
         let _ = services.ensure_ollama(&http, &settings.ollama_url).await;
     }
 
-    let outcome = agent::handle(&http, &settings, &content)
+    let outcome = agent::handle(&http, &settings, memoria.inner(), &content)
         .await
         .map_err(stringify)?;
 
     // Ordem importa: o log entra ANTES da resposta, então a conversa se lê como
-    // usuário → o que ele entendeu e fez → o que ele respondeu.
+    // usuário → o que ele entendeu, fez e guardou → o que ele respondeu.
     if let Some(trace) = outcome.trace {
-        state.push_message(ChatMessage::new(Role::System, trace));
+        memoria.push_message(ChatMessage::new(Role::System, trace));
     }
 
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);
-    state.push_message(reply.clone());
+    memoria.push_message(reply.clone());
 
     Ok(ChatResponse::new(reply))
 }
 
+/// A UI chama isto ao montar. O histórico agora vem do disco, então a conversa
+/// sobrevive a fechar o app — não só a esconder a janela.
+#[tauri::command]
+pub fn get_history(memoria: State<'_, Memoria>) -> Vec<ChatMessage> {
+    memoria.historico()
+}
+
+/// Limpa a conversa da tela. NÃO apaga as notas nem o diário em `conversas/` — apagar
+/// o que ele aprendeu é outro pedido, e tem outro caminho ("esquece X").
+#[tauri::command]
+pub fn clear_history(memoria: State<'_, Memoria>) {
+    memoria.limpar_historico();
+}
+
 fn stringify(error: AgentError) -> String {
     error.to_string()
-}
-
-/// A UI chama isto ao montar: como o histórico é do backend, a janela pode ser
-/// escondida e reaberta sem perder a conversa.
-#[tauri::command]
-pub fn get_history(state: State<'_, AppState>) -> Vec<ChatMessage> {
-    state.history()
-}
-
-#[tauri::command]
-pub fn clear_history(state: State<'_, AppState>) {
-    state.clear_history();
 }
