@@ -20,12 +20,14 @@
 //! ~200 ms a mais para pegar um token novo. Cachear é um `Mutex<Option<(String,
 //! Instant)>>` no estado — entra quando incomodar.
 
+use std::time::Duration;
+
 use base64::Engine;
 use serde::Deserialize;
 
 use crate::core::system::{self, SystemError};
 
-const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
 pub enum MusicError {
@@ -68,14 +70,56 @@ pub async fn tocar(
     let token = autenticar(http, client_id.trim(), client_secret.trim()).await?;
     let faixa = procurar(http, &token, busca).await?;
 
-    // O deep link faz o app de desktop pular para a faixa e começar a tocar. É por
-    // isso que não precisamos do endpoint de playback da API, que exigiria o fluxo
-    // completo de OAuth com consentimento no navegador.
+    // O deep link faz o app pular PARA a faixa — mas não dá play, o que foi medido.
+    // Usar o endpoint de playback da API resolveria, ao custo do fluxo completo de
+    // OAuth com consentimento no navegador; a tecla de mídia custa uma linha.
     system::abrir_no_spotify(&format!("spotify:track:{}", faixa.id))?;
+    garantir_play().await;
 
     Ok(Tocando {
         faixa: Some(format!("{} — {}", faixa.artista, faixa.nome)),
     })
+}
+
+/// Espera o Spotify ficar pronto e, se ele não começou sozinho, aperta o play.
+///
+/// A tecla de mídia é um TOGGLE: mandá-la com a música já tocando PAUSA, que é o
+/// oposto do pedido. Por isso o título da janela é lido antes — é o sinal de estado
+/// mais barato que existe aqui.
+///
+/// ponytail: se o Spotify JÁ estava tocando outra coisa e o deep link só navegar sem
+/// trocar a faixa, o título continua sendo o da música velha, isto vê "tocando" e não
+/// faz nada — o usuário ouve a música errada. Não dá para consertar com tecla: play
+/// pausaria. A saída seria `PUT /v1/me/player/play` da API, que exige o fluxo completo
+/// de OAuth. Só vale construir isso se acontecer de verdade.
+async fn garantir_play() {
+    // Spotify fechado leva alguns segundos para subir; aberto, responde quase na hora.
+    const PASSO: Duration = Duration::from_millis(200);
+    const TENTATIVAS: u32 = 40;
+    /// Janela pronta e ainda parada por ~1 s: não vai tocar sozinha.
+    const PACIENCIA: u32 = 5;
+
+    let mut parado_ha = 0;
+
+    for _ in 0..TENTATIVAS {
+        tokio::time::sleep(PASSO).await;
+
+        // `None` = a janela ainda não existe. Continua esperando.
+        let Some(titulo) = system::titulo_do_spotify() else {
+            continue;
+        };
+
+        if !system::esta_parado(&titulo) {
+            return; // Começou sozinho — não encostar.
+        }
+
+        parado_ha += 1;
+        if parado_ha >= PACIENCIA {
+            break;
+        }
+    }
+
+    let _ = system::press(system::MediaKey::PlayPause);
 }
 
 /// Nome da fonte para o log de ações.
