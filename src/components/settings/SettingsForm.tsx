@@ -21,6 +21,8 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [apiKey, setApiKey] = useState(initial.anthropicApiKey)
   const [assistantName, setAssistantName] = useState(initial.assistantName)
   const [elevenLabsKey, setElevenLabsKey] = useState(initial.elevenLabsApiKey)
+  const [ollamaUrl, setOllamaUrl] = useState(initial.ollamaUrl)
+  const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
 
   return (
     <div className="flex flex-col gap-4">
@@ -40,6 +42,22 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setElevenLabsKey(event.target.value)}
         placeholder="sk_…"
         hint="Usada pelo TTS. Sem ela, o teste de voz no Diagnóstico fica inerte."
+      />
+
+      <Input
+        label="Servidor do Ollama"
+        value={ollamaUrl}
+        onChange={(event) => setOllamaUrl(event.target.value)}
+        placeholder={DEFAULT_SETTINGS.ollamaUrl}
+        hint="Onde roda o intérprete de comandos. Precisa do Ollama instalado e ativo."
+      />
+
+      <Input
+        label="Modelo do intérprete"
+        value={ollamaModel}
+        onChange={(event) => setOllamaModel(event.target.value)}
+        placeholder={DEFAULT_SETTINGS.ollamaModel}
+        hint="Baixe com `ollama pull qwen2.5:3b`. Vazio desliga o intérprete e o Jarvis volta a só conversar."
       />
 
       <Input
@@ -63,6 +81,10 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               anthropicApiKey: apiKey.trim(),
               elevenLabsApiKey: elevenLabsKey.trim(),
               assistantName: assistantName.trim() || DEFAULT_SETTINGS.assistantName,
+              ollamaUrl: ollamaUrl.trim() || DEFAULT_SETTINGS.ollamaUrl,
+              // Sem fallback aqui de propósito: vazio é uma escolha válida (desliga
+              // o intérprete), diferente do nome e da URL.
+              ollamaModel: ollamaModel.trim(),
             })
           }
           disabled={isSaving}

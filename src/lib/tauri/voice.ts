@@ -20,6 +20,18 @@ export function isRecording(): Promise<boolean> {
   return call<boolean>('is_recording')
 }
 
+/**
+ * Transcreve a última gravação com o Whisper local. Separado do `stopRecording` de
+ * propósito: a bancada testa o microfone sem esperar o Whisper, e quem fala com o
+ * chat encadeia os dois.
+ *
+ * A PRIMEIRA chamada sobe o `whisper-server` e carrega o modelo — conte alguns
+ * segundos a mais nela do que nas seguintes.
+ */
+export function transcribe(): Promise<string> {
+  return call<string>('transcribe')
+}
+
 export function listVoices(): Promise<Voice[]> {
   return call<Voice[]>('list_voices')
 }

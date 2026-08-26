@@ -81,9 +81,9 @@ impl Recorder {
         });
 
         // Uma thread que morreu antes de responder só pode ter entrado em pânico.
-        let sample_rate = ready_rx
-            .recv()
-            .map_err(|_| VoiceError::Microphone("a thread de captura morreu ao iniciar".into()))??;
+        let sample_rate = ready_rx.recv().map_err(|_| {
+            VoiceError::Microphone("a thread de captura morreu ao iniciar".into())
+        })??;
 
         Ok(Self {
             stop,
@@ -199,8 +199,8 @@ fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), Voice
         sample_format: hound::SampleFormat::Int,
     };
 
-    let mut writer =
-        hound::WavWriter::create(path, spec).map_err(|error| VoiceError::WavWrite(error.to_string()))?;
+    let mut writer = hound::WavWriter::create(path, spec)
+        .map_err(|error| VoiceError::WavWrite(error.to_string()))?;
 
     for &sample in samples {
         let pcm = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;

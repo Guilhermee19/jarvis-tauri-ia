@@ -5,6 +5,7 @@ import {
   openWebcam,
   startRecording,
   stopRecording,
+  transcribe,
 } from '@/lib/tauri'
 import type { Recording } from '@/types'
 
@@ -40,6 +41,18 @@ interface SensorState {
   lastRecording: Recording | null
   toggleMic: () => Promise<void>
   setMicLevel: (level: number) => void
+
+  /**
+   * Ditado do chat (segurar o botão para falar). Mora AQUI, junto do `toggleMic`,
+   * porque o dono do gravador tem que ser um só: se o botão do chat chamasse
+   * `startRecording` por conta própria com o microfone da bancada ligado, o backend
+   * responderia "já existe uma gravação em andamento".
+   */
+  isDictating: boolean
+  isTranscribing: boolean
+  startDictation: () => Promise<void>
+  /** Devolve o transcrito, ou string vazia se nada foi ouvido ou algo falhou. */
+  stopDictation: () => Promise<string>
 }
 
 function describe(error: unknown): string {
@@ -141,5 +154,42 @@ export const useSensorStore = create<SensorState>((set, get) => {
     },
 
     setMicLevel: (level) => set({ micLevel: level }),
+
+    isDictating: false,
+    isTranscribing: false,
+
+    startDictation: async () => {
+      // Recusa em silêncio se o microfone já está ocupado — pelo botão da bancada ou
+      // por um ditado anterior que ainda não terminou.
+      const { isMicOn, isMicBusy, isDictating } = get()
+      if (isMicOn || isMicBusy || isDictating) return
+
+      set({ isMicBusy: true, micError: null })
+      try {
+        await startRecording()
+        set({ isDictating: true })
+      } catch (cause) {
+        set({ micError: describe(cause) })
+      } finally {
+        set({ isMicBusy: false })
+      }
+    },
+
+    stopDictation: async () => {
+      if (!get().isDictating) return ''
+      set({ isDictating: false, isTranscribing: true, micLevel: 0 })
+
+      try {
+        set({ lastRecording: await stopRecording() })
+        return await transcribe()
+      } catch (cause) {
+        // Erro vira aviso e string vazia: o botão de falar não pode deixar o chat
+        // num estado travado só porque o Whisper não estava lá.
+        set({ micError: describe(cause) })
+        return ''
+      } finally {
+        set({ isTranscribing: false })
+      }
+    },
   }
 })

@@ -51,31 +51,30 @@ impl ChatResponse {
     }
 }
 
-/// Resposta simulada da v0.1.
+/// Resposta simulada.
 ///
-/// PONTO DE TROCA: na v0.2 isto vira uma chamada a `core::agent`, que decide entre
-/// responder direto, pesquisar ou executar uma ação. A assinatura do comando não muda.
-pub fn mock_reply(assistant_name: &str, user_content: &str) -> ChatMessage {
-    let content = format!(
-        "[mock] Aqui é o {assistant_name}. Recebi \"{user_content}\", \
-         mas ainda não tenho IA ligada — isto é o esqueleto da v0.1."
-    );
-
-    ChatMessage::new(Role::Assistant, content)
+/// Não é mais o caminho normal — quem responde é `core::agent`. Sobrou como rede de
+/// segurança para quando o intérprete está desligado (modelo vazio nas configurações),
+/// para o app continuar utilizável antes de o Ollama existir.
+pub fn mock_reply_text(assistant_name: &str, user_content: &str) -> String {
+    format!(
+        "[mock] Aqui é o {assistant_name}. Recebi \"{user_content}\", mas o intérprete \
+         está desligado — configure o modelo do Ollama em Configurações."
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A rede de segurança precisa dizer QUEM está falando e O QUE foi recebido —
+    /// sem isso o usuário com o intérprete desligado não tem pista do que houve.
     #[test]
-    fn mock_reply_responde_como_assistente() {
-        let reply = mock_reply("Jarvis", "oi");
+    fn o_mock_identifica_o_assistente_e_ecoa_o_pedido() {
+        let texto = mock_reply_text("Jarvis", "oi");
 
-        assert_eq!(reply.role, Role::Assistant);
-        assert!(reply.content.contains("Jarvis"));
-        assert!(reply.content.contains("oi"));
-        assert!(!reply.id.is_empty());
+        assert!(texto.contains("Jarvis"));
+        assert!(texto.contains("oi"));
     }
 
     /// O frontend depende desta forma exata (`src/types/chat.ts`).

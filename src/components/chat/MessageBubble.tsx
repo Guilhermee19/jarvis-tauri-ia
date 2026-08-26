@@ -3,9 +3,26 @@
 import { cn, formatTime } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
 
-/** Bolhas por papel. Quando o agente real chegar, `system`/tool-use entram aqui. */
+/** Bolhas por papel. `system` é o log de gatilho e ação que o agente empurra. */
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
+
+  // Sem bolha e sem lado: isto é registro da máquina, não fala. A borda tracejada é
+  // o que separa as duas coisas sem precisar inventar uma cor nova.
+  if (message.role === 'system') {
+    return (
+      <div className="border-border-soft bg-surface/40 rounded-md border border-dashed px-3 py-2">
+        <div className="text-accent pb-1 text-[9px] tracking-[0.22em] uppercase">
+          Log · {formatTime(message.timestamp)}
+        </div>
+        {/* Minúsculo e monoespaçado de propósito: alinha as colunas do trace e deixa
+            o olho pular por cima quando não interessa. */}
+        <pre className="text-muted font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
+          {message.content}
+        </pre>
+      </div>
+    )
+  }
 
   return (
     <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>

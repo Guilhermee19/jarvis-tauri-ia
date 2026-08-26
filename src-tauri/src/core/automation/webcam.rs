@@ -302,7 +302,9 @@ fn classify(error: nokhwa::NokhwaError) -> AutomationError {
     let message = error.to_string();
     let lowered = message.to_lowercase();
 
-    if lowered.contains("denied") || lowered.contains("permission") || lowered.contains("0x80070005")
+    if lowered.contains("denied")
+        || lowered.contains("permission")
+        || lowered.contains("0x80070005")
     {
         AutomationError::CameraDenied
     } else if lowered.contains("not found") || lowered.contains("no device") {

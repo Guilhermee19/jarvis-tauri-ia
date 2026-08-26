@@ -1,6 +1,9 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::core::voice::{play, Recording, Voice, VoiceError, VoiceState};
+use crate::core::services::Services;
+use crate::core::voice::{
+    play, transcribe as transcribe_audio, Recording, Voice, VoiceError, VoiceState,
+};
 use crate::state::AppState;
 
 /// Nível do microfone empurrado para a UI ~20×/s enquanto grava. É evento, e não
@@ -31,7 +34,9 @@ pub fn stop_recording(app: AppHandle, voice: State<'_, VoiceState>) -> Result<Re
         .app_cache_dir()
         .map_err(|error| format!("sem diretório de cache para gravar o áudio: {error}"))?;
 
-    voice.stop_recording(&dir.join(RECORDING_FILE)).map_err(stringify)
+    voice
+        .stop_recording(&dir.join(RECORDING_FILE))
+        .map_err(stringify)
 }
 
 #[tauri::command]
@@ -39,12 +44,47 @@ pub fn is_recording(voice: State<'_, VoiceState>) -> bool {
     voice.is_recording()
 }
 
+/// Transcreve o WAV que `stop_recording` deixou em disco.
+///
+/// Separado do `stop_recording` de propósito: a bancada de diagnóstico testa o
+/// microfone sem pagar os segundos do Whisper, e quem fala com o chat encadeia os
+/// dois. É aqui que o whisper-server sobe, na primeira vez que alguém usa a voz —
+/// quem nunca fala com o Jarvis nunca paga por isso.
+#[tauri::command]
+pub async fn transcribe(
+    app: AppHandle,
+    voice: State<'_, VoiceState>,
+    services: State<'_, Services>,
+) -> Result<String, String> {
+    let http = voice.http();
+
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("sem diretório de dados para achar o Whisper: {error}"))?;
+    let url = services
+        .ensure_whisper(&http, &data_dir)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("sem diretório de cache para ler o áudio: {error}"))?;
+
+    transcribe_audio(&http, &url, &cache_dir.join(RECORDING_FILE))
+        .await
+        .map_err(stringify)
+}
+
 #[tauri::command]
 pub async fn list_voices(
     voice: State<'_, VoiceState>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Voice>, String> {
-    let engine = voice.tts(&state.settings().eleven_labs_api_key).map_err(stringify)?;
+    let engine = voice
+        .tts(&state.settings().eleven_labs_api_key)
+        .map_err(stringify)?;
     engine.voices().await.map_err(stringify)
 }
 
@@ -59,7 +99,9 @@ pub async fn speak_text(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let settings = state.settings();
-    let engine = voice.tts(&settings.eleven_labs_api_key).map_err(stringify)?;
+    let engine = voice
+        .tts(&settings.eleven_labs_api_key)
+        .map_err(stringify)?;
 
     let chosen = match voice_id.filter(|id| !id.trim().is_empty()) {
         Some(id) => id,

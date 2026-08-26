@@ -7,6 +7,12 @@
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ASSISTANT_NAME: &str = "Jarvis";
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+
+/// Escolhido medindo, não por reputação: contra o `llama3.2:3b` ele acertou 12 de 12
+/// comandos falados em português (o llama errou "próxima faixa") e ainda devolveu a
+/// busca com os acentos corrigidos. Latência com o modelo quente: ~0,4 s.
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:3b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -21,6 +27,13 @@ pub struct AppSettings {
     /// Voz do TTS. Vazio = usa a primeira voz da conta, para o botão de teste
     /// funcionar assim que a key é colada, sem passo extra de configuração.
     pub tts_voice_id: String,
+    /// Onde o Ollama escuta. Local por padrão; o campo existe para apontar para outra
+    /// máquina da rede, que é como um notebook fraco usa o desktop de casa.
+    pub ollama_url: String,
+    /// Modelo que interpreta os comandos. VAZIO DESLIGA o intérprete e volta às
+    /// respostas simuladas — é a saída de emergência, no mesmo padrão do
+    /// `tts_voice_id`, sem precisar de um booleano só para isso.
+    pub ollama_model: String,
 }
 
 impl Default for AppSettings {
@@ -30,6 +43,8 @@ impl Default for AppSettings {
             assistant_name: DEFAULT_ASSISTANT_NAME.to_owned(),
             eleven_labs_api_key: String::new(),
             tts_voice_id: String::new(),
+            ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
+            ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
         }
     }
 }

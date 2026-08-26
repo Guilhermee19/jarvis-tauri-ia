@@ -5,17 +5,22 @@
 //! lê o WAV que [`VoiceState::stop_recording`] deixa em disco, e a resposta do
 //! modelo entra em [`TtsEngine::synthesize`] no lugar da frase de teste.
 //!
-//! O que ainda NÃO existe aqui: `stt.rs` (Whisper) e `wake_word.rs`. A gravação já
-//! entrega o formato que o Whisper quer (WAV mono, PCM 16 bits), então essa peça
-//! entra sem mexer no microfone.
+//! O que ainda NÃO existe aqui: `wake_word.rs`.
+//!
+//! Sobre o formato do áudio: a gravação entrega WAV mono PCM de 16 bits, que é o que
+//! o Whisper quer — MENOS na taxa de amostragem. O microfone abre no formato nativo
+//! do dispositivo (tipicamente 48 kHz) e o whisper.cpp recusa qualquer coisa que não
+//! seja 16 kHz. Quem resolve isso é `stt.rs`, na leitura, sem mexer no `mic.rs`.
 
 mod mic;
+mod stt;
 mod tts;
 
 use std::path::Path;
 use std::sync::Mutex;
 
 pub use mic::{Recorder, Recording};
+pub use stt::transcribe;
 pub use tts::{play, ElevenLabs, TtsEngine, Voice};
 
 use crate::core::lock;
@@ -36,6 +41,20 @@ pub enum VoiceError {
     NotRecording,
     #[error("falha ao gravar o arquivo WAV: {0}")]
     WavWrite(String),
+    #[error("falha ao ler o áudio gravado: {0}")]
+    WavLeitura(String),
+    #[error("gravação curta demais — segure o botão enquanto fala")]
+    GravacaoCurta,
+    #[error("não ouvi nada — fale mais perto do microfone")]
+    NadaOuvido,
+    #[error(
+        "o serviço de transcrição não respondeu em {0}. Confira o caminho do Whisper em Configurações"
+    )]
+    TranscricaoOffline(String),
+    #[error("a transcrição falhou (HTTP {status}): {corpo}")]
+    TranscricaoRecusada { status: u16, corpo: String },
+    #[error("falha de rede ao transcrever: {0}")]
+    TranscricaoRede(String),
     #[error("defina a API key da ElevenLabs em Configurações para usar a voz")]
     MissingApiKey,
     #[error("nenhuma voz disponível na conta da ElevenLabs")]
@@ -67,6 +86,12 @@ impl VoiceState {
         lock(&self.recorder).is_some()
     }
 
+    /// O mesmo pool que fala com a ElevenLabs serve para falar com o Whisper local —
+    /// clonar compartilha as conexões.
+    pub fn http(&self) -> reqwest::Client {
+        self.http.clone()
+    }
+
     pub fn start_recording<F>(&self, on_level: F) -> Result<(), VoiceError>
     where
         F: Fn(f32) + Send + 'static,
@@ -81,7 +106,9 @@ impl VoiceState {
     }
 
     pub fn stop_recording(&self, path: &Path) -> Result<Recording, VoiceError> {
-        let recorder = lock(&self.recorder).take().ok_or(VoiceError::NotRecording)?;
+        let recorder = lock(&self.recorder)
+            .take()
+            .ok_or(VoiceError::NotRecording)?;
         recorder.stop(path)
     }
 

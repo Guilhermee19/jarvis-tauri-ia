@@ -1,17 +1,20 @@
 use tauri::State;
 
-use crate::core::chat::{mock_reply, ChatMessage, ChatResponse, Role};
+use crate::core::agent::{self, AgentError};
+use crate::core::chat::{ChatMessage, ChatResponse, Role};
+use crate::core::services::Services;
 use crate::state::AppState;
 
-/// Recebe a mensagem do usuário e devolve a resposta do assistente.
+/// Recebe a mensagem do usuário, deixa o agente entender e agir, e devolve a resposta.
 ///
-/// PONTO DE TROCA: hoje chama `core::chat::mock_reply`; na v0.2 passa a chamar
-/// `core::agent`, que roda o loop de tool use. Assinatura e tipos não mudam — por
-/// isso já é `async`.
+/// Uma jogada pode empurrar DUAS mensagens no histórico: o log do gatilho e a
+/// resposta. A assinatura não muda por causa disso — o frontend recarrega o histórico
+/// depois de enviar, que é o que mantém o espelho fiel sem inventar um segundo canal.
 #[tauri::command]
 pub async fn send_message(
     content: String,
     state: State<'_, AppState>,
+    services: State<'_, Services>,
 ) -> Result<ChatResponse, String> {
     let content = content.trim().to_owned();
     if content.is_empty() {
@@ -20,10 +23,34 @@ pub async fn send_message(
 
     state.push_message(ChatMessage::new(Role::User, content.clone()));
 
-    let reply = mock_reply(&state.settings().assistant_name, &content);
+    let settings = state.settings();
+    let http = state.http();
+
+    // Sobe o Ollama se ninguém atender. O resultado é ignorado de propósito: se não
+    // subir, quem dá a mensagem boa (com o link e o comando do `ollama pull`) é o
+    // `AgentError::Offline`, logo abaixo — reportar aqui seria pior e em dobro.
+    if !settings.ollama_model.trim().is_empty() {
+        let _ = services.ensure_ollama(&http, &settings.ollama_url).await;
+    }
+
+    let outcome = agent::handle(&http, &settings, &content)
+        .await
+        .map_err(stringify)?;
+
+    // Ordem importa: o log entra ANTES da resposta, então a conversa se lê como
+    // usuário → o que ele entendeu e fez → o que ele respondeu.
+    if let Some(trace) = outcome.trace {
+        state.push_message(ChatMessage::new(Role::System, trace));
+    }
+
+    let reply = ChatMessage::new(Role::Assistant, outcome.reply);
     state.push_message(reply.clone());
 
     Ok(ChatResponse::new(reply))
+}
+
+fn stringify(error: AgentError) -> String {
+    error.to_string()
 }
 
 /// A UI chama isto ao montar: como o histórico é do backend, a janela pode ser

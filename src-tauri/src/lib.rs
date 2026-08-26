@@ -14,13 +14,14 @@ mod window;
 use tauri::Manager;
 
 use crate::core::automation::AutomationState;
+use crate::core::services::Services;
 use crate::core::voice::VoiceState;
 use crate::state::AppState;
 use crate::storage::json_store::JsonSettingsStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             app.manage(AppState::new(Box::new(JsonSettingsStore::new(&config_dir))));
@@ -28,6 +29,9 @@ pub fn run() {
             // configurações, e cada sensor é dono só do que ele abre.
             app.manage(VoiceState::new());
             app.manage(AutomationState::new());
+            // Dono dos processos externos (whisper-server, ollama). Nada sobe aqui:
+            // a subida é preguiçosa, na primeira vez que a voz é usada.
+            app.manage(Services::new());
 
             tray::build(app.handle())?;
             Ok(())
@@ -49,6 +53,7 @@ pub fn run() {
             commands::voice::is_recording,
             commands::voice::list_voices,
             commands::voice::speak_text,
+            commands::voice::transcribe,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,
@@ -56,6 +61,14 @@ pub fn run() {
             commands::automation::list_monitors,
             commands::automation::capture_screenshot,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("erro ao iniciar o Jarvis");
+
+    // `RunEvent::Exit` em vez de mexer no `quit_app` e no menu da bandeja: são duas
+    // portas de saída hoje, e qualquer terceira que apareça amanhã passa por aqui.
+    app.run(|handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            handle.state::<Services>().shutdown();
+        }
+    });
 }

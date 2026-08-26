@@ -15,6 +15,10 @@ pub struct AppState {
     history: Mutex<Vec<ChatMessage>>,
     settings: Mutex<AppSettings>,
     store: Box<dyn SettingsStore>,
+    /// Cliente do intérprete. Fica aqui pelo mesmo motivo que o do TTS fica no
+    /// `VoiceState`: o pool de conexões é caro para recriar por chamada, e o timeout
+    /// dele é longo de propósito (carregar o modelo na primeira vez leva minutos).
+    http: reqwest::Client,
 }
 
 impl AppState {
@@ -28,11 +32,17 @@ impl AppState {
             history: Mutex::new(Vec::new()),
             settings: Mutex::new(settings),
             store,
+            http: crate::core::agent::client(),
         }
     }
 
     pub fn settings(&self) -> AppSettings {
         lock(&self.settings).clone()
+    }
+
+    /// O clone compartilha o pool de conexões — é a forma barata prevista pelo reqwest.
+    pub fn http(&self) -> reqwest::Client {
+        self.http.clone()
     }
 
     /// Grava em disco ANTES de atualizar a memória: se o disco falhar, o estado

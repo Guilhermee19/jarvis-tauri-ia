@@ -3,7 +3,14 @@ export { clearHistory, getHistory, sendMessage } from './chat'
 export { getSettings, saveSettings } from './settings'
 export { hideWindow, minimizeWindow, quitApp, showWindow, toggleWindow } from './system'
 export { JarvisEvent, onJarvisEvent } from './events'
-export { isRecording, listVoices, speakText, startRecording, stopRecording } from './voice'
+export {
+  isRecording,
+  listVoices,
+  speakText,
+  startRecording,
+  stopRecording,
+  transcribe,
+} from './voice'
 export {
   captureScreenshot,
   captureWebcamFrame,

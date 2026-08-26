@@ -46,8 +46,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({ messages: [...state.messages, optimistic], isTyping: true, error: null }))
 
     try {
-      const response = await sendMessage(trimmed)
-      set((state) => ({ messages: [...state.messages, response.message], isTyping: false }))
+      // Uma jogada do agente pode empurrar DUAS mensagens no histórico: o log do
+      // gatilho e a resposta. Recarregar em vez de dar append mantém o espelho fiel
+      // — e de quebra troca a bolha otimista pela versão com o id do backend.
+      await sendMessage(trimmed)
+      await get().loadHistory()
+      set({ isTyping: false })
     } catch (error) {
       set({ isTyping: false, error: describeError(error) })
     }
