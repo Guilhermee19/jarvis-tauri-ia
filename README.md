@@ -853,6 +853,55 @@ A lição vale para os outros dois prompts: a extração de memória teve o mesm
 comportamento, e a correção foi a mesma. **Ao mexer em qualquer prompt aqui, conte os
 exemplos de cada lado antes de reescrever as regras.**
 
+### Ele não pode dizer que fez o que não fez
+
+Um segundo bug de produção, e o pior tipo:
+
+> **"salve essa musica nas minhas musicas curtidas, gostei dela."**
+> _"A música Jorge Vercillo – Homem-Aranha foi adicionada à sua lista favorita na
+> Spotify. Fico feliz em ter agradado ao seu gosto musical!"_
+
+**Nada aconteceu.** O log da mensagem não tem linha `AÇÃO` nenhuma — o roteador
+classificou como conversa, o que está **certo**, porque não existe verbo para curtir
+música. Quem errou foi o modelo de conversa, que inventou uma ação que não existe e a
+descreveu no passado.
+
+Isso é pior que executar o comando errado. Executar errado deixa rastro no log e no PC;
+mentir sobre ter executado some com a diferença entre funcionar e não funcionar, e a
+pessoa só descobre quando abre o Spotify.
+
+A correção foi cinto e suspensório, como o resto:
+
+1. **`prompt_de_conversa` lista o que o app FAZ e o que NÃO FAZ**, e proíbe o passado:
+   nada de "pronto", "feito", "adicionei". Sem a lista, o modelo não tem como saber o que
+   este app faz e preenche a lacuna com o que um assistente genérico faria.
+2. **O roteador ganhou a regra de que ele não faz tudo** — pedido sem verbo é `reply`,
+   e escolher a ação parecida é o pior erro possível. `"salva essa música"` não é
+   `play_music`; `"qual está tocando agora"` não é `media_play_pause`.
+
+A segunda regra veio do turno seguinte do mesmo diálogo: **"e pra add a q esta tocando
+agora no spotify"** virou `media_play_pause` e **pausou a música**. O roteador viu
+"tocando" e casou com o verbo de mídia — o mesmo modo de falha do desabafo, com outra
+palavra-gatilho.
+
+### O log agora diz qual verbo ele escolheu
+
+A linha `INTERPRETE` carrega o verbo, não só o modelo e o tempo:
+
+```
+INTERPRETE qwen2.5vl:3b · 3.0 s · reply
+```
+
+Sem isso, **"ele entendeu como conversa" e "ele executou a coisa errada" eram a mesma
+tela** — dois defeitos com correções opostas. Foi o que fez o bug acima levar dois turnos
+para ser entendido.
+
+E existe **"Mostrar o log em toda mensagem"** nas configurações. Desligado (o padrão), o
+log só aparece quando houve ação ou memória, porque uma caixa embaixo de cada "bom dia"
+faz o log inteiro passar a ser ignorado. Ligado, ele aparece sempre — que é o único jeito
+de ver o verbo numa conversa que não mexeu em nada, exatamente onde as respostas erradas
+se escondem.
+
 **Adicionar um comando novo do PC são quatro pontos**: a variante no enum `Intent`, o
 verbo em `ACOES`, o braço no `match` de `execute`, e a linha na tabela do system prompt.
 O `o_schema_e_o_enum_falam_a_mesma_lingua` cobra os dois primeiros — ele quebra se o enum
@@ -885,7 +934,11 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
   "memoriaPath": "",
   "braveApiKey": "",
   "spotifyClientId": "",
-  "spotifyClientSecret": ""
+  "spotifyClientSecret": "",
+  "webcamWidth": 0,
+  "webcamHeight": 0,
+  "webcamMirror": false,
+  "logDetalhado": false
 }
 ```
 

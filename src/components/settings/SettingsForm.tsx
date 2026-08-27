@@ -39,6 +39,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
     chave(initial.webcamWidth, initial.webcamHeight),
   )
   const [webcamMirror, setWebcamMirror] = useState(initial.webcamMirror)
+  const [logDetalhado, setLogDetalhado] = useState(initial.logDetalhado)
 
   const { resolucoes, erro: erroResolucoes } = useWebcamResolutions()
 
@@ -154,6 +155,23 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         </label>
       </fieldset>
 
+      <label className="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          checked={logDetalhado}
+          onChange={(event) => setLogDetalhado(event.target.checked)}
+          className="accent-accent border-border-soft bg-base mt-0.5 h-4 w-4 shrink-0 rounded border"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-content text-sm">Mostrar o log em toda mensagem</span>
+          <span className="text-muted text-[11px] leading-snug">
+            Normalmente o log só aparece quando ele executa algo ou mexe na memória. Ligado, aparece
+            sempre — e mostra o VERBO que ele escolheu, que é o que revela quando ele entendeu seu
+            pedido como conversa em vez de comando.
+          </span>
+        </span>
+      </label>
+
       <Input
         label="Pasta da memória"
         value={memoriaPath}
@@ -194,6 +212,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               spotifyClientSecret: spotifySecret.trim(),
               ...parseResolucao(webcamResolucao),
               webcamMirror,
+              logDetalhado,
             })
           }
           disabled={isSaving}

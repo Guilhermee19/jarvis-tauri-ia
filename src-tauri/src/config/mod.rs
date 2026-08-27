@@ -80,6 +80,17 @@ pub struct AppSettings {
     /// MJPEG que é a maior economia do preview. Os bytes continuam na orientação
     /// real — que é o que um modelo tem que receber quando a v0.2 chegar.
     pub webcam_mirror: bool,
+    /// Mostrar o bloco de log em TODA mensagem, inclusive conversa que não mexeu em nada.
+    ///
+    /// Desligado, o log só aparece quando houve ação ou mudança de memória — uma caixa
+    /// embaixo de cada "bom dia" faz o log passar a ser ignorado, e aí ele não serve
+    /// quando importa.
+    ///
+    /// Ligado, dá para ver o VERBO que o roteador escolheu mesmo quando ele não executou
+    /// nada. É o que separa "ele entendeu como conversa" de "ele executou a coisa
+    /// errada" — dois defeitos com correções opostas que produziam exatamente a mesma
+    /// tela.
+    pub log_detalhado: bool,
 }
 
 impl Default for AppSettings {
@@ -98,6 +109,7 @@ impl Default for AppSettings {
             webcam_width: 0,
             webcam_height: 0,
             webcam_mirror: false,
+            log_detalhado: false,
         }
     }
 }

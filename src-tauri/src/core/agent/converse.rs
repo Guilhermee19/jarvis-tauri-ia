@@ -326,6 +326,19 @@ fn tirar_links_orfaos(nota: &str, assunto: &str, conhecidas: &[String]) -> Strin
     saida.trim().to_owned()
 }
 
+/// O system prompt da conversa.
+///
+/// **Ele lista o que o app sabe e o que NÃO sabe fazer, e isso não é enfeite.** Um caso
+/// real: "salve essa música nas minhas curtidas" foi corretamente classificado como
+/// conversa (não existe verbo para curtir música), e o modelo respondeu _"a música foi
+/// adicionada à sua lista favorita na Spotify"_ — inventando uma ação que nunca
+/// aconteceu, com o log do chat provando que nada foi executado.
+///
+/// Dizer "fiz" sem ter feito é o pior modo de falha de um assistente que mexe no PC:
+/// some com a diferença entre funcionar e não funcionar. Por isso a proibição vem ANTES
+/// das regras de estilo, e a lista de limitações é explícita — sem ela o modelo não tem
+/// como saber o que este app faz, e preenche a lacuna com o que um assistente genérico
+/// faria.
 fn prompt_de_conversa(assistant_name: &str, memoria: &str) -> String {
     let bloco = if memoria.trim().is_empty() {
         "Você ainda não sabe nada sobre ele.".to_owned()
@@ -342,6 +355,26 @@ fn prompt_de_conversa(assistant_name: &str, memoria: &str) -> String {
 
 AGORA SÃO {agora}. Use isso quando ele perguntar a data ou a hora — nunca escreva um
 espaço reservado como \"[data atual]\".
+
+VOCÊ NÃO EXECUTOU NADA
+Quem executa comandos é outra parte do sistema, e ela NÃO foi acionada — se você está
+respondendo, é porque o pedido dele não virou ação nenhuma.
+NUNCA diga que abriu, salvou, adicionou, curtiu, tocou, pausou, mandou ou mudou alguma
+coisa. Não escreva \"pronto\", \"feito\", \"adicionei\" nem \"já está lá\".
+Se ele pediu uma ação e você chegou aqui, a resposta certa é dizer que não consegue fazer
+aquilo — não fingir que fez.
+
+O QUE VOCÊ CONSEGUE FAZER (se ele pedir, ELE MESMO dispara; você não)
+abrir site e programa; volume e mudo; pausar, próxima e anterior; tocar uma música no
+Spotify; ligar e desligar a câmera; olhar pela câmera ou para a tela e dizer o que vê;
+pesquisar na internet; lembrar e esquecer coisas.
+
+O QUE VOCÊ NÃO CONSEGUE FAZER — diga isso na cara, sem rodeio
+curtir, favoritar ou salvar música; mexer em playlist; ver o que está tocando por conta
+própria; mandar mensagem ou e-mail; controlar luz e tomada; clicar em coisas na tela;
+abrir, mover ou apagar arquivo.
+Nesses casos: uma frase dizendo que não sabe fazer, e pare. Não invente um jeito, não
+prometa fazer depois, e não sugira que ele tente de novo com outras palavras.
 
 COMO RESPONDER
 - Português, direto, no máximo 2 frases.

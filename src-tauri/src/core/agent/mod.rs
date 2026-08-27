@@ -136,7 +136,7 @@ pub async fn handle(
     let acao = intent::interpret(http, url, model, nome, &memoria.apelidos(), dito).await?;
     let pensou = relogio.elapsed();
 
-    let mut log = Log::novo(dito, model, pensou);
+    let mut log = Log::novo(dito, model, &acao, pensou, settings.log_detalhado);
     let mut ui = None;
 
     let reply = match &acao {
@@ -670,16 +670,36 @@ struct Log {
     linhas: Vec<String>,
     /// Sem ação nem mudança de memória, não há log — só houve conversa.
     houve_algo: bool,
+    /// Mostra o log em TODA mensagem, inclusive conversa pura. Vem das configurações.
+    sempre: bool,
 }
 
 impl Log {
-    fn novo(dito: &str, model: &str, pensou: std::time::Duration) -> Self {
+    /// A linha `INTERPRETE` carrega **o verbo que o modelo escolheu**, e não só o nome do
+    /// modelo e o tempo.
+    ///
+    /// Sem ele não havia como saber por que uma resposta saiu errada: "salve essa música
+    /// nas minhas curtidas" virou `reply` (nada foi executado) e o modelo respondeu que
+    /// tinha salvado. O log da época mostrava só `INTERPRETE qwen2.5vl:3b · 3.0 s` — e
+    /// "ele entendeu como conversa" e "ele executou a coisa errada" ficavam idênticos.
+    fn novo(
+        dito: &str,
+        model: &str,
+        acao: &Intent,
+        pensou: std::time::Duration,
+        sempre: bool,
+    ) -> Self {
         Self {
             linhas: vec![
                 format!("GATILHO    {dito}"),
-                format!("INTERPRETE {model} · {:.1} s", pensou.as_secs_f32()),
+                format!(
+                    "INTERPRETE {model} · {:.1} s · {}",
+                    pensou.as_secs_f32(),
+                    verbo(acao)
+                ),
             ],
             houve_algo: false,
+            sempre,
         }
     }
 
@@ -715,8 +735,14 @@ impl Log {
         self.houve_algo = true;
     }
 
+    /// Sem ação nem memória o log some, porque uma caixa embaixo de cada "bom dia" faz o
+    /// log inteiro passar a ser ignorado — e aí ele não serve para nada quando importa.
+    ///
+    /// `sempre` é a saída para depurar: com ele ligado, dá para ver o verbo escolhido
+    /// mesmo numa conversa que não mexeu em nada, que é justamente onde as respostas
+    /// erradas se escondiam.
     fn render(self) -> Option<String> {
-        self.houve_algo.then(|| self.linhas.join("\n"))
+        (self.houve_algo || self.sempre).then(|| self.linhas.join("\n"))
     }
 }
 
@@ -781,20 +807,64 @@ mod tests {
         let vazio = Log::novo(
             "bom dia",
             "qwen2.5:3b",
+            &Intent::Reply {},
             std::time::Duration::from_millis(400),
+            false,
         );
         assert!(vazio.render().is_none());
 
         let mut com_memoria = Log::novo(
             "meu gato chama Bidu",
             "qwen2.5:3b",
+            &Intent::Reply {},
             std::time::Duration::from_millis(900),
+            false,
         );
         com_memoria.memoria('+', "gato bidu");
 
         let texto = com_memoria.render().expect("tem que gerar log");
         assert!(texto.contains("GATILHO    meu gato chama Bidu"));
         assert!(texto.contains("MEMÓRIA    + gato bidu"));
+    }
+
+    /// O caso que motivou isto: "salve essa música nas minhas curtidas" virou `reply`
+    /// (nada foi executado) e o modelo respondeu que tinha salvado. O log mostrava só o
+    /// nome do modelo e o tempo — "entendeu como conversa" e "executou a coisa errada"
+    /// ficavam idênticos na tela, e são defeitos com correções opostas.
+    #[test]
+    fn o_log_diz_qual_verbo_o_modelo_escolheu() {
+        let mut log = Log::novo(
+            "salve essa musica nas minhas curtidas",
+            "qwen2.5vl:3b",
+            &Intent::Reply {},
+            std::time::Duration::from_millis(3000),
+            true,
+        );
+        log.memoria('+', "musica curtida");
+
+        let texto = log.render().expect("tem que gerar log");
+        assert!(
+            texto.contains("reply"),
+            "o verbo escolhido tem que aparecer"
+        );
+        assert!(texto.contains("qwen2.5vl:3b"));
+    }
+
+    /// Com o log detalhado ligado, até a conversa que não mexeu em nada aparece — é o
+    /// único jeito de ver o verbo quando a resposta saiu errada sem executar nada.
+    #[test]
+    fn o_log_detalhado_mostra_ate_a_conversa_pura() {
+        let log = Log::novo(
+            "bom dia",
+            "qwen2.5:3b",
+            &Intent::Reply {},
+            std::time::Duration::from_millis(400),
+            true,
+        );
+
+        let texto = log.render().expect("com log detalhado, sempre aparece");
+        assert!(texto.contains("GATILHO    bom dia"));
+        assert!(texto.contains("reply"));
     }
 
     /// "quem foi santos dumont?" no meio de um papo não pode abrir uma aba do Google

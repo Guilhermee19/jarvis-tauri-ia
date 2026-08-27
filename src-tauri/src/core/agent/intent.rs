@@ -322,6 +322,15 @@ memória e não na internet.
 
 Nunca invente uma ação, e nunca invente termos que o usuário não disse.
 
+VOCÊ NÃO FAZ TUDO. Não existe ação para curtir, favoritar ou salvar música, mexer em
+playlist, ver o que está tocando, mandar mensagem, controlar luz ou tomada, nem mexer em
+arquivo. Pedido desses é reply — quem responde explica que não sabe fazer. Escolher a
+ação PARECIDA é o pior erro possível: \"salva essa música\" não é play_music, e
+\"qual está tocando agora\" não é media_play_pause.
+
+Frase que fala de música TOCANDO só vira media_play_pause se ela mandar PARAR ou
+RETOMAR. Citar o que está tocando é conversa.
+
 Exemplos de COMANDO:
 \"abre o youtube\"                    -> {{\"action\":\"open_site\",\"url\":\"https://www.youtube.com\"}}
 \"põe o spotify pra rodar\"           -> {{\"action\":\"open_app\",\"name\":\"spotify\"}}
@@ -357,6 +366,9 @@ Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objet
 \"o volume do meu fone tá estourando os ouvidos\"         -> {{\"action\":\"reply\"}}
 \"passei o dia todo no vscode\"                           -> {{\"action\":\"reply\"}}
 \"acho o youtube viciante demais\"                        -> {{\"action\":\"reply\"}}
+\"salve essa musica nas minhas curtidas, gostei dela\"     -> {{\"action\":\"reply\"}}
+\"e pra add a que esta tocando agora, não a que vc salvou\" -> {{\"action\":\"reply\"}}
+\"que musica é essa que ta tocando?\"                      -> {{\"action\":\"reply\"}}
 \"tela azul de novo, que ódio\"                           -> {{\"action\":\"reply\"}}
 \"esse mouse aqui já era, tá com o clique falhando\"      -> {{\"action\":\"reply\"}}
 \"não tô vendo a hora de acabar esse projeto\"            -> {{\"action\":\"reply\"}}

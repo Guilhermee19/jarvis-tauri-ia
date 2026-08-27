@@ -27,6 +27,14 @@ export interface AppSettings {
   webcamHeight: number
   /** Espelhar a imagem na tela (visão de selfie). Só exibição — não muda os bytes. */
   webcamMirror: boolean
+  /**
+   * Mostrar o bloco de log em TODA mensagem, inclusive conversa que não mexeu em nada.
+   *
+   * Desligado, o log só aparece quando houve ação ou mudança de memória. Ligado, dá para
+   * ver o VERBO que o roteador escolheu mesmo quando ele não executou nada — que é o que
+   * separa "ele entendeu como conversa" de "ele executou a coisa errada".
+   */
+  logDetalhado: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -43,4 +51,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webcamWidth: 0,
   webcamHeight: 0,
   webcamMirror: false,
+  logDetalhado: false,
 }
