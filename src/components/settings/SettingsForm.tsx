@@ -50,7 +50,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         value={apiKey}
         onChange={(event) => setApiKey(event.target.value)}
         placeholder="sk-ant-…"
-        hint="Guardada em texto puro no arquivo de config do app. Ainda não é validada nem usada."
+        hint="Com ela, ele usa o Claude para OLHAR (tela e webcam) — identifica objeto e lê texto muito melhor que o modelo local, e custa ~US$ 0,01 por pergunta com imagem. Vazia, ele olha pelo Ollama, de graça. Guardada em texto puro no arquivo de config."
       />
 
       <Input

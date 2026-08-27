@@ -30,10 +30,15 @@ pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5vl:3b";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
-    /// Guardada em texto puro por enquanto. Migrar para o keyring do SO quando a
-    /// integração real com a Anthropic entrar.
+    /// Liga a visão pelo Claude (`core::vision`). **Vazia é um estado de primeira
+    /// classe**, não uma configuração pela metade: sem ela o app olha pelo modelo local
+    /// e continua 100% offline, que é o padrão do projeto. Mesma convenção de
+    /// `ollama_model` e `tts_voice_id` — vazio significa "não se aplica".
+    ///
+    /// Guardada em texto puro. Migrar para o keyring do SO — agora que ela vale
+    /// dinheiro de verdade, isso deixou de ser hipotético.
     pub anthropic_api_key: String,
-    /// Usado na UI hoje; vira parte do system prompt quando o agente entrar.
+    /// Usado na UI e no system prompt do roteador e da conversa.
     pub assistant_name: String,
     /// Mesma decisão da key da Anthropic: texto puro por enquanto.
     pub eleven_labs_api_key: String,

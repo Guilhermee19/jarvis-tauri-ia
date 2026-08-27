@@ -49,9 +49,18 @@ export function listMonitors(): Promise<MonitorInfo[]> {
   return call<MonitorInfo[]>('list_monitors')
 }
 
-/** Sem `monitorId`, captura o monitor principal. */
-export function captureScreenshot(monitorId?: number): Promise<CapturedImage> {
+/**
+ * Sem `monitorId`, captura o monitor principal.
+ *
+ * A bancada não passa `maxWidth`: ela existe para PROVAR que a captura saiu certa, e
+ * uma imagem reduzida esconderia justamente o defeito que se quer ver. Reduzir é
+ * assunto de quem manda a tela para um modelo, e isso acontece dentro do agente.
+ */
+export function captureScreenshot(monitorId?: number, maxWidth?: number): Promise<CapturedImage> {
   // `null` explícito em vez de `undefined`: chave ausente e chave nula não são a
   // mesma coisa do outro lado, e o `Option<u32>` do Rust espera a nula.
-  return call<CapturedImage>('capture_screenshot', { monitorId: monitorId ?? null })
+  return call<CapturedImage>('capture_screenshot', {
+    monitorId: monitorId ?? null,
+    maxWidth: maxWidth ?? null,
+  })
 }

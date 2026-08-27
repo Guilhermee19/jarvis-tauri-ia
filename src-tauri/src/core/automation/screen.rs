@@ -21,9 +21,16 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, AutomationError> {
     monitors.iter().map(describe).collect()
 }
 
-/// `monitor_id` vem de [`list_monitors`]. `None` cai no monitor principal, que é o
-/// que o agente (v0.2+) vai querer quando pedir "uma foto da tela" sem qualificar.
-pub fn capture_screen(monitor_id: Option<u32>) -> Result<CapturedImage, AutomationError> {
+/// `monitor_id` vem de [`list_monitors`]. `None` cai no monitor principal, que é o que
+/// o agente quer quando você pergunta "o que tem na minha tela" sem qualificar.
+///
+/// `max_width` reduz antes de codificar. A bancada de diagnóstico manda `None` (ela
+/// desenha a captura em tamanho real); quem manda a tela para um modelo passa o teto,
+/// porque 1080p em PNG são megabytes de base64 no corpo da requisição.
+pub fn capture_screen(
+    monitor_id: Option<u32>,
+    max_width: Option<u32>,
+) -> Result<CapturedImage, AutomationError> {
     let monitors = Monitor::all().map_err(screen)?;
     if monitors.is_empty() {
         return Err(AutomationError::NoMonitor);
@@ -35,7 +42,7 @@ pub fn capture_screen(monitor_id: Option<u32>) -> Result<CapturedImage, Automati
     };
 
     let image = monitor.capture_image().map_err(screen)?;
-    CapturedImage::from_screen(image.width(), image.height(), image.into_raw())
+    CapturedImage::from_screen(image.width(), image.height(), image.into_raw(), max_width)
 }
 
 fn find(monitors: &[Monitor], id: u32) -> Result<&Monitor, AutomationError> {

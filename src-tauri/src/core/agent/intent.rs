@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::AgentError;
+use crate::core::vision;
 
 /// O que o modelo pode pedir.
 ///
@@ -63,9 +64,18 @@ pub enum Intent {
     /// dispositivo pelo Rust deixaria o botão apagado com a câmera ligada.
     WebcamOn {},
     WebcamOff {},
-    /// "o que é isso?", "olha isso aqui". Liga a câmera, tira um quadro e conta o que
-    /// vê. Diferente de [`Intent::WebcamOn`], que só liga e mostra.
-    Look {},
+    /// "que mouse é esse?", "o que tem na minha tela?". Tira uma imagem — da câmera ou
+    /// da tela — e responde a pergunta olhando para ela. Diferente de
+    /// [`Intent::WebcamOn`], que só liga e mostra.
+    ///
+    /// A PERGUNTA não é campo daqui. Ela já chega inteira em `handle` como o texto do
+    /// usuário, e pedir ao modelo para extraí-la seria mais um campo para ele errar num
+    /// prompt que o README já chama de a peça mais frágil do app. `fonte` é o mínimo
+    /// que só o roteador consegue decidir.
+    Look {
+        #[serde(default = "onde_der")]
+        fonte: vision::Fonte,
+    },
     /// "lembra que eu acordo 6h30". O caminho EXPLÍCITO da memória, e o confiável — a
     /// extração automática em `converse` é best-effort.
     Remember {
@@ -88,6 +98,13 @@ pub enum Intent {
 
 fn um_passo() -> u8 {
     1
+}
+
+/// Modelo pequeno esquece campo. Sem este default, `{"action":"look"}` — que é o que
+/// ele emite metade das vezes para "o que é isso?" — falharia o parse inteiro e viraria
+/// "não entendi", quando o certo é olhar onde fizer sentido.
+fn onde_der() -> vision::Fonte {
+    vision::Fonte::Auto
 }
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
@@ -132,6 +149,7 @@ pub fn schema() -> serde_json::Value {
             "about":    { "type": "string" },
             "nickname": { "type": "string" },
             "target":   { "type": "string" },
+            "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
             "steps":    { "type": "integer" },
             "level":    { "type": "integer" }
         },
@@ -249,6 +267,14 @@ fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
 /// Os exemplos não são enfeite: num modelo de 3B eles valem mais que a descrição. Os
 /// de mídia estão aí porque sem eles "pula essa música" e "volta pra anterior" caíam
 /// em `media_play_pause` — medido.
+///
+/// **O BALANÇO entre os três blocos é o que decide se ele executa sem ser pedido**, e
+/// ele degrada sozinho: cada feature nova (música, webcam, visão) chega com exemplos de
+/// COMANDO e nenhum de CONVERSA, e a razão sobe sem ninguém decidir isso. A 6:1 ele
+/// pausou a música de um usuário no meio de um desabafo. Ao mexer aqui, **conte os dois
+/// lados antes de reescrever regra nenhuma** — hoje são 20 comandos, 4 perguntas sobre
+/// o mundo e 13 conversas (~1,5:1), e as conversas incluem de propósito frases que
+/// CITAM tela e objeto sem pedir para olhar, que são os falsos amigos do `look`.
 fn system_prompt(assistant_name: &str, apelidos: &BTreeMap<String, String>) -> String {
     let mut prompt = format!(
         "Você é o roteador de comandos do {assistant_name}, um assistente de desktop Windows.
@@ -267,8 +293,10 @@ play_music        TOCAR uma música específica que ele nomeou. `query` = artist
                   da música, sem \"toca\", sem \"põe\" e sem \"no spotify\".
 webcam_on         ligar a câmera na tela.
 webcam_off        desligar a câmera.
-look              OLHAR pela câmera e dizer o que está vendo. É quando ele aponta algo
-                  para a webcam e pergunta o que é.
+look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
+                  \"webcam\" quando ele aponta algo para a câmera ou fala do que está
+                  segurando; \"tela\" quando ele fala do que está NA TELA, numa janela,
+                  num site ou numa mensagem de erro; \"auto\" quando ele não disser.
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
@@ -303,17 +331,15 @@ Exemplos de COMANDO:
 \"pula essa música\"                  -> {{\"action\":\"media_next\"}}
 \"volta pra anterior\"                -> {{\"action\":\"media_previous\"}}
 \"toque Charlie Brown Jr só os loucos sabem no spotify\" -> {{\"action\":\"play_music\",\"query\":\"Charlie Brown Jr Só os Loucos Sabem\"}}
-\"põe Bohemian Rhapsody pra tocar\"   -> {{\"action\":\"play_music\",\"query\":\"Queen Bohemian Rhapsody\"}}
 \"coloca uma música do Djavan\"       -> {{\"action\":\"play_music\",\"query\":\"Djavan\"}}
-\"abre o spotify\"                    -> {{\"action\":\"open_app\",\"name\":\"spotify\"}}
-\"abre a webcam\"                     -> {{\"action\":\"webcam_on\"}}
 \"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
 \"desliga a câmera\"                  -> {{\"action\":\"webcam_off\"}}
-\"fecha a webcam\"                    -> {{\"action\":\"webcam_off\"}}
-\"o que é isso?\"                     -> {{\"action\":\"look\"}}
-\"olha isso aqui\"                    -> {{\"action\":\"look\"}}
-\"o que você está vendo?\"            -> {{\"action\":\"look\"}}
-\"que objeto é esse na minha mão\"    -> {{\"action\":\"look\"}}
+\"o que é isso?\"                     -> {{\"action\":\"look\",\"fonte\":\"auto\"}}
+\"que objeto é esse na minha mão\"    -> {{\"action\":\"look\",\"fonte\":\"webcam\"}}
+\"que mouse é esse?\"                 -> {{\"action\":\"look\",\"fonte\":\"webcam\"}}
+\"o que tem na minha tela?\"          -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
+\"que erro é esse aí na tela\"        -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
+\"lê isso pra mim\"                   -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
 \"lembra que eu acordo 6h30\"         -> {{\"action\":\"remember\",\"fact\":\"Acorda 6h30.\"}}
 \"esquece a academia\"                -> {{\"action\":\"forget\",\"about\":\"academia\"}}
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
@@ -324,13 +350,17 @@ Exemplos de PERGUNTA SOBRE O MUNDO — vão para web_search:
 \"o que é rust?\"                     -> {{\"action\":\"web_search\",\"query\":\"rust linguagem de programação\"}}
 \"como faz pão de queijo\"            -> {{\"action\":\"web_search\",\"query\":\"receita de pão de queijo\"}}
 
-Exemplos de CONVERSA — todos reply, mesmo citando música, jogo ou programa:
+Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objeto:
 \"po enquanto nada, quero é ir pra casa pra poder jogar\" -> {{\"action\":\"reply\"}}
 \"não pedi nada pra vc, to apenas conversando\"           -> {{\"action\":\"reply\"}}
 \"essa música que tocou agora é boa demais\"              -> {{\"action\":\"reply\"}}
 \"o volume do meu fone tá estourando os ouvidos\"         -> {{\"action\":\"reply\"}}
 \"passei o dia todo no vscode\"                           -> {{\"action\":\"reply\"}}
 \"acho o youtube viciante demais\"                        -> {{\"action\":\"reply\"}}
+\"tela azul de novo, que ódio\"                           -> {{\"action\":\"reply\"}}
+\"esse mouse aqui já era, tá com o clique falhando\"      -> {{\"action\":\"reply\"}}
+\"não tô vendo a hora de acabar esse projeto\"            -> {{\"action\":\"reply\"}}
+\"minha tela tá pequena demais pra trabalhar\"            -> {{\"action\":\"reply\"}}
 \"que horas eu acordo mesmo?\"                            -> {{\"action\":\"reply\"}}
 \"bom dia\"                                               -> {{\"action\":\"reply\"}}
 \"e aí, tudo certo?\"                                     -> {{\"action\":\"reply\"}}"
@@ -434,7 +464,14 @@ mod tests {
             ),
             (r#"{"action":"webcam_on"}"#, Intent::WebcamOn {}),
             (r#"{"action":"webcam_off"}"#, Intent::WebcamOff {}),
-            (r#"{"action":"look"}"#, Intent::Look {}),
+            // Sem `fonte`: é o que o 3B emite metade das vezes, e o default tem que
+            // segurar isso — a alternativa é "não entendi" para "o que é isso?".
+            (
+                r#"{"action":"look"}"#,
+                Intent::Look {
+                    fonte: vision::Fonte::Auto,
+                },
+            ),
             (r#"{"action":"reply"}"#, Intent::Reply {}),
         ];
 
@@ -463,6 +500,66 @@ mod tests {
         assert!(serde_json::from_str::<Intent>(r#"{"action":"open_site"}"#).is_err());
         assert!(serde_json::from_str::<Intent>(r#"{"action":"alias","nickname":"x"}"#).is_err());
         assert!(serde_json::from_str::<Intent>(r#"{"action":"voar"}"#).is_err());
+    }
+
+    /// A `fonte` é a única coisa que só o roteador consegue decidir, então ela precisa
+    /// atravessar o parse inteira — e uma fonte inventada tem que falhar, senão "olha
+    /// na minha impressora" viraria um `look` sem imagem nenhuma.
+    #[test]
+    fn a_fonte_do_look_atravessa_o_parse() {
+        let tela: Intent =
+            serde_json::from_str(r#"{"action":"look","fonte":"tela"}"#).expect("tela");
+        assert_eq!(
+            tela,
+            Intent::Look {
+                fonte: vision::Fonte::Tela
+            }
+        );
+
+        let webcam: Intent =
+            serde_json::from_str(r#"{"action":"look","fonte":"webcam"}"#).expect("webcam");
+        assert_eq!(
+            webcam,
+            Intent::Look {
+                fonte: vision::Fonte::Webcam
+            }
+        );
+
+        assert!(
+            serde_json::from_str::<Intent>(r#"{"action":"look","fonte":"impressora"}"#).is_err()
+        );
+    }
+
+    /// O balanço de exemplos é o que impede comando falso, e degrada sozinho a cada
+    /// feature nova. Este teste não julga o número certo — ele só quebra quando alguém
+    /// empilha exemplos de COMANDO sem contrapeso, que foi exatamente como a razão
+    /// subiu de 10:9 para 22:9 sem ninguém decidir isso.
+    #[test]
+    fn os_exemplos_de_comando_nao_afogam_os_de_conversa() {
+        let prompt = system_prompt("Jarvis", &BTreeMap::new());
+
+        let comandos = bloco(&prompt, "Exemplos de COMANDO:");
+        let conversas = bloco(&prompt, "Exemplos de CONVERSA");
+
+        assert!(comandos > 0 && conversas > 0, "os blocos sumiram do prompt");
+        assert!(
+            comandos <= conversas * 2,
+            "{comandos} exemplos de comando contra {conversas} de conversa: \
+             acrescente conversas antes de acrescentar comandos"
+        );
+    }
+
+    /// Conta as linhas de exemplo (`"frase" -> {…}`) de um bloco até a linha em branco.
+    fn bloco(prompt: &str, titulo: &str) -> usize {
+        prompt
+            .split_once(titulo)
+            .map(|(_, resto)| resto)
+            .unwrap_or_default()
+            .lines()
+            .skip(1)
+            .take_while(|linha| !linha.trim().is_empty())
+            .filter(|linha| linha.contains("->"))
+            .count()
     }
 
     /// O laço de aprendizado: sem os apelidos no prompt, o roteador não tem como saber

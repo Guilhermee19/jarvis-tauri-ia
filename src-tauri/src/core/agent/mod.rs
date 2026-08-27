@@ -19,14 +19,14 @@ use chrono::Utc;
 
 pub use intent::client;
 
-/// Reexportados para `core::vision`, que fala com o MESMO modelo já quente — em 4 GB
-/// de VRAM não cabe um segundo.
+/// Reexportados para `core::vision::ollama`, que fala com o MESMO modelo já quente —
+/// em 4 GB de VRAM não cabe um segundo.
 pub(crate) use intent::{pedir as pedir_ao_modelo, KEEP_ALIVE};
 
 use intent::Intent;
 
 use crate::config::AppSettings;
-use crate::core::automation::AutomationState;
+use crate::core::automation::{self, AutomationState};
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
 use crate::core::search;
@@ -66,6 +66,14 @@ pub enum AgentError {
     SemVisao(String),
     #[error("não consegui pegar a imagem da câmera: {0}")]
     SemCamera(String),
+    #[error("não consegui capturar a tela: {0}")]
+    SemTela(String),
+    /// A visão pela Anthropic falhou. Uma variante só, e não uma por causa (rede, HTTP,
+    /// recusa, corpo estranho), porque **este erro nunca chega à tela**: quem o recebe é
+    /// o fallback para o modelo local, que já vai responder a pergunta. O texto é para
+    /// o stderr de quem está depurando.
+    #[error("{0}")]
+    VisaoRemota(String),
 }
 
 /// Coisa que só a UI sabe fazer.
@@ -231,15 +239,20 @@ pub async fn handle(
             }
         }
 
-        // Olhar pela câmera. A captura vem PRIMEIRO e o pedido de mostrar depois: se
-        // fosse ao contrário, a UI e o Rust disputariam a abertura do dispositivo.
-        // `capture_webcam_frame` abre e fecha sozinho quando a câmera está desligada
-        // — foi desenhado para exatamente este caso.
-        Intent::Look {} => {
+        // Olhar — para a câmera ou para a tela. A captura vem PRIMEIRO e o pedido de
+        // mostrar depois: se fosse ao contrário, a UI e o Rust disputariam a abertura do
+        // dispositivo. `capture_webcam_frame` abre e fecha sozinho quando a câmera está
+        // desligada — foi desenhado para exatamente este caso.
+        Intent::Look { fonte } => {
+            // `Auto` vira uma fonte concreta AQUI, e não no prompt: quem sabe se a
+            // câmera está aberta é o `AutomationState`, e adivinhar isso num 3B seria
+            // trocar um fato por um palpite.
+            let fonte = fonte.resolver(automation.is_webcam_open());
+            let acao = Intent::Look { fonte };
             log.acao(&acao);
 
             let relogio = Instant::now();
-            let resultado = olhar(http, settings, automation).await;
+            let resultado = olhar(http, settings, memoria, automation, dito, fonte, &mut log).await;
             log.desfecho(
                 resultado.as_ref().err().map(ToString::to_string),
                 relogio.elapsed().as_millis(),
@@ -254,11 +267,14 @@ pub async fn handle(
             memoria.atualizar_rotinas();
 
             match resultado {
-                Ok(descricao) => {
+                Ok(resposta) => {
                     // Só mostra a câmera se deu certo — ligar a webcam para em seguida
-                    // dizer "não consegui ver" é o pior dos dois mundos.
-                    ui = Some(AcaoDeUi::WebcamOn);
-                    descricao
+                    // dizer "não consegui ver" é o pior dos dois mundos. E olhar a tela
+                    // não liga câmera nenhuma.
+                    if fonte == vision::Fonte::Webcam {
+                        ui = Some(AcaoDeUi::WebcamOn);
+                    }
+                    resposta
                 }
                 Err(erro) => erro.to_string(),
             }
@@ -404,51 +420,71 @@ async fn destilar(
     log.memoria(if atual.is_empty() { '+' } else { '~' }, &assunto);
 }
 
-/// Tira um quadro da webcam, descreve, e tenta enriquecer com uma busca.
+/// Largura máxima da tela mandada ao modelo.
 ///
-/// A busca é BEST-EFFORT de propósito: ela é o "tenta entender" do pedido, mas se a
-/// internet estiver fora ou a Wikipedia não souber do assunto, dizer o que se vê já
-/// vale — e é o que foi pedido primeiro.
+/// Sem teto, 1080p em PNG vira 1–4 MB de base64 no corpo da requisição — contra ~530 KB
+/// de um quadro de câmera. E reduzir a tela não custa o que custaria reduzir a webcam: o
+/// que se lê numa captura é texto grande de interface, não um rótulo minúsculo a meio
+/// metro da lente.
+///
+/// ponytail: 1568 é o ponto onde uma imagem custa ~1600 tokens. O Claude lê até 2576 px
+/// (e cobra até ~4784 tokens por imagem) — subir é trocar este número, se algum dia um
+/// cartaz sair ilegível numa tela 4K.
+const LARGURA_DA_TELA: u32 = 1568;
+
+/// Tira uma imagem — da câmera ou da tela —, responde a pergunta olhando para ela, e
+/// pesquisa quando a resposta não está na imagem.
+///
+/// **A busca aqui não é a mesma coisa que a busca de antes.** Ela era best-effort com a
+/// descrição inteira como consulta — uma pergunta longa e ruim, disparada sempre. Agora
+/// quem decide é o modelo de visão: ele devolve `buscar` preenchido quando identificou a
+/// coisa mas a resposta está fora da imagem (a data dos ingressos não está no cartaz).
+/// Vazio, a imagem já respondeu e não se gasta uma ida à internet.
 async fn olhar(
     http: &reqwest::Client,
     settings: &AppSettings,
+    memoria: &Memoria,
     automation: &AutomationState,
+    pergunta: &str,
+    fonte: vision::Fonte,
+    log: &mut Log,
 ) -> Result<String, AgentError> {
-    // ponytail: chamada bloqueante dentro de `async`. Com a câmera já aberta o `grab`
-    // volta em milissegundos; fechada, o `Session::open` custa algumas centenas. Vira
-    // `spawn_blocking` se algum dia travar a UI de verdade.
-    // A mesma resolução configurada para o preview: o que o modelo enxerga é o que o
-    // usuário vê, e "por que ele não leu o que estava escrito?" tem uma resposta só.
-    // Sem teto de largura: o modelo lê o quadro INTEIRO. Reduzir aqui pelo tamanho da
-    // janela é o oposto do que se quer — é justamente na resolução cheia que ele tem
-    // chance de ler um rótulo ou reconhecer um objeto pequeno.
-    let quadro = automation
-        .capture_webcam_frame(settings.webcam_target(), None)
-        .map_err(|erro| AgentError::SemCamera(erro.to_string()))?;
+    // ponytail: chamadas bloqueantes dentro de `async`. Com a câmera já aberta o `grab`
+    // volta em milissegundos; fechada, o `Session::open` custa algumas centenas, e a
+    // captura de tela fica na mesma ordem. Vira `spawn_blocking` se travar a UI de verdade.
+    let imagem = match fonte {
+        // A mesma resolução configurada para o preview, e sem teto de largura: o modelo
+        // lê o quadro INTEIRO. Reduzir pelo tamanho da janela é o oposto do que se quer
+        // — é na resolução cheia que ele tem chance de ler um rótulo ou reconhecer um
+        // objeto pequeno.
+        vision::Fonte::Webcam | vision::Fonte::Auto => automation
+            .capture_webcam_frame(settings.webcam_target(), None)
+            .map_err(|erro| AgentError::SemCamera(erro.to_string()))?,
+        vision::Fonte::Tela => automation::capture_screen(None, Some(LARGURA_DA_TELA))
+            .map_err(|erro| AgentError::SemTela(erro.to_string()))?,
+    };
 
-    let descricao = vision::descrever(
+    let visao = vision::ver(
         http,
-        &settings.ollama_url,
-        &settings.ollama_model,
-        vision::so_o_base64(&quadro.data_url),
+        settings,
+        &vision::Imagem::do_data_url(&imagem.data_url),
+        pergunta,
+        fonte,
     )
     .await?;
 
-    let Ok(achados) = search::pesquisar(http, &descricao, &settings.brave_api_key).await else {
-        return Ok(descricao);
-    };
+    let termo = visao.buscar.trim();
+    if termo.is_empty() {
+        return Ok(visao.resposta);
+    }
 
-    let enriquecida = converse::responder_sobre_o_que_viu(
-        http,
-        &settings.ollama_url,
-        &settings.ollama_model,
-        &settings.assistant_name,
-        &descricao,
-        &achados,
-    )
-    .await;
-
-    Ok(enriquecida.unwrap_or(descricao))
+    // A autoridade INVERTE aqui, e é por isso que este caminho é outro:
+    // `responder_sobre_o_que_viu` manda ignorar a busca quando ela falar de outra coisa
+    // — certo para "que mouse é esse", e exatamente errado para "quando são os
+    // ingressos", onde a resposta só existe na busca. A imagem identificou a coisa; o
+    // resto é o caminho normal de pergunta sobre o mundo, com as fontes e a nota.
+    let consulta = format!("{termo} {}", pergunta.trim());
+    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), log).await)
 }
 
 /// Frases que pedem a aba do navegador. O resto é pergunta no meio da conversa, e
@@ -616,7 +652,7 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::PlayMusic { .. }
         | Intent::WebcamOn {}
         | Intent::WebcamOff {}
-        | Intent::Look {}
+        | Intent::Look { .. }
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. } => String::new(),

@@ -63,9 +63,15 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
     monitors().map_err(stringify)
 }
 
+/// `max_width` omitido devolve a tela inteira — é o que a bancada de diagnóstico quer,
+/// porque ela existe justamente para provar que a captura saiu certa. Reduzir é
+/// assunto de quem manda a imagem para um modelo, e isso acontece dentro do agente.
 #[tauri::command(async)]
-pub fn capture_screenshot(monitor_id: Option<u32>) -> Result<CapturedImage, String> {
-    capture_screen(monitor_id).map_err(stringify)
+pub fn capture_screenshot(
+    monitor_id: Option<u32>,
+    max_width: Option<u32>,
+) -> Result<CapturedImage, String> {
+    capture_screen(monitor_id, max_width.filter(|t| *t > 0)).map_err(stringify)
 }
 
 fn stringify(error: AutomationError) -> String {

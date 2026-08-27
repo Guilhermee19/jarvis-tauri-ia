@@ -501,55 +501,15 @@ pub async fn responder_com_busca(
     Ok(pedir(http, url, model, &corpo).await?.trim().to_owned())
 }
 
-/// Junta o que a câmera mostrou com o que a busca trouxe, numa fala só.
-///
-/// Separado do [`responder_com_busca`] porque a fonte primária é outra: ali a verdade
-/// vem toda dos trechos, aqui o que ele VÊ manda, e a busca só acrescenta contexto. Um
-/// prompt que confunde as duas coisas faz o modelo trocar o que está na frente dele
-/// pelo que leu na internet.
-pub async fn responder_sobre_o_que_viu(
-    http: &reqwest::Client,
-    url: &str,
-    model: &str,
-    assistant_name: &str,
-    descricao: &str,
-    achados: &[crate::core::search::Achado],
-) -> Result<String, AgentError> {
-    let fontes: Vec<String> = achados
-        .iter()
-        .map(|achado| {
-            format!(
-                "{}\n{}",
-                achado.titulo,
-                achado.trecho.chars().take(500).collect::<String>()
-            )
-        })
-        .collect();
-
-    let corpo = serde_json::json!({
-        "model": model,
-        "stream": false,
-        "keep_alive": super::intent::KEEP_ALIVE,
-        "options": { "temperature": 0.3, "repeat_penalty": 1.15, "num_predict": 250 },
-        "messages": [
-            { "role": "system", "content": format!(
-                "Você é o {assistant_name}. Você acabou de OLHAR pela webcam e também deu \
-                 uma olhada na internet sobre o que viu.\n\n\
-                 - Comece pelo que você está VENDO. Isso manda: se a busca falar de outra \
-                   coisa, ignore a busca.\n\
-                 - Só acrescente da busca o que ajudar a entender o que está na imagem, e \
-                   em no máximo uma frase.\n\
-                 - 2 a 3 frases no total, em português, conversando. Sem \"segundo as \
-                   fontes\", sem links, sem lista.\n\
-                 - Não invente nada que não esteja na descrição nem nos trechos.") },
-            { "role": "user", "content":
-                format!("O QUE A CÂMERA MOSTRA\n{descricao}\n\nO QUE A BUSCA TROUXE\n\n{}", fontes.join("\n\n")) },
-        ],
-    });
-
-    let bruto = pedir(http, url, model, &corpo).await?;
-    Ok(tirar_links_orfaos(bruto.trim(), "", &[]))
-}
+// Aqui morava `responder_sobre_o_que_viu`, que juntava a descrição da câmera com o que
+// a busca trouxe. Ela existia porque a visão SEMPRE pesquisava — com a descrição inteira
+// como consulta — e alguém precisava reconciliar as duas fontes, dizendo ao modelo que a
+// imagem mandava e a busca era contexto.
+//
+// Não pesquisamos mais às cegas: a visão devolve `buscar` só quando a resposta está fora
+// da imagem, e nesse caso a autoridade é a busca, não o contrário — que é exatamente o
+// caso ("quando abrem os ingressos?") em que o prompt dela mandava ignorar o trecho que
+// tem a resposta. Sem esse fluxo, ela virou código morto. Está no git.
 
 /// O que vai para a memória depois de uma busca: o texto da fonte, não a paráfrase.
 ///

@@ -88,23 +88,32 @@ impl CapturedImage {
     ) -> Result<Self, AutomationError> {
         let frame = RgbImage::from_raw(width, height, pixels)
             .ok_or_else(|| AutomationError::Encode("frame com tamanho inesperado".into()))?;
-        let mut imagem = DynamicImage::from(frame);
 
-        if let Some(teto) = max_width.filter(|teto| width > *teto) {
-            let altura = (u64::from(height) * u64::from(teto) / u64::from(width)).max(1) as u32;
-            imagem = imagem.resize_exact(teto, altura, FilterType::Lanczos3);
-        }
-
-        Self::encode_jpeg(&imagem)
+        Self::encode_jpeg(&reduzir(DynamicImage::from(frame), max_width))
     }
 
     /// PNG para a tela: texto de interface vira borrão nos artefatos do JPEG, e é
-    /// justamente texto que o modelo vai precisar ler na v0.2.
-    fn from_screen(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, AutomationError> {
+    /// justamente texto que o modelo precisa ler — o nome de um evento num cartaz, a
+    /// mensagem de uma caixa de erro.
+    ///
+    /// `max_width` importa MAIS aqui do que na webcam, e por um motivo diferente: sem
+    /// teto, uma tela 1080p vira 1–4 MB de base64 no corpo da requisição, contra ~530
+    /// KB de um quadro de câmera. Quem olha a prévia na tela manda `None`; quem manda
+    /// para um modelo passa o teto.
+    fn from_screen(
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+        max_width: Option<u32>,
+    ) -> Result<Self, AutomationError> {
         let shot = RgbaImage::from_raw(width, height, pixels)
             .ok_or_else(|| AutomationError::Encode("captura com tamanho inesperado".into()))?;
 
-        Self::encode(&shot.into(), ImageFormat::Png, "image/png")
+        Self::encode(
+            &reduzir(shot.into(), max_width),
+            ImageFormat::Png,
+            "image/png",
+        )
     }
 
     /// JPEG com qualidade explícita.
@@ -145,6 +154,23 @@ impl CapturedImage {
             height: source.height(),
         })
     }
+}
+
+/// Reduz mantendo a proporção, e nunca amplia.
+///
+/// Lanczos3 e não o filtro rápido: o destino é ou uma prévia que o usuário olha, ou um
+/// modelo que vai LER a imagem — e reduzir com vizinho mais próximo serrilha justamente
+/// as bordas finas (texto, contorno de objeto) das quais os dois dependem.
+fn reduzir(imagem: DynamicImage, max_width: Option<u32>) -> DynamicImage {
+    let largura = imagem.width();
+    let Some(teto) = max_width.filter(|teto| largura > *teto) else {
+        return imagem;
+    };
+
+    // `.max(1)` porque uma imagem muito mais larga que alta zeraria a altura, e
+    // `resize_exact(_, 0, _)` entra em pânico.
+    let altura = (u64::from(imagem.height()) * u64::from(teto) / u64::from(largura)).max(1) as u32;
+    imagem.resize_exact(teto, altura, FilterType::Lanczos3)
 }
 
 fn data_url(bytes: &[u8], mime: &str) -> String {

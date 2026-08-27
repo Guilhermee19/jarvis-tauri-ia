@@ -28,9 +28,13 @@ Tudo continua indo para o chat escrito, que é onde você lê o que o Whisper en
 que ele respondeu. Ali o vocativo não é exigido: ligar o modo já é a declaração de que a
 fala é para ele.
 
+**E ele enxerga.** "Que mouse é esse?" com o mouse na frente da câmera, "o que tem na
+minha tela?" com uma janela aberta — ele decide sozinho para onde olhar, tira a imagem e
+responde a pergunta. Quando a resposta não está na imagem ("quando abrem os ingressos
+desse evento?"), ele identifica a coisa, **pesquisa** e responde com as fontes.
+
 O que ainda não existe: wake word (o modo conversa ainda tem que ser ligado no botão) e
-o agente da Anthropic com tool use, com a `anthropicApiKey` nas configurações sem
-consumidor.
+o agente com tool use — a `anthropicApiKey` já é usada, mas só para olhar.
 
 ---
 
@@ -404,6 +408,7 @@ src-tauri/src/
 │   ├── system/           AGE sobre o SO: target.rs (validação) + audio.rs (COM)
 │   ├── services.rs       sobe e derruba o Ollama e o whisper-server
 │   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (ElevenLabs)
+│   ├── vision/           ENTENDE a imagem: claude.rs + ollama.rs, atrás da mesma `ver()`
 │   └── automation/       PERCEBE o ambiente: webcam (nokhwa) + tela (xcap)
 ├── storage/              trait SettingsStore + implementação JSON
 ├── config/               AppSettings
@@ -561,6 +566,61 @@ sobre como fazer pão de queijo"_. Preferir o "não sei" é o ponto.
 
 ---
 
+## Visão
+
+Pergunte "que mouse é esse?" com o mouse na frente da câmera, ou "o que tem na minha
+tela?" com uma janela aberta. Quem decide onde olhar é o roteador (`Intent::Look` carrega
+uma `fonte`), e quando ele não diz, `Fonte::Auto` resolve **pelo estado da webcam**:
+ligada é uma declaração de intenção — ninguém abre a câmera e pergunta sobre a tela.
+
+**A pergunta não é campo do `Intent`.** Ela já chega inteira no `handle` como o texto do
+usuário; pedir ao 3B para extraí-la seria mais um campo para ele errar no prompt mais
+frágil do app. O roteador decide só o que ninguém mais consegue decidir.
+
+### Ele diz quando não sabe, em vez de inventar
+
+A visão devolve `{resposta, buscar}`, não texto solto. `buscar` é a saída de emergência:
+o modelo pode LER "Comic Con Experience 2026" num cartaz e ainda assim não saber quando
+os ingressos abrem — isso não está na imagem. Sem um jeito de dizer isso, ele inventa uma
+data. Preenchido, significa "identifiquei a coisa, o resto está fora da imagem", e o
+`pesquisar_e_responder` que já existia faz o resto, com as fontes embaixo.
+
+Vazio, ele responde direto e não gasta uma ida à internet — que é o caso do mouse.
+
+**A autoridade inverte entre os dois casos**, e é por isso que são caminhos diferentes: em
+"que mouse é esse" a imagem manda; em "quando abrem os ingressos" a resposta só existe na
+busca. A função que reconciliava as duas fontes (`responder_sobre_o_que_viu`) foi
+apagada — o prompt dela mandava ignorar a busca quando ela falasse de outra coisa, que é
+exatamente o trecho que responde o segundo caso.
+
+### Com chave da Anthropic, ele enxerga MUITO melhor
+
+O `qwen2.5vl:3b` descreve bem uma cena ("um mouse preto sobre a mesa"), mas erra em
+identificar QUAL mouse e em ler texto pequeno numa captura — 810 no OCRBench contra 883
+do 7B. E erra sem avisar, que é o modo de falha caro. Com a `anthropicApiKey` preenchida a
+imagem vai para o `claude-opus-5`; **sem chave, nada muda** — ele olha pelo Ollama, de
+graça e offline, como já fazia.
+
+Se o Claude falhar (rede fora, chave errada, recusa dos classificadores), ele **cai no
+modelo local e responde assim mesmo**. Rede caindo não pode deixar o Jarvis cego, e por
+isso `stop_reason: "refusal"` é checado antes de ler o `content`: numa recusa esse array
+vem vazio, e pegar o primeiro bloco entraria em pânico.
+
+Custo: ~US$ 0,01 por pergunta com imagem. Só quando a pergunta é sobre uma imagem —
+conversa e comando continuam locais. Trocar por `claude-sonnet-5` custa ~40% disso com a
+mesma resolução máxima, e é uma const em `core/vision/claude.rs`.
+
+### A tela é reduzida antes de sair; a webcam não
+
+`capture_screen` ganhou teto de largura (1568 px). Sem ele, 1080p em PNG vira 1–4 MB de
+base64 no corpo da requisição, contra ~530 KB de um quadro de câmera em JPEG.
+
+Continua PNG e não JPEG: texto de interface vira borrão nos artefatos do JPEG, e é
+justamente texto que o modelo precisa ler. E a webcam continua indo em resolução cheia —
+lá o que se lê é um rótulo pequeno a meio metro da lente, não um título de janela.
+
+---
+
 ## Memória
 
 Mora em `memoria/`, no próprio projeto, e o formato é o do **Obsidian** — markdown com
@@ -577,7 +637,7 @@ fica em `historico.jsonl`, que serve só para a tela redesenhar as bolhas.
 
 | quando      | chamada                      | o que faz                                         |
 | ----------- | ---------------------------- | ------------------------------------------------- |
-| sempre      | `intent::interpret`          | classifica a frase em 1 de 14 verbos              |
+| sempre      | `intent::interpret`          | classifica a frase em 1 de 18 verbos              |
 | se for papo | `converse::responder`        | responde com histórico e notas relevantes         |
 | se for papo | `converse::destilar_assunto` | decide SE a troca virou conhecimento, e sobre quê |
 | se rendeu   | `converse::escrever_nota`    | reescreve a nota daquele assunto, inteira         |
@@ -655,14 +715,15 @@ duas é acaso — e ação que falhou não conta, senão um nome errado repetido
 
 ## Onde plugar cada feature futura
 
-| Feature                       | Entra em                        | Chamado por                                 | Substitui                 |
-| ----------------------------- | ------------------------------- | ------------------------------------------- | ------------------------- |
-| Comando novo do PC            | `core/system/` + `Intent`       | `core::agent::execute`                      | —                         |
-| Agente Claude + tool use      | `core/agent/`, ao lado do local | `core::agent::handle`                       | o intérprete do Ollama    |
-| Wake word                     | `core/voice/wake_word.rs`       | task de background no `setup` de `lib.rs`   | —                         |
-| Mouse, teclado (`enigo`)      | `core/automation/input.rs`      | `core::agent::execute`, com confirmação     | —                         |
-| Busca por embedding           | `core/memory/busca.rs`          | `Memoria::contexto`                         | a busca por palavra-chave |
-| Personalidade / system prompt | `core/agent/converse.rs`        | montado com o `assistant_name` das settings | —                         |
+| Feature                       | Entra em                         | Chamado por                                 | Substitui                 |
+| ----------------------------- | -------------------------------- | ------------------------------------------- | ------------------------- |
+| Comando novo do PC            | `core/system/` + `Intent`        | `core::agent::execute`                      | —                         |
+| Agente Claude + tool use      | `core/agent/`, ao lado do local  | `core::agent::handle`                       | o intérprete do Ollama    |
+| Wake word                     | `core/voice/wake_word.rs`        | task de background no `setup` de `lib.rs`   | —                         |
+| Outro backend de visão        | `core/vision/`, ao lado dos dois | `core::vision::ver`                         | o `if` da chave           |
+| Mouse, teclado (`enigo`)      | `core/automation/input.rs`       | `core::agent::execute`, com confirmação     | —                         |
+| Busca por embedding           | `core/memory/busca.rs`           | `Memoria::contexto`                         | a busca por palavra-chave |
+| Personalidade / system prompt | `core/agent/converse.rs`         | montado com o `assistant_name` das settings | —                         |
 
 ### O prompt do roteador é a peça mais frágil, e o teto é o balanço dos exemplos
 
@@ -675,14 +736,28 @@ Rebalanceando (10 comandos, 4 perguntas do mundo, 9 conversas) e acrescentando a
 "mencionar não é mandar", o placar foi de 15/18 com 3 falsos comandos para **23/23 com
 zero**. Mesmo modelo, mesma temperatura.
 
+**E ele degrada sozinho.** Cada feature nova chegou com exemplos de COMANDO e nenhum de
+CONVERSA — música, webcam e visão levaram a razão de volta a **22:9**, quase na
+proporção do bug. Agora existe um teste (`os_exemplos_de_comando_nao_afogam_os_de_conversa`)
+que quebra quando um lado passa do dobro do outro; ele não sabe qual é o número certo,
+só impede a regressão silenciosa. O balanço de hoje é 20 / 4 / 13, e as conversas
+incluem de propósito frases que **citam** tela e objeto sem pedir para olhar — "tela azul
+de novo, que ódio" é o falso amigo mais óbvio do `look`.
+
 A lição vale para os outros dois prompts: a extração de memória teve o mesmo
 comportamento, e a correção foi a mesma. **Ao mexer em qualquer prompt aqui, conte os
 exemplos de cada lado antes de reescrever as regras.**
 
-**Adicionar um comando novo do PC são quatro pontos**, e o `cargo test` cobra o quarto: a
-variante no enum `Intent`, o verbo em `ACOES`, o braço no `match` de `execute`, e a linha
-na tabela do system prompt. O teste `o_schema_e_o_enum_falam_a_mesma_lingua` quebra se o
-enum e o schema divergirem — é o que impede o modelo de pedir uma ação que não existe.
+**Adicionar um comando novo do PC são quatro pontos**: a variante no enum `Intent`, o
+verbo em `ACOES`, o braço no `match` de `execute`, e a linha na tabela do system prompt.
+O `o_schema_e_o_enum_falam_a_mesma_lingua` cobra os dois primeiros — ele quebra se o enum
+e o schema divergirem, que é o que impede o modelo de pedir uma ação que não existe.
+
+**Os pontos 3 e 4 falham em silêncio**, e vale saber disso antes de confiar no verde: o
+`execute` tem um braço catch-all, então um verbo esquecido lá compila e devolve string
+vazia, e nada testa o texto do prompt. E existe um **quinto** ponto que só aparece quando
+o verbo não é de hardware — o braço em `handle`, que é onde vivem `play_music`, `look`,
+`webcam_on/off`, `remember`, `forget` e `alias`. Nenhum deles tem uma linha em `execute`.
 
 Mouse e teclado sintéticos continuam reservados, e agora por um motivo mais concreto: as
 ações de hoje não dependem de qual janela está em foco e nunca precisam de confirmação.
@@ -714,11 +789,12 @@ diretório de dados do usuário num app instalado (ninguém escreve em Program F
 
 `ollamaModel` **vazio desliga o intérprete** e o Jarvis volta às respostas simuladas. É a
 saída de emergência sem precisar de um booleano só para isso — mesmo padrão do
-`ttsVoiceId`, onde vazio significa "usa o padrão".
+`ttsVoiceId`, onde vazio significa "usa o padrão", e do `anthropicApiKey`, onde vazio
+significa "olhe pelo modelo local".
 
-A chave fica em texto puro nesta versão — migrar para o keyring do SO quando a integração
-real entrar. `AppSettings` usa `#[serde(default)]`, então campos novos não quebram arquivos
-antigos.
+As chaves ficam em texto puro nesta versão — migrar para o keyring do SO era hipotético
+enquanto nenhuma delas era usada; agora duas custam dinheiro de verdade. `AppSettings` usa
+`#[serde(default)]`, então campos novos não quebram arquivos antigos.
 
 ## Comportamento de janela
 
