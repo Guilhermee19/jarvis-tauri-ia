@@ -1,4 +1,4 @@
-import type { CapturedImage, MonitorInfo } from '@/types'
+import type { CapturedImage, MonitorInfo, WebcamResolution } from '@/types'
 import { call } from './client'
 
 /** Wrappers de `src-tauri/src/commands/automation.rs`. */
@@ -22,9 +22,27 @@ export function isWebcamOpen(): Promise<boolean> {
 /**
  * Frame atual. Com a webcam fechada, abre e fecha em volta da captura — é isso que
  * permite a v0.2 tirar uma foto pontual chamando exatamente esta função.
+ *
+ * `maxWidth` limita a imagem DEVOLVIDA, não a captura: a câmera continua no que
+ * estiver configurado. É o que torna 1080p usável — a prévia pede o tamanho da
+ * janela e o quadro deixa de atravessar o IPC com quase dez vezes mais bytes do que
+ * a tela consegue mostrar. Omitir devolve o quadro inteiro, que é o que o modelo quer.
  */
-export function captureWebcamFrame(): Promise<CapturedImage> {
-  return call<CapturedImage>('capture_webcam_frame')
+export function captureWebcamFrame(maxWidth?: number): Promise<CapturedImage> {
+  // `null` explícito, como no `captureScreenshot`: o `Option<u32>` do Rust espera a
+  // chave nula, não a chave ausente.
+  return call<CapturedImage>('capture_webcam_frame', { maxWidth: maxWidth ?? null })
+}
+
+/**
+ * Resoluções que a câmera aceita, da maior para a menor.
+ *
+ * Abre o dispositivo só para perguntar, então NÃO chame com o preview rodando se der
+ * para evitar — são dois pedidos à mesma câmera. As configurações consultam uma vez,
+ * ao abrir a tela.
+ */
+export function listWebcamResolutions(): Promise<WebcamResolution[]> {
+  return call<WebcamResolution[]>('list_webcam_resolutions')
 }
 
 export function listMonitors(): Promise<MonitorInfo[]> {

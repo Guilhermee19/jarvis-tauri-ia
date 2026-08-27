@@ -1,5 +1,7 @@
 'use client'
 
+import { cn } from '@/lib/utils'
+
 interface SectionProps {
   title: string
   /** Uma linha dizendo o que o teste prova — a tela é de diagnóstico, não de uso. */
@@ -25,8 +27,22 @@ export function Section({ title, hint, error, children }: SectionProps) {
   )
 }
 
-/** Moldura das imagens capturadas: mantém proporção sem estourar a gaveta. */
-export function Preview({ src, label }: { src: string; label: string }) {
+/**
+ * Moldura das imagens capturadas: mantém proporção sem estourar a gaveta.
+ *
+ * `mirror` é só da webcam, e é transformação de EXIBIÇÃO — a imagem por baixo não
+ * muda. Vale para o preview e para o frame capturado pelos dois estarem na mesma
+ * tela: espelhar um e o outro não faria o botão parecer que capturou outra coisa.
+ */
+export function Preview({
+  src,
+  label,
+  mirror = false,
+}: {
+  src: string
+  label: string
+  mirror?: boolean
+}) {
   return (
     // `next/image` não tem o que otimizar aqui: a fonte é uma `data:` URL vinda do
     // Rust, o app é export estático e não há servidor para redimensionar nada.
@@ -34,7 +50,10 @@ export function Preview({ src, label }: { src: string; label: string }) {
     <img
       src={src}
       alt={label}
-      className="border-border-soft bg-base w-full rounded border object-contain"
+      className={cn(
+        'border-border-soft bg-base w-full rounded border object-contain',
+        mirror && '-scale-x-100',
+      )}
     />
   )
 }

@@ -28,6 +28,19 @@ export interface CapturedImage {
   height: number
 }
 
+/**
+ * Uma resolução que a câmera declara suportar.
+ *
+ * A lista vem do dispositivo, não de constantes: oferecer "1080p" numa webcam que só
+ * chega a 720p faria a escolha ser trocada em silêncio pelo formato mais próximo.
+ */
+export interface WebcamResolution {
+  width: number
+  height: number
+  /** Maior taxa oferecida NESTA resolução — costuma cair conforme ela sobe. */
+  maxFps: number
+}
+
 export interface MonitorInfo {
   id: number
   name: string

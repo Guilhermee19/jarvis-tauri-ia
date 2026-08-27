@@ -19,6 +19,26 @@ import type { Recording } from '@/types'
 const TARGET_FRAME_MS = 40
 
 /**
+ * Teto de largura do quadro da PRÉVIA, em pixels de dispositivo.
+ *
+ * A janela tem ~620px de largura; pedir 1920 para desenhar em 620 significa mandar
+ * ~9× os pixels que cabem na tela — e o custo aparece inteiro, porque cada quadro
+ * vira base64 (+33%), atravessa o IPC como string JSON e é decodificado de novo pelo
+ * webview, 25 vezes por segundo. Era isso que travava a prévia em 1080p.
+ *
+ * Multiplica pelo `devicePixelRatio` porque em tela HiDPI 620 CSS px são 1240 px
+ * reais, e pedir 620 ali deixaria a imagem BORRADA — que é o defeito oposto.
+ *
+ * O teto de 1920 impede que um monitor 4K peça mais que a própria câmera entrega.
+ */
+function larguraDaPrevia(): number {
+  if (typeof window === 'undefined') return 1280
+
+  const densidade = window.devicePixelRatio || 1
+  return Math.min(1920, Math.max(640, Math.round(window.innerWidth * densidade)))
+}
+
+/**
  * Estado dos sensores que ficam ligados por conta do usuário — não de uma tela.
  *
  * Mora aqui, e não nos componentes, porque webcam e microfone agora têm dois
@@ -39,6 +59,15 @@ interface SensorState {
    * estivesse ligada, que é o oposto do pedido.
    */
   setWebcam: (on: boolean) => Promise<void>
+  /**
+   * Fecha e reabre, para a câmera renegociar o formato.
+   *
+   * Existe porque a resolução é escolhida na ABERTURA do stream: salvar 1080p com o
+   * preview rodando não mudaria nada até o próximo desligar/ligar, e o ajuste
+   * pareceria simplesmente não funcionar. Com a webcam desligada é no-op — não é
+   * papel de salvar configuração ligar câmera.
+   */
+  reopenWebcam: () => Promise<void>
 
   isMicOn: boolean
   isMicBusy: boolean
@@ -98,7 +127,9 @@ export const useSensorStore = create<SensorState>((set, get) => {
       const startedAt = performance.now()
 
       try {
-        const frame = await captureWebcamFrame()
+        // Recalculado a cada quadro de propósito: a janela é redimensionável, e
+        // arrastar a borda tem que mudar o tamanho pedido sem reabrir a câmera.
+        const frame = await captureWebcamFrame(larguraDaPrevia())
         if (!get().isWebcamOn) return
         set({ webcamFrame: frame.dataUrl })
       } catch (cause) {
@@ -145,6 +176,12 @@ export const useSensorStore = create<SensorState>((set, get) => {
       } finally {
         set({ isWebcamBusy: false })
       }
+    },
+
+    reopenWebcam: async () => {
+      if (!get().isWebcamOn) return
+      await get().setWebcam(false)
+      await get().setWebcam(true)
     },
 
     isMicOn: false,

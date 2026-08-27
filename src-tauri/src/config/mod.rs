@@ -59,6 +59,22 @@ pub struct AppSettings {
     /// não tem caminho sem credencial, e isso foi medido.
     pub spotify_client_id: String,
     pub spotify_client_secret: String,
+    /// Resolução pedida à webcam. `0` em qualquer um dos dois = **automático**, que é
+    /// a política antiga: o formato mais perto de 640×480, dimensionado para a janela.
+    ///
+    /// É um PEDIDO, não uma garantia. A escolha final sai da lista de formatos
+    /// compatíveis da própria câmera (`list_webcam_resolutions`), então o valor
+    /// salvo aqui só deixa de valer se o dispositivo mudar — outra webcam, ou a
+    /// mesma num modo diferente. Nesse caso o mais próximo vence, em vez de falhar.
+    pub webcam_width: u32,
+    pub webcam_height: u32,
+    /// Espelhar a imagem horizontalmente na tela (visão de selfie).
+    ///
+    /// É preferência de EXIBIÇÃO e por isso mora só na UI: inverter no Rust
+    /// obrigaria a decodificar e recodificar cada quadro, matando o passthrough de
+    /// MJPEG que é a maior economia do preview. Os bytes continuam na orientação
+    /// real — que é o que um modelo tem que receber quando a v0.2 chegar.
+    pub webcam_mirror: bool,
 }
 
 impl Default for AppSettings {
@@ -74,6 +90,73 @@ impl Default for AppSettings {
             brave_api_key: String::new(),
             spotify_client_id: String::new(),
             spotify_client_secret: String::new(),
+            webcam_width: 0,
+            webcam_height: 0,
+            webcam_mirror: false,
         }
+    }
+}
+
+impl AppSettings {
+    /// Resolução pedida, ou `None` para "deixe a política automática escolher".
+    ///
+    /// Um lado zerado invalida o par inteiro: 1280×0 não é meio pedido, é um pedido
+    /// quebrado, e tratar como automático é melhor que procurar o formato mais perto
+    /// de zero pixels — que seria o menor de todos.
+    pub fn webcam_target(&self) -> Option<(u32, u32)> {
+        match (self.webcam_width, self.webcam_height) {
+            (0, _) | (_, 0) => None,
+            (largura, altura) => Some((largura, altura)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn o_padrao_deixa_a_webcam_no_automatico() {
+        assert_eq!(AppSettings::default().webcam_target(), None);
+    }
+
+    #[test]
+    fn resolucao_completa_vira_pedido() {
+        let settings = AppSettings {
+            webcam_width: 1280,
+            webcam_height: 720,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.webcam_target(), Some((1280, 720)));
+    }
+
+    /// Um lado zerado é pedido quebrado, não meio pedido: sem isto, o formato mais
+    /// perto de zero pixels venceria e a câmera abriria na MENOR resolução que tem.
+    #[test]
+    fn um_lado_zerado_cai_no_automatico() {
+        let so_largura = AppSettings {
+            webcam_width: 1280,
+            ..AppSettings::default()
+        };
+        let so_altura = AppSettings {
+            webcam_height: 720,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(so_largura.webcam_target(), None);
+        assert_eq!(so_altura.webcam_target(), None);
+    }
+
+    /// `#[serde(default)]` é o que faz um settings.json antigo — sem os campos da
+    /// webcam — continuar carregando em vez de virar erro no boot.
+    #[test]
+    fn config_antigo_sem_os_campos_da_webcam_ainda_carrega() {
+        let antigo = r#"{"assistantName":"Jarvis","ollamaModel":"qwen2.5vl:3b"}"#;
+        let settings: AppSettings = serde_json::from_str(antigo).expect("carrega");
+
+        assert_eq!(settings.assistant_name, "Jarvis");
+        assert_eq!(settings.webcam_target(), None);
+        assert!(!settings.webcam_mirror);
     }
 }

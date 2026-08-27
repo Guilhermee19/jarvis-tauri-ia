@@ -1,9 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { DEFAULT_SETTINGS, type AppSettings } from '@/types'
+import { listWebcamResolutions } from '@/lib/tauri'
+import { DEFAULT_SETTINGS, type AppSettings, type WebcamResolution } from '@/types'
+
+/** `0×0` é o "automático" — o mesmo par que o Rust lê como `None`. */
+const AUTOMATICO = '0x0'
+
+function chave(width: number, height: number): string {
+  return `${width}x${height}`
+}
 
 interface SettingsFormProps {
   initial: AppSettings
@@ -27,6 +35,12 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [braveKey, setBraveKey] = useState(initial.braveApiKey)
   const [spotifyId, setSpotifyId] = useState(initial.spotifyClientId)
   const [spotifySecret, setSpotifySecret] = useState(initial.spotifyClientSecret)
+  const [webcamResolucao, setWebcamResolucao] = useState(
+    chave(initial.webcamWidth, initial.webcamHeight),
+  )
+  const [webcamMirror, setWebcamMirror] = useState(initial.webcamMirror)
+
+  const { resolucoes, erro: erroResolucoes } = useWebcamResolutions()
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,6 +103,57 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         placeholder="…"
       />
 
+      <fieldset className="border-border-soft flex flex-col gap-3 rounded-lg border p-3">
+        <legend className="text-muted px-1 text-xs font-medium">Webcam</legend>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-muted text-xs font-medium">Resolução</span>
+          <select
+            value={webcamResolucao}
+            onChange={(event) => setWebcamResolucao(event.target.value)}
+            className="border-border-soft bg-base text-content focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+          >
+            <option value={AUTOMATICO}>Automático (perto de 640×480)</option>
+            {resolucoes.map((r) => (
+              <option key={chave(r.width, r.height)} value={chave(r.width, r.height)}>
+                {r.width}×{r.height} · até {r.maxFps} fps
+              </option>
+            ))}
+          </select>
+          <p className="text-muted text-[11px] leading-snug">
+            {erroResolucoes
+              ? `Não consegui perguntar à câmera (${erroResolucoes}). O automático continua valendo.`
+              : 'A lista vem da própria câmera. A prévia é reduzida para o tamanho da janela, então resolução alta não a deixa lenta — ela vale para o que o modelo lê no “o que é isso?”. Vale saber que muitas webcams comprimem MJPEG mais forte em 1080p para caber na banda do USB, e aí 720p pode sair com menos artefato.'}
+          </p>
+          {/* O valor salvo pode não estar na lista — outra webcam, ou a mesma num
+              modo diferente. Dizer isso é melhor que o `select` cair em branco. */}
+          {webcamResolucao !== AUTOMATICO &&
+          resolucoes.length > 0 &&
+          !resolucoes.some((r) => chave(r.width, r.height) === webcamResolucao) ? (
+            <p className="text-danger text-[11px] leading-snug">
+              A câmera atual não oferece {webcamResolucao.replace('x', '×')}. Ela vai abrir na
+              resolução mais próxima até você escolher outra.
+            </p>
+          ) : null}
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-2">
+          <input
+            type="checkbox"
+            checked={webcamMirror}
+            onChange={(event) => setWebcamMirror(event.target.checked)}
+            className="accent-accent border-border-soft bg-base mt-0.5 h-4 w-4 shrink-0 rounded border"
+          />
+          <span className="flex flex-col gap-0.5">
+            <span className="text-content text-sm">Espelhar imagem</span>
+            <span className="text-muted text-[11px] leading-snug">
+              Visão de selfie: mover para a direita move para a direita na tela. Só muda a exibição
+              — o quadro que vai para o modelo continua na orientação real.
+            </span>
+          </span>
+        </label>
+      </fieldset>
+
       <Input
         label="Pasta da memória"
         value={memoriaPath}
@@ -127,6 +192,8 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               braveApiKey: braveKey.trim(),
               spotifyClientId: spotifyId.trim(),
               spotifyClientSecret: spotifySecret.trim(),
+              ...parseResolucao(webcamResolucao),
+              webcamMirror,
             })
           }
           disabled={isSaving}
@@ -136,4 +203,46 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
       </div>
     </div>
   )
+}
+
+/** `"1280x720"` → `{ webcamWidth: 1280, webcamHeight: 720 }`. Lixo vira automático. */
+function parseResolucao(valor: string): Pick<AppSettings, 'webcamWidth' | 'webcamHeight'> {
+  const [largura, altura] = valor.split('x').map(Number)
+
+  if (!Number.isFinite(largura) || !Number.isFinite(altura)) {
+    return { webcamWidth: 0, webcamHeight: 0 }
+  }
+
+  return { webcamWidth: largura, webcamHeight: altura }
+}
+
+/**
+ * Pergunta à câmera o que ela suporta, uma vez, ao abrir as configurações.
+ *
+ * Falhar aqui NÃO é erro de formulário: sem câmera conectada, ou com ela ocupada por
+ * outro programa, o resto das configurações continua editável e o "automático" segue
+ * sendo uma escolha válida. Por isso o erro vira texto de apoio, não um alerta.
+ */
+function useWebcamResolutions() {
+  const [resolucoes, setResolucoes] = useState<WebcamResolution[]>([])
+  const [erro, setErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+
+    listWebcamResolutions()
+      .then((lista) => {
+        if (vivo) setResolucoes(lista)
+      })
+      .catch((causa: unknown) => {
+        if (vivo) setErro(causa instanceof Error ? causa.message : String(causa))
+      })
+
+    // O formulário some quando a gaveta fecha, e a resposta pode chegar depois.
+    return () => {
+      vivo = false
+    }
+  }, [])
+
+  return { resolucoes, erro }
 }

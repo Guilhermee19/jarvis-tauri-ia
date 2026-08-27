@@ -19,6 +19,14 @@ export interface AppSettings {
   /** Credenciais do Spotify. Vazias = "toque X" abre a busca em vez de tocar. */
   spotifyClientId: string
   spotifyClientSecret: string
+  /**
+   * Resolução pedida à webcam. `0` em qualquer um dos dois = automático (o formato
+   * mais perto de 640×480). É um pedido: a câmera decide o que consegue entregar.
+   */
+  webcamWidth: number
+  webcamHeight: number
+  /** Espelhar a imagem na tela (visão de selfie). Só exibição — não muda os bytes. */
+  webcamMirror: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -32,4 +40,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   braveApiKey: '',
   spotifyClientId: '',
   spotifyClientSecret: '',
+  webcamWidth: 0,
+  webcamHeight: 0,
+  webcamMirror: false,
 }

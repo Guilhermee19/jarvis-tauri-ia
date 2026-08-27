@@ -30,5 +30,6 @@ export {
   closeWebcam,
   isWebcamOpen,
   listMonitors,
+  listWebcamResolutions,
   openWebcam,
 } from './automation'

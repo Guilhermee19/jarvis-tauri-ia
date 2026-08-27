@@ -5,7 +5,7 @@ import { Preview, Section } from './Section'
 import { Button } from '@/components/ui/Button'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { captureWebcamFrame } from '@/lib/tauri'
-import { useSensorStore } from '@/stores'
+import { useSensorStore, useSettingsStore } from '@/stores'
 import type { CapturedImage } from '@/types'
 
 export function WebcamSection() {
@@ -14,6 +14,7 @@ export function WebcamSection() {
   const frame = useSensorStore((state) => state.webcamFrame)
   const sensorError = useSensorStore((state) => state.webcamError)
   const toggleWebcam = useSensorStore((state) => state.toggleWebcam)
+  const mirror = useSettingsStore((state) => state.settings.webcamMirror)
 
   const [captured, setCaptured] = useState<CapturedImage | null>(null)
   const { isBusy: isCapturing, error: captureError, run } = useAsyncAction()
@@ -42,14 +43,15 @@ export function WebcamSection() {
       </div>
 
       {/* O quadro vem do store: existe UM laço de captura para a home e para cá. */}
-      {frame ? <Preview src={frame} label="Preview da webcam" /> : null}
+      {frame ? <Preview src={frame} label="Preview da webcam" mirror={mirror} /> : null}
 
       {captured ? (
         <div className="flex flex-col gap-1">
           <span className="text-muted text-[10px] tracking-[0.14em] uppercase">
             Frame capturado · {captured.width}×{captured.height}
+            {mirror ? ' · espelhado só na tela' : ''}
           </span>
-          <Preview src={captured.dataUrl} label="Frame capturado da webcam" />
+          <Preview src={captured.dataUrl} label="Frame capturado da webcam" mirror={mirror} />
         </div>
       ) : null}
     </Section>

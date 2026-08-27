@@ -97,6 +97,7 @@ pub fn run() {
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,
             commands::automation::capture_webcam_frame,
+            commands::automation::list_webcam_resolutions,
             commands::automation::list_monitors,
             commands::automation::capture_screenshot,
         ])

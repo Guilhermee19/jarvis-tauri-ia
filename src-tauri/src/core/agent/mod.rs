@@ -417,8 +417,13 @@ async fn olhar(
     // ponytail: chamada bloqueante dentro de `async`. Com a câmera já aberta o `grab`
     // volta em milissegundos; fechada, o `Session::open` custa algumas centenas. Vira
     // `spawn_blocking` se algum dia travar a UI de verdade.
+    // A mesma resolução configurada para o preview: o que o modelo enxerga é o que o
+    // usuário vê, e "por que ele não leu o que estava escrito?" tem uma resposta só.
+    // Sem teto de largura: o modelo lê o quadro INTEIRO. Reduzir aqui pelo tamanho da
+    // janela é o oposto do que se quer — é justamente na resolução cheia que ele tem
+    // chance de ler um rótulo ou reconhecer um objeto pequeno.
     let quadro = automation
-        .capture_webcam_frame()
+        .capture_webcam_frame(settings.webcam_target(), None)
         .map_err(|erro| AgentError::SemCamera(erro.to_string()))?;
 
     let descricao = vision::descrever(
