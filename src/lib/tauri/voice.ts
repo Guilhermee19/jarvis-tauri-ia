@@ -44,3 +44,11 @@ export function listVoices(): Promise<Voice[]> {
 export function speakText(text: string, voiceId?: string): Promise<void> {
   return call<void>('speak_text', { text, voiceId: voiceId ?? null })
 }
+
+/**
+ * Cala a fala em andamento. Vale também durante a SÍNTESE — desligar o modo conversa
+ * enquanto a ElevenLabs ainda responde não pode deixar a frase chegar e tocar depois.
+ */
+export function stopSpeaking(): Promise<void> {
+  return call<void>('stop_speaking')
+}

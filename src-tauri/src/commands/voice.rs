@@ -108,14 +108,25 @@ pub async fn speak_text(
         None => resolve_voice(engine.as_ref(), &settings.tts_voice_id).await?,
     };
 
+    // Antes da síntese: mandar calar enquanto a ElevenLabs ainda responde tem que
+    // valer para o áudio que está a caminho.
+    let cancelar = voice.iniciar_fala();
     let audio = engine.synthesize(&text, &chosen).await.map_err(stringify)?;
 
     // `play` bloqueia até o fim da fala. Fora do executor async isso travaria o
     // runtime do Tauri e, com ele, todos os outros comandos.
-    tauri::async_runtime::spawn_blocking(move || play(audio))
+    tauri::async_runtime::spawn_blocking(move || play(audio, cancelar))
         .await
         .map_err(|error| format!("a thread de áudio falhou: {error}"))?
         .map_err(stringify)
+}
+
+/// Cala a fala em andamento. Síncrono e sem erro de propósito: é o que o botão de
+/// desligar o modo conversa chama, e nada aqui pode dar errado a ponto de valer uma
+/// mensagem na tela — no pior caso não havia fala nenhuma para interromper.
+#[tauri::command]
+pub fn stop_speaking(voice: State<'_, VoiceState>) {
+    voice.parar_fala();
 }
 
 async fn resolve_voice(

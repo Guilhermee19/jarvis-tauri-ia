@@ -22,6 +22,7 @@ export {
   speakText,
   startRecording,
   stopRecording,
+  stopSpeaking,
   transcribe,
 } from './voice'
 export {

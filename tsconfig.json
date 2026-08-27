@@ -9,6 +9,10 @@
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    // Os testes rodam no `node --test`, que é ESM de verdade e exige a extensão no
+    // import. Sem isto o `tsc` recusa o `./vad.ts` que o Node exige — e o teste
+    // ficaria fora do typecheck, que é metade do motivo de ele ser TypeScript.
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",

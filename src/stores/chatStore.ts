@@ -11,7 +11,13 @@ interface ChatState {
   isTyping: boolean
   error: string | null
   loadHistory: () => Promise<void>
-  send: (content: string) => Promise<void>
+  /**
+   * Devolve o texto da resposta, ou string vazia se nada foi enviado ou algo falhou.
+   *
+   * Quem fala em voz alta precisa da resposta E SÓ DELA: o `loadHistory` logo abaixo
+   * traz também o log de ação (papel `system`), que é registro para ler, não fala.
+   */
+  send: (content: string) => Promise<string>
   clear: () => Promise<void>
 }
 
@@ -34,7 +40,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   send: async (content: string) => {
     const trimmed = content.trim()
-    if (!trimmed || get().isTyping) return
+    if (!trimmed || get().isTyping) return ''
 
     // Bolha otimista: o backend gera o id definitivo, que chega no próximo `loadHistory`.
     const optimistic: ChatMessage = {
@@ -49,11 +55,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Uma jogada do agente pode empurrar DUAS mensagens no histórico: o log do
       // gatilho e a resposta. Recarregar em vez de dar append mantém o espelho fiel
       // — e de quebra troca a bolha otimista pela versão com o id do backend.
-      await sendMessage(trimmed)
+      const { message } = await sendMessage(trimmed)
       await get().loadHistory()
       set({ isTyping: false })
+      return message.content
     } catch (error) {
       set({ isTyping: false, error: describeError(error) })
+      return ''
     }
   },
 

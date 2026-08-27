@@ -22,7 +22,7 @@ export function SpeechSection() {
   return (
     <Section
       title="Voz"
-      hint="Sintetiza uma frase fixa na ElevenLabs e toca no alto-falante padrão. Precisa da key da ElevenLabs em Configurações."
+      hint="Sintetiza uma frase fixa na ElevenLabs e toca no alto-falante padrão. A key precisa da permissão text_to_speech; listar o catálogo pede voices_read a mais — sem ela, cole o ID da voz no campo abaixo."
       error={error}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -44,23 +44,34 @@ export function SpeechSection() {
         </p>
       ) : null}
 
-      {voices.length > 0 ? (
+      {hasKey ? (
         <label className="flex flex-col gap-1">
           <span className="text-muted text-[10px] tracking-[0.14em] uppercase">Voz</span>
-          {/* Escolher já salva nas configurações: é a mesma preferência que o agente
-              da v0.2 vai ler quando falar sem passar `voiceId`. */}
-          <select
+          {/* Campo de texto com `datalist`, e não um `<select>`: o catálogo exige a
+              permissão `voices_read`, que uma key restrita pode não ter — e aí um
+              select vazio deixava o app num beco sem saída, porque com `ttsVoiceId`
+              vazio o backend cai justamente em listar o catálogo para achar a
+              primeira voz. Colar o ID (o botão "Copy voice ID" do site da ElevenLabs)
+              pula o catálogo inteiro: falar só pede `text_to_speech`.
+
+              O `datalist` é o mesmo controle servindo às duas rotas — quem carregou
+              as vozes escolhe pelo nome na lista, quem não pode listar digita. */}
+          <input
+            type="text"
+            list="tts-voices"
             value={settings.ttsVoiceId}
             onChange={(event) => void save({ ...settings, ttsVoiceId: event.target.value })}
-            className="border-border-soft bg-base text-content focus:border-accent rounded-lg border px-2 py-1.5 text-sm focus:outline-none"
-          >
-            <option value="">Primeira voz da conta</option>
+            placeholder="ID da voz — vazio usa a primeira da conta (pede voices_read)"
+            spellCheck={false}
+            className="border-border-soft bg-base text-content placeholder:text-muted/60 focus:border-accent rounded-lg border px-2 py-1.5 text-sm focus:outline-none"
+          />
+          <datalist id="tts-voices">
             {voices.map((voice) => (
               <option key={voice.id} value={voice.id}>
                 {voice.description ? `${voice.name} — ${voice.description}` : voice.name}
               </option>
             ))}
-          </select>
+          </datalist>
         </label>
       ) : null}
     </Section>

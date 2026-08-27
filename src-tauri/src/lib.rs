@@ -92,6 +92,7 @@ pub fn run() {
             commands::voice::is_recording,
             commands::voice::list_voices,
             commands::voice::speak_text,
+            commands::voice::stop_speaking,
             commands::voice::transcribe,
             commands::automation::open_webcam,
             commands::automation::close_webcam,

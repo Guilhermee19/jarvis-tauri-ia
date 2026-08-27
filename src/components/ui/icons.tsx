@@ -106,6 +106,23 @@ export function MicIcon(props: IconProps) {
   )
 }
 
+/**
+ * Conversa por voz: ondas saindo dos dois lados.
+ *
+ * Deliberadamente NÃO é o microfone com um enfeite — os dois botões ficam lado a
+ * lado no chat e fazem coisas diferentes (um dita uma frase, o outro abre um
+ * diálogo). Ícones parecidos ali seriam duas portas iguais para salas diferentes.
+ */
+export function ConversationIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 8v8" />
+      <path d="M8.5 6.5v11M15.5 6.5v11" />
+      <path d="M5 9.5v5M19 9.5v5" />
+    </Svg>
+  )
+}
+
 export function CameraIcon(props: IconProps) {
   return (
     <Svg {...props}>

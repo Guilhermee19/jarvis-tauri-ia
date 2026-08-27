@@ -17,9 +17,16 @@ achou que foi pedido.
 dizer "**Jarvis**, abre o youtube" manda direto para o roteador. O nome é a declaração
 de que a frase é para ele — sem ele, conversa perto do microfone não vira comando.
 
-O que ainda não existe: wake word de verdade (escuta contínua — hoje o microfone só
-abre quando você clica) e o agente da Anthropic com tool use, com a `anthropicApiKey`
-nas configurações sem consumidor.
+**E dá para simplesmente conversar.** O botão de ondas ao lado do microfone liga o
+_modo conversa_: o microfone fica aberto, o silêncio de 1,2 s marca o fim da sua frase,
+ele **responde falando** (ElevenLabs) e volta a ouvir sozinho — sem clique nenhum entre
+uma frase e a próxima. Tudo continua indo para o chat escrito, que é onde você lê o que
+o Whisper entendeu e o que ele respondeu. Ali o vocativo não é exigido: ligar o modo já
+é a declaração de que a fala é para ele.
+
+O que ainda não existe: wake word (o modo conversa ainda tem que ser ligado no botão) e
+o agente da Anthropic com tool use, com a `anthropicApiKey` nas configurações sem
+consumidor.
 
 ---
 
@@ -297,6 +304,7 @@ Gera o instalador em `src-tauri/target/release/bundle/` (`.msi` e `.exe` no Wind
 npm run lint          # ESLint (config do Next + prettier)
 npm run format        # Prettier
 npm run typecheck     # tsc --noEmit
+npm run test:js       # node --test — hoje só o VAD do modo conversa
 
 cd src-tauri
 cargo fmt             # rustfmt (max_width = 100)
@@ -457,7 +465,7 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 | `send_message`, `get_history`, `clear_history`                                                                                | `commands/chat.rs`       |
 | `get_settings`, `save_settings`                                                                                               | `commands/settings.rs`   |
 | `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs`     |
-| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`                                | `commands/voice.rs`      |
+| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`, `stop_speaking`               | `commands/voice.rs`      |
 | `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`                                 | `commands/automation.rs` |
 
 **Controlar o PC não adicionou nenhum comando.** Abrir site, abrir programa, volume e
@@ -477,6 +485,40 @@ evento teria um produtor e um consumidor já em chamada direta. O canal de event
 fazer sentido na wake word, que é o caso de verdade: o Rust empurra sem ninguém pedir.
 
 ---
+
+## Modo conversa
+
+O laço é `microfone aberto → silêncio → Whisper → agente → ElevenLabs → microfone
+aberto`, e mora em `src/stores/sensorStore.ts`, ao lado do laço da webcam. Fica na
+store, e não num hook, porque fechar o painel de chat não é dizer "pare de me ouvir".
+
+**O VAD saiu de graça e não é um modelo.** O Rust já publicava o pico do microfone em
+`jarvis://mic-level` 20×/s para desenhar o medidor; o mesmo número decide quando a frase
+acabou. Nenhuma crate de VAD entrou, e `mic.rs` não mudou uma linha. A decisão pura está
+em `src/lib/vad.ts` (limiar 0,02 — um degrau acima do `PICO_MINIMO` que o `stt.rs` já
+trata como silêncio) e é o único pedaço com teste no frontend, em `vad.test.ts`.
+
+O preço é o esperado de um VAD por energia: ventilador, TV e a voz de outra pessoa na
+sala passam do limiar igual. O `ponytail:` no topo do arquivo aponta o upgrade.
+
+**Uma sutileza que não é detalhe:** o laço amostra o nível num `setInterval`, e não
+reagindo à mudança do valor. Em silêncio o pico chega `0` repetido, e o zustand não
+notifica quem seleciona um valor igual ao anterior — reagir à mudança perderia
+exatamente o caso que interessa, que é o silêncio parado.
+
+**Ele fala a resposta e só ela.** `chatStore.send` devolve o `content` da resposta; o
+log de ação (papel `system`) vem no `loadHistory` logo depois e fica só escrito. Ninguém
+quer ouvir "open_site url=https://…" em voz alta — mas quer poder ler depois.
+
+Enquanto ele fala, o microfone está fechado, então não existe eco para suprimir.
+`stop_speaking` existe porque o `sleep_until_end` do rodio não tem cancelamento: sem
+ele, desligar o modo no meio de uma resposta longa continuaria falando meia frase
+adiante, e o botão de desligar estaria mentindo.
+
+O TTS usa `eleven_flash_v2_5`, não o `eleven_multilingual_v2`. A síntese entra INTEIRA
+na espera do usuário, a cada frase, e a diferença de expressividade entre os dois não
+paga 1–2 s por resposta. Para narração longa, onde ninguém está esperando na frente, o
+multilíngue continua sendo a escolha certa.
 
 ## Busca com resumo
 
@@ -695,3 +737,8 @@ antigos.
   sem lista negra para manter atualizada.
 - **whisper.cpp por HTTP, não `whisper-rs`**: evita CMake + LLVM no caminho de quem clona.
   O motivo completo está nos pré-requisitos.
+- **Nenhuma crate de VAD**: o medidor de volume que já existia para desenhar a barra é o
+  mesmo sinal que decide quando a frase acabou. Detalhes no [Modo conversa](#modo-conversa).
+- **`node --test` em vez de vitest/jest**: o Node roda TypeScript sozinho, e o frontend
+  tem exatamente uma função que merece teste. Um runner com config, plugin e watcher para
+  cinco `assert` seria mais infraestrutura que código testado.

@@ -4,10 +4,15 @@ import {
   closeWebcam,
   isRecording,
   openWebcam,
+  speakText,
   startRecording,
   stopRecording,
+  stopSpeaking,
   transcribe,
 } from '@/lib/tauri'
+import { avaliarTurno, iniciarTurno, type DecisaoVad, type TurnoVad } from '@/lib/vad'
+import { useChatStore } from './chatStore'
+import { useSettingsStore } from './settingsStore'
 import type { Recording } from '@/types'
 
 /**
@@ -17,6 +22,19 @@ import type { Recording } from '@/types'
  * "trabalho + pausa" e entregar um fps diferente em cada máquina.
  */
 const TARGET_FRAME_MS = 40
+
+/**
+ * De quanto em quanto tempo o modo conversa olha o medidor do microfone.
+ *
+ * É um `setInterval` lendo `micLevel`, e não uma reação à mudança do valor, porque
+ * em silêncio o pico chega 0 repetido — e o zustand não notifica quem seleciona um
+ * valor igual ao anterior. Reagir à mudança perderia exatamente o caso que importa,
+ * que é justamente o silêncio parado.
+ *
+ * 200 ms amostra um a cada quatro eventos do backend (que vêm a 20 Hz). É granular o
+ * bastante para medir 1,2 s de silêncio e não faz o laço girar à toa.
+ */
+const AMOSTRAGEM_VAD_MS = 200
 
 /**
  * Teto de largura do quadro da PRÉVIA, em pixels de dispositivo.
@@ -99,6 +117,19 @@ interface SensorState {
   /** Devolve o transcrito, ou string vazia se nada foi ouvido ou algo falhou. */
   stopDictation: () => Promise<string>
   clearDictationError: () => void
+
+  /**
+   * Modo conversa: o microfone fica aberto, o SILÊNCIO marca o fim da sua frase e a
+   * resposta volta falada — sem clique nenhum entre uma frase e a próxima.
+   *
+   * Mora aqui pelo mesmo motivo do ditado: o gravador tem um dono só. E o laço fica
+   * na store, e não num hook, para sobreviver a fechar o painel de chat — desligar a
+   * janelinha não é dizer "pare de me ouvir".
+   */
+  isConversing: boolean
+  /** O que ele está fazendo agora, para a UI dizer em vez de ficar parada. */
+  conversationStatus: 'ouvindo' | 'pensando' | 'falando' | null
+  toggleConversation: () => Promise<void>
 }
 
 function describe(error: unknown): string {
@@ -114,6 +145,14 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null
 function stopPreviewLoop() {
   if (previewTimer !== null) clearTimeout(previewTimer)
   previewTimer = null
+}
+
+/** Mesma razão do `previewTimer`: é maquinário do laço, não estado desenhado. */
+let conversationTimer: ReturnType<typeof setInterval> | null = null
+
+function stopConversationLoop() {
+  if (conversationTimer !== null) clearInterval(conversationTimer)
+  conversationTimer = null
 }
 
 export const useSensorStore = create<SensorState>((set, get) => {
@@ -145,6 +184,83 @@ export const useSensorStore = create<SensorState>((set, get) => {
     }
 
     void tick()
+  }
+
+  /**
+   * O laço do modo conversa: amostra o medidor, e quando o VAD diz que a frase
+   * acabou, encadeia transcrever → responder → falar → voltar a ouvir.
+   *
+   * `ocupado` existe porque o turno leva SEGUNDOS (Whisper + Ollama + ElevenLabs) e
+   * o timer continua disparando durante todos eles. Sem a trava, a amostra seguinte
+   * tentaria fechar um turno que já está sendo fechado.
+   */
+  function runConversationLoop() {
+    let turno: TurnoVad = iniciarTurno(Date.now())
+    let ocupado = false
+
+    conversationTimer = setInterval(() => {
+      if (ocupado || !get().isConversing) return
+
+      const passo = avaliarTurno(turno, get().micLevel, Date.now())
+      turno = passo.turno
+      if (passo.decisao === 'ouvindo') return
+
+      ocupado = true
+      void fecharTurno(passo.decisao).finally(() => {
+        turno = iniciarTurno(Date.now())
+        ocupado = false
+      })
+    }, AMOSTRAGEM_VAD_MS)
+
+    async function fecharTurno(decisao: DecisaoVad) {
+      if (decisao === 'reciclar') {
+        // Nada foi dito, então não há o que transcrever: pagar os segundos do
+        // Whisper para ele confirmar que ouviu silêncio seria desperdício puro.
+        set({ isDictating: false, micLevel: 0 })
+        await stopRecording().catch(() => undefined)
+      } else {
+        const ouvido = await get().stopDictation()
+        // Desligar o modo no meio de um turno descarta a frase de propósito: o
+        // clique foi "pare", e mandar a última coisa ouvida seria o contrário.
+        if (!get().isConversing) return
+        if (ouvido) await responder(ouvido)
+      }
+
+      if (!get().isConversing) return
+      set({ conversationStatus: 'ouvindo' })
+      await get().startDictation()
+
+      // Não conseguiu reabrir o microfone (dispositivo arrancado, permissão
+      // revogada): desliga o modo em vez de girar para sempre sem gravar nada. O
+      // `startDictation` já deixou o motivo em `dictationError`.
+      if (!get().isDictating) {
+        stopConversationLoop()
+        set({ isConversing: false, conversationStatus: null })
+      }
+    }
+
+    /**
+     * Envia o que foi ouvido e fala a resposta.
+     *
+     * O modo conversa manda TUDO direto, sem exigir o vocativo que o botão de ditado
+     * exige (`comandoEnderecado`): ligar o modo já é a declaração de que a fala é
+     * para ele. É também por isso que ele fala só o `content` que o `send` devolve —
+     * o log de ação que o backend empurra junto é registro para ler, não fala.
+     */
+    async function responder(ouvido: string) {
+      set({ conversationStatus: 'pensando' })
+      const resposta = await useChatStore.getState().send(ouvido)
+      if (!resposta || !get().isConversing) return
+
+      set({ conversationStatus: 'falando' })
+      try {
+        await speakText(resposta)
+      } catch (cause) {
+        // A voz caiu (cota, rede, chave trocada) — mas a resposta já está escrita no
+        // chat. Ficar mudo e continuar ouvindo é melhor que derrubar o modo inteiro.
+        set({ dictationError: describe(cause) })
+      }
+    }
   }
 
   return {
@@ -271,6 +387,39 @@ export const useSensorStore = create<SensorState>((set, get) => {
       } finally {
         set({ isTranscribing: false })
       }
+    },
+
+    isConversing: false,
+    conversationStatus: null,
+
+    toggleConversation: async () => {
+      if (get().isConversing) {
+        stopConversationLoop()
+        set({ isConversing: false, conversationStatus: null })
+        // Calar vem ANTES de soltar o microfone: quem clicou em desligar quer
+        // silêncio agora, não quando a frase em curso terminar.
+        await stopSpeaking().catch(() => undefined)
+        await get().stopDictation()
+        return
+      }
+
+      // Sem voz configurada o modo seria só o ditado automático — ele ouviria, e
+      // responderia por escrito, calado. Recusar na hora do clique diz onde
+      // resolver; deixar quebrar depois esconderia isso atrás de uma frase inteira.
+      if (!useSettingsStore.getState().settings.elevenLabsApiKey.trim()) {
+        set({
+          dictationError:
+            'para conversar por voz, configure a chave da ElevenLabs e escolha uma voz em Diagnóstico › Voz',
+        })
+        return
+      }
+
+      set({ dictationError: null })
+      await get().startDictation()
+      if (!get().isDictating) return
+
+      set({ isConversing: true, conversationStatus: 'ouvindo' })
+      runConversationLoop()
     },
   }
 })

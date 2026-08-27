@@ -17,7 +17,8 @@ mod stt;
 mod tts;
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 pub use mic::{Recorder, Recording};
 pub use stt::transcribe;
@@ -65,6 +66,10 @@ pub enum VoiceError {
     NoVoiceAvailable,
     #[error("a ElevenLabs recusou a chamada (HTTP {status}): {body}")]
     TtsRejected { status: u16, body: String },
+    #[error(
+        "a key da ElevenLabs não tem permissão para esta operação. Ajuste as permissões da key no site da ElevenLabs (Profile › API Keys) — e se o que falta é `voices_read`, cole o ID da voz em Diagnóstico › Voz: com uma voz escolhida o app não precisa listar o catálogo. Resposta: {0}"
+    )]
+    TtsSemPermissao(String),
     #[error("falha de rede ao falar com a ElevenLabs: {0}")]
     TtsNetwork(String),
     #[error("falha ao tocar o áudio: {0}")]
@@ -76,6 +81,7 @@ pub enum VoiceError {
 pub struct VoiceState {
     recorder: Mutex<Option<Recorder>>,
     http: reqwest::Client,
+    cancelar_fala: Arc<AtomicBool>,
 }
 
 impl VoiceState {
@@ -83,6 +89,7 @@ impl VoiceState {
         Self {
             recorder: Mutex::new(None),
             http: reqwest::Client::new(),
+            cancelar_fala: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -127,6 +134,20 @@ impl VoiceState {
             self.http.clone(),
             api_key.to_owned(),
         )))
+    }
+
+    /// Limpa um "cala a boca" antigo e entrega a bandeira para o [`play`] desta fala.
+    ///
+    /// Zerar aqui, e não no fim da fala anterior, é o que faz o cancelamento valer
+    /// também durante a SÍNTESE: mandar parar enquanto a ElevenLabs ainda está
+    /// respondendo marca a flag, e o áudio que chegar depois já nasce cancelado.
+    pub fn iniciar_fala(&self) -> Arc<AtomicBool> {
+        self.cancelar_fala.store(false, Ordering::Relaxed);
+        Arc::clone(&self.cancelar_fala)
+    }
+
+    pub fn parar_fala(&self) {
+        self.cancelar_fala.store(true, Ordering::Relaxed);
     }
 }
 

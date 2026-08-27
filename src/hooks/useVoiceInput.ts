@@ -30,5 +30,22 @@ export function useVoiceInput() {
   const error = useSensorStore((state) => state.dictationError)
   const clearError = useSensorStore((state) => state.clearDictationError)
 
-  return { isRecording, isTranscribing, start, stop, level, error, clearError }
+  // O modo conversa é o mesmo microfone com o laço ligado, então vem pelo mesmo
+  // hook: quem desenha o botão de falar é quem desenha o de conversar.
+  const isConversing = useSensorStore((state) => state.isConversing)
+  const conversationStatus = useSensorStore((state) => state.conversationStatus)
+  const toggleConversation = useSensorStore((state) => state.toggleConversation)
+
+  return {
+    isRecording,
+    isTranscribing,
+    start,
+    stop,
+    level,
+    error,
+    clearError,
+    isConversing,
+    conversationStatus,
+    toggleConversation,
+  }
 }

@@ -1,11 +1,22 @@
 'use client'
 
 import { useRef, useState, type KeyboardEvent } from 'react'
-import { MicIcon } from '@/components/ui/icons'
+import { ConversationIcon, MicIcon } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { comandoEnderecado } from '@/lib/dictation'
 import { cn } from '@/lib/utils'
+
+/**
+ * O estado do turno em uma palavra. Existe porque um assistente por voz é uma tela
+ * parada: sem isto, "está me ouvindo", "está pensando" e "travou" são a mesma coisa.
+ */
+const ROTULOS = {
+  ocioso: 'Ouvindo',
+  ouvindo: 'Ouvindo',
+  pensando: 'Pensando',
+  falando: 'Falando',
+} as const
 
 interface ChatInputProps {
   onSend: (content: string) => void
@@ -17,7 +28,18 @@ interface ChatInputProps {
 export function ChatInput({ onSend, disabled, assistantName }: ChatInputProps) {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { isRecording, isTranscribing, start, stop, level, error, clearError } = useVoiceInput()
+  const {
+    isRecording,
+    isTranscribing,
+    start,
+    stop,
+    level,
+    error,
+    clearError,
+    isConversing,
+    conversationStatus,
+    toggleConversation,
+  } = useVoiceInput()
 
   function submit() {
     const trimmed = value.trim()
@@ -73,12 +95,17 @@ export function ChatInput({ onSend, disabled, assistantName }: ChatInputProps) {
     await start()
   }
 
+  const estado = ROTULOS[conversationStatus ?? 'ocioso']
+
   return (
     <div className="border-border-soft bg-surface/70 border-t px-3 py-3 backdrop-blur-sm">
-      {error || isRecording ? (
+      {error || isRecording || isConversing ? (
         <div className="mx-auto mb-2 flex w-full max-w-[560px] flex-col gap-1.5">
           {error ? <VoiceError message={error} onDismiss={clearError} /> : null}
-          {isRecording ? <LevelBar level={level} /> : null}
+          {/* No modo conversa a barra fica mesmo enquanto ele pensa e fala: é o que
+              diz de quem é a vez, e o medidor zerado ali é a informação certa —
+              nesses dois momentos o microfone está fechado de propósito. */}
+          {isRecording || isConversing ? <LevelBar level={level} rotulo={estado} /> : null}
         </div>
       ) : null}
 
@@ -90,18 +117,39 @@ export function ChatInput({ onSend, disabled, assistantName }: ChatInputProps) {
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder={
-            isRecording
-              ? `Ouvindo… diga "${assistantName}, …" para executar direto`
-              : `Fale com o ${assistantName}…`
+            isConversing
+              ? `Modo conversa — ${estado.toLowerCase()}…`
+              : isRecording
+                ? `Ouvindo… diga "${assistantName}, …" para executar direto`
+                : `Fale com o ${assistantName}…`
           }
           className="border-border-soft bg-base text-content placeholder:text-muted/60 focus:border-accent scroll-thin max-h-28 min-h-[38px] flex-1 resize-none rounded-lg border px-3 py-2 text-sm focus:outline-none"
         />
         <Button
-          variant={isRecording ? 'primary' : 'subtle'}
+          variant={isConversing ? 'primary' : 'subtle'}
+          onClick={() => void toggleConversation()}
+          className={cn('h-[38px] px-2.5', isConversing && 'animate-pulse')}
+          aria-pressed={isConversing}
+          aria-label={isConversing ? 'Encerrar o modo conversa' : 'Conversar por voz'}
+          title={
+            isConversing
+              ? 'Encerrar a conversa'
+              : 'Conversar por voz — ele ouve, responde falando e volta a ouvir'
+          }
+        >
+          <ConversationIcon className="h-4.5 w-4.5" />
+        </Button>
+        <Button
+          // Durante a conversa o `isRecording` é verdade — é o mesmo gravador —, mas
+          // quem está ouvindo é o botão ao lado. Dois botões pulsando ao mesmo tempo
+          // diriam que há duas coisas acontecendo.
+          variant={isRecording && !isConversing ? 'primary' : 'subtle'}
           onClick={() => void toggleMic()}
-          disabled={isTranscribing}
-          className={cn('h-[38px] px-2.5', isRecording && 'animate-pulse')}
-          aria-pressed={isRecording}
+          // O ditado avulso e a conversa disputam o MESMO microfone. Sem isto, clicar
+          // aqui no meio de uma conversa fecharia a gravação por baixo do laço.
+          disabled={isTranscribing || isConversing}
+          className={cn('h-[38px] px-2.5', isRecording && !isConversing && 'animate-pulse')}
+          aria-pressed={isRecording && !isConversing}
           aria-label={isRecording ? 'Parar de gravar e transcrever' : 'Falar com o Jarvis'}
           title={isTranscribing ? 'Transcrevendo…' : 'Falar'}
         >
@@ -186,12 +234,12 @@ function VoiceError({ message, onDismiss }: { message: string; onDismiss: () => 
  * A raiz quadrada é a mesma do medidor da bancada: o pico de fala normal fica lá
  * embaixo na escala linear e a barra mal sairia do lugar.
  */
-function LevelBar({ level }: { level: number }) {
+function LevelBar({ level, rotulo }: { level: number; rotulo: string }) {
   const width = Math.min(100, Math.sqrt(level) * 100)
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-muted shrink-0 text-[10px] tracking-[0.14em] uppercase">Ouvindo</span>
+      <span className="text-muted shrink-0 text-[10px] tracking-[0.14em] uppercase">{rotulo}</span>
       <div
         role="meter"
         aria-label="Nível do microfone"
