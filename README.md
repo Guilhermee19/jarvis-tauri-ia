@@ -107,16 +107,40 @@ desligado. O porquê deste modelo específico está em [Os dois serviços locais
 
 Baixe [`whisper-blas-bin-x64.zip`](https://github.com/ggml-org/whisper.cpp/releases) e o
 modelo [`ggml-small-q5_1.bin`](https://huggingface.co/ggerganov/whisper.cpp), e
-descompacte os dois em `%APPDATA%\com.jarvis.app\whisper\`. Tem que ficar assim:
+descompacte os dois em `%APPDATA%\com.jarvis.app\whisper\`.
+
+**O zip empacota tudo dentro de uma pasta `Release\`, e o app espera os arquivos
+soltos** — extrair preservando a estrutura deixa o `whisper-server.exe` um nível abaixo
+de onde `core::services` procura, e o erro que aparece é "não achei o Whisper", como se
+o download não tivesse acontecido. Tem que ficar plano:
 
 ```
 %APPDATA%\com.jarvis.app\whisper\
 ├── whisper-server.exe
 ├── ggml-small-q5_1.bin
-└── (as DLLs do zip, ao lado do exe)
+├── whisper.dll, ggml*.dll, libopenblas.dll   ← ao lado do exe, não em subpasta
+└── (o resto do zip, inofensivo)
 ```
 
-Sem essa pasta o app sobe normalmente; só o botão de microfone devolve erro.
+Em PowerShell, achatando na extração:
+
+```powershell
+$dest = "$env:APPDATA\com.jarvis.app\whisper"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [IO.Compression.ZipFile]::OpenRead("$HOME\Downloads\whisper-blas-bin-x64.zip")
+$zip.Entries | Where-Object Name | ForEach-Object {
+  [IO.Compression.ZipFileExtensions]::ExtractToFile($_, (Join-Path $dest $_.Name), $true)
+}
+$zip.Dispose()
+Move-Item "$HOME\Downloads\ggml-small-q5_1.bin" $dest
+```
+
+O modelo tem **182 MB** — se o download vier menor, veio truncado, e o servidor sobe e
+morre sem transcrever. `curl -L -C - --retry 10` retoma de onde parou.
+
+Sem essa pasta o app sobe normalmente; só o botão de microfone devolve erro (e agora ele
+**mostra** esse erro no chat, em vez de não fazer nada).
 
 ### 7. Clone, instale e rode
 

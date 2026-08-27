@@ -14,7 +14,7 @@ interface ChatInputProps {
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { isRecording, isTranscribing, start, stop } = useVoiceInput()
+  const { isRecording, isTranscribing, start, stop, level, error, clearError } = useVoiceInput()
 
   function submit() {
     const trimmed = value.trim()
@@ -46,11 +46,22 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
       textareaRef.current?.focus()
       return
     }
+    // O erro anterior sai da tela ao tentar de novo, e não ao chegar o próximo: se
+    // ficasse, um "não ouvi nada" de dois minutos atrás continuaria acusando o
+    // microfone enquanto a gravação nova corre.
+    clearError()
     await start()
   }
 
   return (
     <div className="border-border-soft bg-surface/70 border-t px-3 py-3 backdrop-blur-sm">
+      {error || isRecording ? (
+        <div className="mx-auto mb-2 flex w-full max-w-[560px] flex-col gap-1.5">
+          {error ? <VoiceError message={error} onDismiss={clearError} /> : null}
+          {isRecording ? <LevelBar level={level} /> : null}
+        </div>
+      ) : null}
+
       <div className="mx-auto flex w-full max-w-[560px] items-end gap-2">
         <textarea
           ref={textareaRef}
@@ -81,6 +92,66 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
         >
           Enviar
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * O erro do ditado, ao lado do botão que o causou.
+ *
+ * Antes ele ia para o alerta do HUD da home — que fica ATRÁS do painel de chat. Na
+ * prática o botão falhava em silêncio: clicar, falar, clicar de novo e nada. As
+ * mensagens do Rust já dizem o que fazer ("baixe o whisper-blas-bin-x64.zip…",
+ * "Configurações › Privacidade › Microfone"), só não tinham onde aparecer.
+ */
+function VoiceError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="border-danger/30 bg-danger/10 text-danger flex items-start gap-2 rounded border px-2 py-1.5 text-[11px] leading-relaxed"
+    >
+      <span className="flex-1 whitespace-pre-line">{message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dispensar o aviso do microfone"
+        className="text-danger/70 hover:text-danger shrink-0 leading-none"
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Prova visual de que o microfone está captando, enquanto ainda dá para agir.
+ *
+ * Um mic mudo no painel do Windows abre sem erro nenhum e grava silêncio — o app só
+ * descobria isso segundos depois, no "não ouvi nada" do Whisper. Com a barra parada
+ * em zero a resposta chega no instante em que o usuário começa a falar.
+ *
+ * A raiz quadrada é a mesma do medidor da bancada: o pico de fala normal fica lá
+ * embaixo na escala linear e a barra mal sairia do lugar.
+ */
+function LevelBar({ level }: { level: number }) {
+  const width = Math.min(100, Math.sqrt(level) * 100)
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-muted shrink-0 text-[10px] tracking-[0.14em] uppercase">Ouvindo</span>
+      <div
+        role="meter"
+        aria-label="Nível do microfone"
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="bg-base border-border-soft h-1.5 flex-1 overflow-hidden rounded-full border"
+      >
+        <div
+          className="bg-accent hud-glow h-full rounded-full transition-[width] duration-75"
+          style={{ width: `${width}%` }}
+        />
       </div>
     </div>
   )

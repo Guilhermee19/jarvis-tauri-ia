@@ -10,6 +10,7 @@
 
 use std::io::Cursor;
 use std::path::Path;
+use std::time::Duration;
 
 use super::VoiceError;
 
@@ -20,6 +21,23 @@ const TAXA_DO_WHISPER: u32 = 16_000;
 /// silêncio: a frase "Legendas pela comunidade Amara.org" é o exemplo clássico em
 /// português, e ela viraria um comando.
 const DURACAO_MINIMA_S: f32 = 0.4;
+
+/// Teto para uma transcrição. Um comando falado leva 1–3 s nesta máquina; 120 s é
+/// espaço para o modelo carregar na primeira chamada e ainda assim GARANTIR que a
+/// chamada termina. Sem teto, um whisper-server travado deixa a UI em
+/// "Transcrevendo…" para sempre — e o botão de falar fica desabilitado junto.
+const TIMEOUT_TRANSCRICAO: Duration = Duration::from_secs(120);
+
+/// Pico abaixo disto (1,5% do fundo de escala) é ruído de sala, não fala.
+///
+/// A duração mínima sozinha não protege: 3 segundos de silêncio passam por ela e
+/// voltam como uma frase INVENTADA, que o roteador então executa. É o mesmo cinto e
+/// suspensório do `limpar_nota` — a checagem barata aqui, e a lista de alucinações
+/// conhecidas depois, porque cada uma pega o que a outra deixa passar.
+///
+/// Conservador de propósito: derrubar fala de verdade é pior que deixar passar
+/// ruído, e o que passar daqui ainda encontra [`e_alucinacao_de_silencio`].
+const PICO_MINIMO: f32 = 0.015;
 
 /// Lê o WAV que o microfone deixou, reamostra e transcreve.
 pub async fn transcribe(
@@ -38,17 +56,28 @@ pub async fn transcribe(
         .part("file", parte)
         .text("response_format", "json")
         // Classificação de comando curto: nada de amostragem criativa.
-        .text("temperature", "0.0");
+        .text("temperature", "0.0")
+        // O `-l pt` da linha de comando em `core::services` só vale para o servidor
+        // que NÓS subimos. Um whisper-server que já estava de pé — subido na mão, ou
+        // órfão de um encerramento anormal — roda com o padrão do whisper.cpp, que é
+        // `en`: o português sai transliterado para o inglês e nada casa no roteador.
+        // Mandar por requisição faz o idioma não depender de quem abriu o processo.
+        .text("language", "pt")
+        // Explícito porque o pedido é transcrever, nunca verter para o inglês.
+        .text("translate", "false");
 
     let endpoint = format!("{}/inference", url.trim_end_matches('/'));
     let resposta = http
         .post(&endpoint)
         .multipart(form)
+        .timeout(TIMEOUT_TRANSCRICAO)
         .send()
         .await
         .map_err(|error| {
             if error.is_connect() {
                 VoiceError::TranscricaoOffline(url.to_owned())
+            } else if error.is_timeout() {
+                VoiceError::TranscricaoDemorou(TIMEOUT_TRANSCRICAO.as_secs())
             } else {
                 VoiceError::TranscricaoRede(error.to_string())
             }
@@ -74,11 +103,65 @@ pub async fn transcribe(
         .map_err(|error| VoiceError::TranscricaoRede(error.to_string()))?;
 
     let texto = transcricao.text.trim().to_owned();
-    if texto.is_empty() {
+    if texto.is_empty() || e_alucinacao_de_silencio(&texto) {
         return Err(VoiceError::NadaOuvido);
     }
 
     Ok(texto)
+}
+
+/// O que o whisper.cpp cospe quando não havia fala nenhuma no áudio.
+///
+/// Não é superstição: são legendas do material de treino (YouTube, Amara) que o
+/// modelo emite com confiança alta diante de ruído. Em texto isso é inofensivo; aqui
+/// o texto vai direto para o roteador, que abre programas. Já vi "Legendas pela
+/// comunidade Amara.org" sair de um clique acidental.
+///
+/// A comparação é do texto INTEIRO, nunca `contains`: "obrigado por assistir" é
+/// alucinação sozinho e frase legítima dentro de um pedido maior.
+const ALUCINACOES: &[&str] = &[
+    "legendas pela comunidade amara org",
+    "legendas amara org",
+    "amara org",
+    "subtitles by the amara org community",
+    "legendado por amara org",
+    "obrigado por assistir",
+    "obrigado por assistirem",
+    "musica",
+    "música",
+    "aplausos",
+    "risos",
+    "silencio",
+    "silêncio",
+];
+
+fn e_alucinacao_de_silencio(texto: &str) -> bool {
+    let normalizado = normalizar(texto);
+    if normalizado.is_empty() {
+        return true;
+    }
+    ALUCINACOES.contains(&normalizado.trim())
+}
+
+/// Caixa baixa, sem pontuação e com espaços colapsados — é o que faz
+/// `"[Música]"`, `"(música)"` e `"Música."` caírem todos na mesma chave.
+fn normalizar(texto: &str) -> String {
+    let mut resultado = String::with_capacity(texto.len());
+    let mut espaco_pendente = false;
+
+    for caractere in texto.chars() {
+        if caractere.is_alphanumeric() {
+            if espaco_pendente && !resultado.is_empty() {
+                resultado.push(' ');
+            }
+            espaco_pendente = false;
+            resultado.extend(caractere.to_lowercase());
+        } else {
+            espaco_pendente = true;
+        }
+    }
+
+    resultado
 }
 
 /// Devolve um WAV de 16 kHz pronto para o Whisper, em memória.
@@ -109,8 +192,27 @@ fn ler_e_reamostrar(wav: &Path) -> Result<Vec<u8>, VoiceError> {
         return Err(VoiceError::GravacaoCurta);
     }
 
+    // Antes de gastar segundos do Whisper num áudio que não tem fala: microfone mudo
+    // no painel do Windows, dispositivo errado como padrão ou o usuário longe demais
+    // do mic entregam todos o mesmo WAV silencioso — e o Whisper responde a ele com
+    // uma frase inventada em vez de um erro.
+    if pico(&mono) < PICO_MINIMO {
+        return Err(VoiceError::NadaOuvido);
+    }
+
     let convertido = reamostrar(&mono, spec.sample_rate, TAXA_DO_WHISPER);
     escrever_wav(&convertido)
+}
+
+/// Maior amplitude do trecho, de 0.0 a 1.0.
+///
+/// `i16::MIN` não tem simétrico positivo, e `(-32768).abs()` estoura em debug — daí
+/// o `saturating_abs`, que devolve `i16::MAX` e mantém a resposta dentro da escala.
+fn pico(amostras: &[i16]) -> f32 {
+    amostras
+        .iter()
+        .map(|&amostra| f32::from(amostra.saturating_abs()) / f32::from(i16::MAX))
+        .fold(0.0_f32, f32::max)
 }
 
 /// O microfone abre no formato nativo do dispositivo (`default_input_config`), que no
@@ -221,6 +323,58 @@ mod tests {
     fn a_media_nao_estoura_perto_do_pico() {
         assert_eq!(media(&[i16::MAX, i16::MAX, i16::MAX]), i16::MAX);
         assert_eq!(media(&[10, 20, 30]), 20);
+    }
+
+    /// O caso que motivou o filtro: silêncio não pode virar comando.
+    #[test]
+    fn as_legendas_do_amara_nao_passam_por_transcricao() {
+        assert!(e_alucinacao_de_silencio(
+            "Legendas pela comunidade Amara.org"
+        ));
+        assert!(e_alucinacao_de_silencio(
+            "  legendas pela comunidade amara.org  "
+        ));
+        assert!(e_alucinacao_de_silencio("[Música]"));
+        assert!(e_alucinacao_de_silencio("(música)"));
+        assert!(e_alucinacao_de_silencio("Obrigado por assistir!"));
+        assert!(e_alucinacao_de_silencio("..."));
+    }
+
+    /// O filtro compara o texto INTEIRO. Casar por `contains` mataria comando
+    /// legítimo, que é o oposto do que se quer.
+    #[test]
+    fn comando_de_verdade_atravessa_o_filtro() {
+        assert!(!e_alucinacao_de_silencio("abre o youtube"));
+        assert!(!e_alucinacao_de_silencio("toca uma música"));
+        assert!(!e_alucinacao_de_silencio(
+            "obrigado por assistir, agora abre o spotify"
+        ));
+        assert!(!e_alucinacao_de_silencio("quem foi Ayrton Senna"));
+    }
+
+    #[test]
+    fn normalizar_tira_pontuacao_e_colapsa_espaco() {
+        assert_eq!(normalizar("  [Música]  "), "música");
+        assert_eq!(normalizar("Amara.org!"), "amara org");
+        assert_eq!(normalizar("..."), "");
+    }
+
+    /// Sem esta checagem, um microfone mudo devolve um WAV silencioso e o Whisper
+    /// responde a ele com uma frase inventada — que o roteador então executa.
+    #[test]
+    fn o_pico_separa_silencio_de_fala() {
+        assert!(pico(&[0, 0, 0]) < PICO_MINIMO);
+        // Ruído de fundo por volta de 0,3% do fundo de escala.
+        assert!(pico(&[100, -80, 60]) < PICO_MINIMO);
+        // Fala normal passa com folga.
+        assert!(pico(&[8_000, -6_000, 200]) > PICO_MINIMO);
+    }
+
+    /// `(-32768).abs()` estoura em debug: sem o `saturating_abs` este teste vira
+    /// pânico em vez de asserção.
+    #[test]
+    fn o_pico_aguenta_a_amostra_mais_negativa() {
+        assert!((pico(&[i16::MIN]) - 1.0).abs() < 1e-4);
     }
 
     /// O WAV gerado precisa ser lido de volta pelo whisper.cpp — se o cabeçalho sair

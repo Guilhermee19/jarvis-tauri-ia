@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   captureWebcamFrame,
   closeWebcam,
+  isRecording,
   openWebcam,
   startRecording,
   stopRecording,
@@ -56,9 +57,19 @@ interface SensorState {
    */
   isDictating: boolean
   isTranscribing: boolean
+  /**
+   * Erro do ditado, SEPARADO do `micError` da bancada.
+   *
+   * Separado porque os dois têm plateias diferentes: o `micError` aparece no HUD da
+   * home, que fica atrás do painel de chat — quem clicou "Falar" nunca ia ver. E era
+   * exatamente esse o bug: a falha ia para um alerta escondido e o botão parecia não
+   * fazer nada. Erro de ditado tem que aparecer ao lado do botão que o causou.
+   */
+  dictationError: string | null
   startDictation: () => Promise<void>
   /** Devolve o transcrito, ou string vazia se nada foi ouvido ou algo falhou. */
   stopDictation: () => Promise<string>
+  clearDictationError: () => void
 }
 
 function describe(error: unknown): string {
@@ -165,19 +176,44 @@ export const useSensorStore = create<SensorState>((set, get) => {
 
     isDictating: false,
     isTranscribing: false,
+    dictationError: null,
+
+    clearDictationError: () => set({ dictationError: null }),
 
     startDictation: async () => {
-      // Recusa em silêncio se o microfone já está ocupado — pelo botão da bancada ou
-      // por um ditado anterior que ainda não terminou.
       const { isMicOn, isMicBusy, isDictating } = get()
-      if (isMicOn || isMicBusy || isDictating) return
+      if (isDictating || isMicBusy) return
+      // Recusar continua certo — o dono do gravador tem que ser um só —, mas AGORA
+      // com motivo na tela. Recusar em silêncio era indistinguível de um botão morto.
+      if (isMicOn) {
+        set({
+          dictationError:
+            'o microfone está ocupado pela bancada de diagnóstico — pare a gravação de lá primeiro',
+        })
+        return
+      }
 
-      set({ isMicBusy: true, micError: null })
+      set({ isMicBusy: true, dictationError: null })
       try {
         await startRecording()
         set({ isDictating: true })
       } catch (cause) {
-        set({ micError: describe(cause) })
+        // Uma gravação órfã no backend — recarregar a UI no meio de um ditado, o que
+        // o hot reload do `tauri dev` faz o tempo todo — deixava o botão inutilizável
+        // para sempre: toda tentativa batia em "já existe uma gravação em andamento"
+        // e não havia caminho de volta pela interface. Descarta a órfã e tenta UMA
+        // vez; um segundo fracasso é problema de verdade e vai para a tela.
+        if (await descartarGravacaoOrfa()) {
+          try {
+            await startRecording()
+            set({ isDictating: true })
+            return
+          } catch (segunda) {
+            set({ dictationError: describe(segunda) })
+            return
+          }
+        }
+        set({ dictationError: describe(cause) })
       } finally {
         set({ isMicBusy: false })
       }
@@ -193,7 +229,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
       } catch (cause) {
         // Erro vira aviso e string vazia: o botão de falar não pode deixar o chat
         // num estado travado só porque o Whisper não estava lá.
-        set({ micError: describe(cause) })
+        set({ dictationError: describe(cause) })
         return ''
       } finally {
         set({ isTranscribing: false })
@@ -201,3 +237,22 @@ export const useSensorStore = create<SensorState>((set, get) => {
     },
   }
 })
+
+/**
+ * Fecha uma gravação que ficou aberta no backend sem a UI saber, e diz se havia uma.
+ *
+ * O WAV que ela deixa é lixo — ninguém pediu — mas `stop_recording` é o único jeito
+ * de soltar o dispositivo: o `Recorder` é consumido no `stop`, e não existe comando
+ * de "cancelar".
+ */
+async function descartarGravacaoOrfa(): Promise<boolean> {
+  try {
+    if (!(await isRecording())) return false
+    await stopRecording()
+    return true
+  } catch {
+    // Se nem dá para perguntar ao backend, não há recuperação a tentar — o erro
+    // original é o que interessa para o usuário.
+    return false
+  }
+}

@@ -43,14 +43,18 @@ pub enum VoiceError {
     WavWrite(String),
     #[error("falha ao ler o áudio gravado: {0}")]
     WavLeitura(String),
-    #[error("gravação curta demais — segure o botão enquanto fala")]
+    #[error("gravação curta demais — clique no microfone, fale, e clique de novo para parar")]
     GravacaoCurta,
-    #[error("não ouvi nada — fale mais perto do microfone")]
+    #[error(
+        "não ouvi nada. Veja se o microfone certo é o padrão do Windows e se ele não está mudo"
+    )]
     NadaOuvido,
     #[error(
         "o serviço de transcrição não respondeu em {0}. Confira o caminho do Whisper em Configurações"
     )]
     TranscricaoOffline(String),
+    #[error("a transcrição passou de {0} s e foi cancelada — o whisper-server travou?")]
+    TranscricaoDemorou(u64),
     #[error("a transcrição falhou (HTTP {status}): {corpo}")]
     TranscricaoRecusada { status: u16, corpo: String },
     #[error("falha de rede ao transcrever: {0}")]
