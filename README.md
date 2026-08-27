@@ -20,14 +20,115 @@ O que ainda não existe: wake word e o agente da Anthropic com tool use — a
 
 ## Pré-requisitos
 
-| Ferramenta          | Versão usada         | Observação                                     |
+| Ferramenta          | Versão testada       | Observação                                     |
 | ------------------- | -------------------- | ---------------------------------------------- |
-| Node.js             | 22.x                 |                                                |
-| Rust (stable, MSVC) | 1.97                 | `rustup default stable-x86_64-pc-windows-msvc` |
-| MSVC Build Tools    | 2019 (14.29) ou mais | Windows SDK junto — é o linker do Rust         |
+| Node.js             | 22.x – 24.x          | testado no 24.13                               |
+| Rust (stable, MSVC) | 1.98                 | `rustup default stable-x86_64-pc-windows-msvc` |
+| MSVC Build Tools    | 2019 (14.29) ou mais | Windows SDK junto — **é o linker do Rust**     |
 | WebView2 Runtime    | qualquer             | Já vem no Windows 10/11 atualizado             |
 
-Espaço em disco: reserve ~6 GB. O `src-tauri/target` sozinho passa de 3 GB no primeiro build.
+Espaço em disco: reserve ~10 GB. O `src-tauri/target` sozinho passa de 3 GB no primeiro
+build, e o MSVC Build Tools leva outros ~5 GB.
+
+> **O MSVC Build Tools não é opcional e não vem com o Rust.** O `rustup` instala o
+> compilador, mas quem junta os `.obj` no `.exe` é o `link.exe` da Microsoft. Sem ele
+> nada em Rust compila nesta máquina — nem uma dependência transitiva. É de longe a
+> causa nº 1 de `npm run tauri dev` falhar num clone novo; o diagnóstico exato está em
+> [Quando dá errado](#quando-dá-errado).
+
+---
+
+## Instalação passo a passo
+
+Do zero até a janela abrir. PowerShell, no Windows 10/11 x64.
+
+### 1. Node.js
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+### 2. Rust, com o toolchain MSVC
+
+```powershell
+winget install Rustlang.Rustup
+rustup default stable-x86_64-pc-windows-msvc
+```
+
+O `stable-x86_64-pc-windows-gnu` **não** serve: as dependências de COM (`windows`),
+câmera (`nokhwa`) e áudio (`cpal`) esperam a ABI da MSVC.
+
+### 3. MSVC Build Tools — o passo que todo mundo pula
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+  --override "--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Aceite o UAC. São ~5 GB e leva alguns minutos. O `--includeRecommended` é o que traz o
+Windows SDK junto — sem ele o `link.exe` existe mas não acha `kernel32.lib`.
+
+Alternativa pela GUI: baixe o **Build Tools for Visual Studio 2022** em
+[visualstudio.microsoft.com/downloads](https://visualstudio.microsoft.com/downloads/)
+(seção _Tools for Visual Studio_) e marque o workload **Desenvolvimento para desktop com
+C++**.
+
+**Feche e reabra o terminal depois** — o instalador mexe no PATH e no registro, e o
+`rustc` só enxerga a mudança num processo novo.
+
+Confira:
+
+```powershell
+rustc --print target-libdir      # tem que responder sem erro
+```
+
+### 4. WebView2
+
+Já vem no Windows 10/11 atualizado. Para conferir:
+
+```powershell
+Test-Path "C:\Program Files (x86)\Microsoft\EdgeWebView\Application"
+```
+
+Se der `False`, instale o
+[Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+### 5. Ollama e o modelo
+
+```powershell
+winget install Ollama.Ollama
+ollama pull qwen2.5vl:3b
+```
+
+São 3,2 GB. Sem isso o app **abre e conversa**, mas em modo simulado — o intérprete fica
+desligado. O porquê deste modelo específico está em [Os dois serviços locais](#os-dois-serviços-locais).
+
+### 6. whisper.cpp — opcional, só para o comando por voz
+
+Baixe [`whisper-blas-bin-x64.zip`](https://github.com/ggml-org/whisper.cpp/releases) e o
+modelo [`ggml-small-q5_1.bin`](https://huggingface.co/ggerganov/whisper.cpp), e
+descompacte os dois em `%APPDATA%\com.jarvis.app\whisper\`. Tem que ficar assim:
+
+```
+%APPDATA%\com.jarvis.app\whisper\
+├── whisper-server.exe
+├── ggml-small-q5_1.bin
+└── (as DLLs do zip, ao lado do exe)
+```
+
+Sem essa pasta o app sobe normalmente; só o botão de microfone devolve erro.
+
+### 7. Clone, instale e rode
+
+```powershell
+git clone <url-do-repo>
+cd jarvis-tauri-ia
+npm install
+npm run tauri dev
+```
+
+O primeiro `tauri dev` compila ~600 crates e leva **10–20 minutos**. Os seguintes são
+segundos. A janela abre sozinha quando terminar.
 
 ### Os dois serviços locais
 
@@ -90,6 +191,68 @@ O `tauri dev` sobe o Next em `localhost:3000` e abre a janela nativa apontando p
 Abrir `localhost:3000` direto no navegador também funciona para mexer em CSS, mas todo
 `invoke()` falha — a UI mostra o erro em vez de quebrar (ver `isTauriRuntime` em
 `src/lib/tauri/client.ts`).
+
+### Bissetar antes de chutar
+
+O `tauri dev` roda duas coisas ao mesmo tempo, e o log delas se mistura. Quando quebra,
+rode cada metade sozinha para saber de quem é o erro:
+
+```powershell
+npx next build            # só o frontend
+cd src-tauri; cargo check # só o backend Rust
+```
+
+## Quando dá errado
+
+### `linking with link.exe failed` — falta o MSVC Build Tools
+
+O erro real, num clone novo sem os Build Tools:
+
+```
+error: linking with `link.exe` failed: exit code: 1
+note: `link.exe` returned an unexpected error
+note: you may need to install Visual Studio build tools with the "C++ build tools" workload
+error: could not compile `proc-macro2` (build script) due to 1 previous error
+```
+
+Repare que quebra em `proc-macro2`, `serde_core`, `libc` — **build scripts de
+dependências**, antes de chegar em qualquer linha deste projeto. Código nenhum daqui está
+errado; é a toolchain que está incompleta. Resolve com o [passo 3](#3-msvc-build-tools--o-passo-que-todo-mundo-pula).
+
+**A pegadinha que faz perder tempo:** o Git for Windows instala um
+`C:\Program Files\Git\usr\bin\link.exe` — que é o `link` do GNU coreutils, para criar
+hard links, e não tem nada a ver com o linker da Microsoft. Se o MSVC não estiver
+instalado, o `rustc` cai nesse do PATH, e ele falha com uma mensagem que não explica
+nada. Diagnóstico:
+
+```powershell
+where.exe link.exe
+```
+
+Se a **primeira** linha for a do Git e não houver nenhuma sob `Microsoft Visual Studio`,
+é isso. Confirme que o MSVC de verdade está lá:
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" `
+  -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+```
+
+Sem saída = o workload C++ não foi instalado (provavelmente instalou o Build Tools sem o
+`--add ...VCTools`). Não tente resolver mexendo no PATH: o `rustc` acha o linker certo
+sozinho pelo registro, desde que ele exista.
+
+### Outros
+
+| Sintoma                                     | Causa                                   | Correção                                       |
+| ------------------------------------------- | --------------------------------------- | ---------------------------------------------- |
+| `error: linker link.exe not found`          | mesma coisa, outra redação do rustc     | passo 3                                        |
+| `cannot open input file 'kernel32.lib'`     | MSVC sem o Windows SDK                  | reinstale com `--includeRecommended`           |
+| `toolchain ...windows-gnu` no `rustup show` | toolchain errada                        | `rustup default stable-x86_64-pc-windows-msvc` |
+| Porta 3000 ocupada                          | outro `next dev` de pé                  | mate o processo — a porta é fixa no `devUrl`   |
+| Janela abre em branco                       | WebView2 ausente                        | passo 4                                        |
+| Respostas genéricas, comando não executa    | Ollama fora do ar ou modelo não baixado | `ollama list` tem que mostrar `qwen2.5vl:3b`   |
+| Microfone devolve erro                      | `whisper-server.exe` não está na pasta  | passo 6                                        |
+| `cargo` reclama de clippy no build          | `[lints.clippy] all = "deny"`           | é de propósito — corrija o lint                |
 
 ## Build
 
@@ -453,9 +616,11 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
   "elevenLabsApiKey": "",
   "ttsVoiceId": "",
   "ollamaUrl": "http://localhost:11434",
-  "ollamaModel": "qwen2.5:3b",
+  "ollamaModel": "qwen2.5vl:3b",
   "memoriaPath": "",
-  "braveApiKey": ""
+  "braveApiKey": "",
+  "spotifyClientId": "",
+  "spotifyClientSecret": ""
 }
 ```
 
