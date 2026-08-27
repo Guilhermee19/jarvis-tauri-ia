@@ -4,14 +4,17 @@ import { useRef, useState, type KeyboardEvent } from 'react'
 import { MicIcon } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
+import { comandoEnderecado } from '@/lib/dictation'
 import { cn } from '@/lib/utils'
 
 interface ChatInputProps {
   onSend: (content: string) => void
   disabled: boolean
+  /** Usado para reconhecer quando a fala foi endereçada a ele. */
+  assistantName: string
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, assistantName }: ChatInputProps) {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { isRecording, isTranscribing, start, stop, level, error, clearError } = useVoiceInput()
@@ -40,9 +43,26 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   async function toggleMic() {
     if (isRecording) {
       const heard = await stop()
-      // Preenche o campo, NÃO envia. O Whisper erra, e o que está do outro lado abre
-      // programas — ler antes de mandar é barato.
-      if (heard) setValue((current) => (current ? `${current} ${heard}` : heard))
+      if (!heard) {
+        textareaRef.current?.focus()
+        return
+      }
+
+      // Chamar pelo nome ENVIA na hora: "Jarvis, abre o youtube" é uma declaração
+      // explícita de que a frase é para ele, e é o que faz o comando por voz
+      // funcionar sem as mãos. `disabled` derruba de volta para o campo em vez de
+      // engolir a fala — `submit()` ignoraria o envio e a frase sumiria.
+      const comando = comandoEnderecado(heard, assistantName)
+      if (comando && !disabled) {
+        onSend(comando)
+        textareaRef.current?.focus()
+        return
+      }
+
+      // Sem o nome, preenche o campo e NÃO envia. O Whisper erra, e o que está do
+      // outro lado abre programas — ler antes de mandar é barato. É também o que
+      // impede qualquer conversa perto do microfone de virar comando.
+      setValue((current) => (current ? `${current} ${heard}` : heard))
       textareaRef.current?.focus()
       return
     }
@@ -70,7 +90,9 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder={
-            isRecording ? 'Ouvindo… clique no microfone para parar' : 'Fale com o Jarvis…'
+            isRecording
+              ? `Ouvindo… diga "${assistantName}, …" para executar direto`
+              : `Fale com o ${assistantName}…`
           }
           className="border-border-soft bg-base text-content placeholder:text-muted/60 focus:border-accent scroll-thin max-h-28 min-h-[38px] flex-1 resize-none rounded-lg border px-3 py-2 text-sm focus:outline-none"
         />

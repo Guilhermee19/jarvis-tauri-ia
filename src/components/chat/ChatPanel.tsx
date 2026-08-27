@@ -20,7 +20,11 @@ export function ChatPanel() {
         </p>
       ) : null}
 
-      <ChatInput onSend={(content) => void send(content)} disabled={isTyping} />
+      <ChatInput
+        onSend={(content) => void send(content)}
+        disabled={isTyping}
+        assistantName={assistantName}
+      />
     </div>
   )
 }

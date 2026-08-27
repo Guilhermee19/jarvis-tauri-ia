@@ -13,8 +13,13 @@ entendeu, no que deu e o que entrou ou saiu da memória, porque um assistente qu
 programas e guarda fatos sobre você erra em silêncio se ninguém puder auditar o que ele
 achou que foi pedido.
 
-O que ainda não existe: wake word e o agente da Anthropic com tool use — a
-`anthropicApiKey` continua nas configurações, sem consumidor.
+**Chamar pelo nome executa.** Ditar "abre o youtube" enche o campo e espera o Enviar;
+dizer "**Jarvis**, abre o youtube" manda direto para o roteador. O nome é a declaração
+de que a frase é para ele — sem ele, conversa perto do microfone não vira comando.
+
+O que ainda não existe: wake word de verdade (escuta contínua — hoje o microfone só
+abre quando você clica) e o agente da Anthropic com tool use, com a `anthropicApiKey`
+nas configurações sem consumidor.
 
 ---
 
