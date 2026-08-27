@@ -4,6 +4,7 @@ import { ChatWindow } from '@/components/chat/ChatWindow'
 import { HomeScreen } from '@/components/home/HomeScreen'
 import { NowPlayingWidget } from '@/components/music/NowPlayingWidget'
 import { WebcamStage } from '@/components/home/WebcamStage'
+import { CasaWindow } from '@/components/casa/CasaWindow'
 import { DiagnosticsSheet } from '@/components/sheets/DiagnosticsSheet'
 import { SettingsSheet } from '@/components/sheets/SettingsSheet'
 import { BottomNav } from '@/components/tray-window/BottomNav'
@@ -39,6 +40,7 @@ export default function HomePage() {
       <div className="relative min-h-0 flex-1">
         <HomeScreen />
         <ChatWindow />
+        <CasaWindow />
         <DiagnosticsSheet />
         <SettingsSheet />
         <NowPlayingWidget />

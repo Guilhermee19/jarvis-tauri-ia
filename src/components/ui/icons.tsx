@@ -141,6 +141,16 @@ export function ScreenIcon(props: IconProps) {
   )
 }
 
+/** A casa: telhado e porta. Os aparelhos inteligentes vivem atrás dele. */
+export function HouseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 10.5 12 4l8.5 6.5V20h-17Z" />
+      <path d="M9.8 20v-5.2h4.4V20" />
+    </Svg>
+  )
+}
+
 /** Sinal de vida: a aba de diagnóstico é sobre sensores respondendo ou não. */
 export function PulseIcon(props: IconProps) {
   return (

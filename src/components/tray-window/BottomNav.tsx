@@ -3,6 +3,7 @@
 import {
   CameraIcon,
   ChatIcon,
+  HouseIcon,
   MicIcon,
   PowerIcon,
   PulseIcon,
@@ -28,6 +29,7 @@ interface NavItem {
  */
 const ITEMS: NavItem[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
+  { id: 'casa', label: 'Casa', Icon: HouseIcon },
   { id: 'diagnostics', label: 'Diagnóstico', Icon: PulseIcon },
   { id: 'settings', label: 'Configurações', Icon: SettingsIcon },
 ]

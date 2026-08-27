@@ -31,6 +31,11 @@ rodio = { version = "0.21", features = ["symphonia-mp3"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 reqwest = { version = "0.13", features = ["json", "multipart"] }
 url = "2"
+# Só para LER o broadcast dos aparelhos Tuya da rede, que vem cifrado em AES-128-ECB com
+# uma chave pública fixa. Não é `tuya-rs` porque aquela crate exige rustc 1.88 e este
+# projeto declara 1.77.2 — subir o piso do repo inteiro por uma crate 0.2.1 sairia mais
+# caro que as ~40 linhas de decodificação em `core/casa.rs`.
+aes = "0.8"
 # Só o `sleep` do polling de serviço. Já vem no lock (reqwest, tauri) — declarar não
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
 tokio = { version = "1", features = ["time"] }

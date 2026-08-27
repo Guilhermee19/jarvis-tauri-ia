@@ -1,3 +1,4 @@
+export { useCasaStore } from './casaStore'
 export { useChatStore } from './chatStore'
 export {
   faixaDoTitulo,

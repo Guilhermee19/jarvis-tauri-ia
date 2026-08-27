@@ -94,6 +94,7 @@ pub fn run() {
             commands::voice::speak_text,
             commands::voice::stop_speaking,
             commands::voice::transcribe,
+            commands::casa::discover_devices,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,

@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod automation;
+pub mod casa;
 pub mod chat;
 pub mod memory;
 pub mod music;

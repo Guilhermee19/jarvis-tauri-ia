@@ -409,6 +409,7 @@ src-tauri/src/
 │   ├── services.rs       sobe e derruba o Ollama e o whisper-server
 │   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (ElevenLabs)
 │   ├── vision/           ENTENDE a imagem: claude.rs + ollama.rs, atrás da mesma `ver()`
+│   ├── casa.rs           ouve os aparelhos Tuya (Positivo, EKAZA) se anunciando na rede
 │   └── automation/       PERCEBE o ambiente: webcam (nokhwa) + tela (xcap)
 ├── storage/              trait SettingsStore + implementação JSON
 ├── config/               AppSettings
@@ -476,6 +477,7 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 | `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs`     |
 | `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`, `stop_speaking`               | `commands/voice.rs`      |
 | `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`                                 | `commands/automation.rs` |
+| `discover_devices`                                                                                                            | `commands/casa.rs`       |
 
 **Controlar o PC não adicionou nenhum comando.** Abrir site, abrir programa, volume e
 mídia são chamados pelo agente dentro do `send_message` — não pelo frontend. É por isso
@@ -621,6 +623,83 @@ lá o que se lê é um rótulo pequeno a meio metro da lente, não um título de
 
 ---
 
+## Casa inteligente
+
+A janelinha **Casa** escuta a rede e lista os aparelhos que encontrar. **Nada disso pede
+conta, chave ou internet** — os dispositivos Tuya anunciam a si mesmos na rede local, e
+este pedaço só ouve.
+
+É janelinha flutuante (o mesmo `FloatingPanel` da conversa) e não gaveta como o
+Diagnóstico, e a diferença não é de gosto: gaveta é para o que se lê e se fecha; a lista da
+casa é para ficar aberta num canto enquanto você mexe em outra coisa.
+
+**Ele conta os pacotes que não entendeu.** Sem esse número, dois silêncios com soluções
+opostas dão exatamente a mesma tela vazia: _ninguém falou_ (rede errada, firewall, aparelho
+fora da tomada) e _falaram num formato que não sei ler_. O primeiro se resolve no roteador,
+o segundo no código.
+
+**Positivo e EKAZA são a mesma coisa por baixo: Tuya.** As duas são rebrands da mesma
+plataforma, como Nova Digital, Tramontina, Elgin e boa parte do que se vende barato aqui.
+Uma leitura só enxerga todas.
+
+Por enquanto ele só ENXERGA. Controlar depende da `local_key`, que é uma por aparelho e
+só existe na nuvem da Tuya — esse é o próximo passo.
+
+### A chave do anúncio é pública, e isso não é descuido
+
+O broadcast vem cifrado em AES-128-ECB com uma chave fixa: o MD5 de `yGAdlopoPVldABfn`,
+a mesma no mundo inteiro, usada por todo cliente Tuya que existe. Ela não protege nada e
+não dá acesso a nada — serve só para ler o anúncio. Quem protege o controle de verdade é
+a `local_key`.
+
+Ela está no código como dezesseis bytes constantes em vez de ser calculada, para não
+arrastar uma crate de MD5 para o projeto por causa de um valor que nunca muda.
+
+### O controle infravermelho: o hub aparece, a TV e o ar não
+
+Um hub de infravermelho (o "controle universal" que manda comando para ar-condicionado e
+TV) é um aparelho Wi-Fi como os outros, e **ele** se anuncia na rede normalmente.
+
+**A TV e o ar-condicionado nunca vão aparecer aqui, e isso não é defeito.** Eles não
+estão na rede: são _sub-dispositivos virtuais_, que existem só como registros na nuvem da
+Tuya. O hub não sabe o que é uma TV — ele sabe piscar um LED infravermelho com uma
+sequência de pulsos, e **qual sequência corresponde a "desligar a TV" mora numa biblioteca
+de códigos que a Tuya mantém na nuvem** e atualiza sozinha.
+
+Isso tem uma consequência que vale saber antes de contar com ela: **mandar comando para o
+ar pelo hub provavelmente vai exigir a nuvem**, ao contrário das lâmpadas e tomadas, que
+funcionam 100% local depois da chave. É a limitação que a comunidade do Home Assistant
+esbarra até hoje — a saída conhecida é trocar o firmware do hub por Tasmota, o que é outro
+projeto.
+
+### O que ele lista, e por que o 3.5 aparece mesmo sem funcionar
+
+Cada aparelho vem com id, IP, **versão do protocolo** e modelo. A versão é o dado que
+importa mais nesta fase: é ela que decide o que dá para usar para controlar depois.
+
+Os aparelhos que falam **3.5** aparecem marcados como "ainda sem suporte" em vez de serem
+escondidos. O quadro deles usa AES-GCM e o app não sabe ler — mas omiti-los faria você
+procurar defeito no Wi-Fi por meia hora atrás de uma lâmpada que está bem ali.
+
+### Por que não a crate `tuya-rs`
+
+Ela faz isso e mais o protocolo de controle, mas exige `rustc 1.88` — e este projeto
+declara `rust-version = "1.77.2"`. Subir o piso do repo inteiro por uma crate 0.2.1 sai
+mais caro que as ~40 linhas de decodificação em `core/casa.rs`; a descoberta é a parte
+simples do protocolo. Quando o CONTROLE entrar, aí vale reavaliar — aquela parte é bem
+menos trivial, e reimplementar seria a decisão errada.
+
+Entrou só a `aes`, para decifrar o anúncio.
+
+### E a Alexa?
+
+Fora, de propósito. A Amazon não tem API pública para mandar comando a um Echo — as
+bibliotecas que fazem isso logam na sua conta com cookie e usam endpoints internos que
+quebram sem aviso. E o caminho seria Jarvis → nuvem Amazon → Echo → nuvem Amazon → nuvem
+Tuya → lâmpada, para um comando que cabe num pacote UDP dentro da sua própria casa.
+
+---
+
 ## Memória
 
 Mora em `memoria/`, no próprio projeto, e o formato é o do **Obsidian** — markdown com
@@ -721,6 +800,7 @@ duas é acaso — e ação que falhou não conta, senão um nome errado repetido
 | Agente Claude + tool use      | `core/agent/`, ao lado do local  | `core::agent::handle`                       | o intérprete do Ollama    |
 | Wake word                     | `core/voice/wake_word.rs`        | task de background no `setup` de `lib.rs`   | —                         |
 | Outro backend de visão        | `core/vision/`, ao lado dos dois | `core::vision::ver`                         | o `if` da chave           |
+| Controlar a casa por voz      | `core/casa.rs` + `Intent`        | `core::agent::handle`                       | —                         |
 | Mouse, teclado (`enigo`)      | `core/automation/input.rs`       | `core::agent::execute`, com confirmação     | —                         |
 | Busca por embedding           | `core/memory/busca.rs`           | `Memoria::contexto`                         | a busca por palavra-chave |
 | Personalidade / system prompt | `core/agent/converse.rs`         | montado com o `assistant_name` das settings | —                         |

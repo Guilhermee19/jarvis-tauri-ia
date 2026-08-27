@@ -5,6 +5,7 @@
 //! `TauriCommandError`). Os wrappers tipados do outro lado ficam em `src/lib/tauri/`.
 
 pub mod automation;
+pub mod casa;
 pub mod chat;
 pub mod settings;
 pub mod system;

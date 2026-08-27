@@ -197,6 +197,28 @@
 
 ---
 
+### 🟡 Casa inteligente — **fase 1 feita** (fora da numeração original)
+
+Não estava no roadmap; entrou por pedido. O painel **Casa** já lista os aparelhos Tuya
+(Positivo, EKAZA e as outras rebrands) ouvindo a rede local, sem conta nem chave.
+
+- ✅ Descoberta por broadcast UDP, com id, IP, modelo e **versão do protocolo**
+- ✅ O 3.5 aparece marcado como sem suporte, em vez de sumir da lista
+- ⬜ **Fase 2** — `local_key` + o nome de cada aparelho, da Cloud API da Tuya (trial
+  gratuito e renovável; a chave continua válida depois que ele expira, porque é do
+  aparelho e não da nuvem). Passo manual e uma vez só
+- ⬜ **Fase 3** — controlar: TCP 6668 com AES, verbo `smart_home` no roteador, botões no
+  painel. ⚠️ O teste `os_exemplos_de_comando_nao_afogam_os_de_conversa` vai quebrar aqui,
+  e é para quebrar — "a luz da cozinha tá queimada" não pode apagar nada
+- ⬜ **Fase 4** — outras marcas. Um segundo backend em `core/casa.rs`, no molde do `if` da
+  chave que a visão já usa. O **Home Assistant** é o candidato: "todas as marcas" é
+  literalmente o problema que ele resolve, e falar com ele é menos código que a Tuya nativa
+
+**A Alexa ficou de fora de propósito** — a Amazon não tem API pública para mandar comando
+a um Echo, e as bibliotecas que fazem isso logam na conta com cookie e quebram sem aviso.
+
+---
+
 ### 🚀 Depois do v1.0 (ideias de expansão)
 
 - Plugins/skills customizáveis (ex: integração com Spotify, Google Calendar, Home Assistant)
