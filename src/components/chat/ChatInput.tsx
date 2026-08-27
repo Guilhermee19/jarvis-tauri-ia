@@ -83,7 +83,13 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           aria-label={isRecording ? 'Parar de gravar e transcrever' : 'Falar com o Jarvis'}
           title={isTranscribing ? 'Transcrevendo…' : 'Falar'}
         >
-          <MicIcon />
+          {/* O tamanho é obrigatório: sem `h-*`/`w-*` o SVG não tem como se medir e o
+              botão sai vazio. Mesma medida do microfone da barra de ícones. */}
+          {isTranscribing ? (
+            <Spinner className="h-4.5 w-4.5" />
+          ) : (
+            <MicIcon className="h-4.5 w-4.5" />
+          )}
         </Button>
         <Button
           onClick={submit}
@@ -94,6 +100,30 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Enquanto o Whisper trabalha o botão fica desabilitado, e um microfone parado é
+ * indistinguível de um botão que não respondeu ao clique. O giro é a diferença entre
+ * "está pensando" e "não funcionou".
+ */
+function Spinner({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      className={cn('animate-spin', className)}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" className="opacity-25" />
+      <path d="M21 12a9 9 0 0 0-9-9" />
+    </svg>
   )
 }
 

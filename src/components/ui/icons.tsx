@@ -19,6 +19,14 @@ function Svg({
   return (
     <svg
       viewBox="0 0 24 24"
+      // Um `viewBox` sozinho NÃO dá tamanho ao SVG: sem `width`/`height` e sem classe
+      // de tamanho, o ícone colapsa e o botão fica visivelmente vazio — foi o que
+      // aconteceu com o microfone do chat, que era o único uso sem `h-*`/`w-*`.
+      // `1em` acompanha a fonte do botão, e como atributo de apresentação PERDE para
+      // qualquer classe do Tailwind: quem passa `h-4 w-4` continua mandando, e quem
+      // esquecer ganha um ícone visível em vez de um buraco.
+      width="1em"
+      height="1em"
       fill={fill}
       stroke={stroke}
       strokeWidth={1.7}
