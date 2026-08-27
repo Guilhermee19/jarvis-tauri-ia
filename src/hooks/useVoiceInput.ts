@@ -1,6 +1,9 @@
 'use client'
 
-import { useSensorStore } from '@/stores'
+import { useChatStore, useSensorStore } from '@/stores'
+
+/** De quem é a vez no modo conversa. */
+export type ConversationStatus = 'ouvindo' | 'pensando' | 'falando'
 
 /**
  * Ditado por ALTERNÂNCIA: clica, fala, clica de novo e o texto aparece no campo.
@@ -33,8 +36,18 @@ export function useVoiceInput() {
   // O modo conversa é o mesmo microfone com o laço ligado, então vem pelo mesmo
   // hook: quem desenha o botão de falar é quem desenha o de conversar.
   const isConversing = useSensorStore((state) => state.isConversing)
-  const conversationStatus = useSensorStore((state) => state.conversationStatus)
   const toggleConversation = useSensorStore((state) => state.toggleConversation)
+
+  // De quem é a vez. Derivado do chat, e não guardado no `sensorStore`, porque
+  // pensar e falar são estados da RESPOSTA — copiá-los para cá criaria duas
+  // versões da mesma verdade, e uma delas ficaria para trás.
+  const isThinking = useChatStore((state) => state.isTyping)
+  const isSpeaking = useChatStore((state) => state.isSpeaking)
+  const conversationStatus: ConversationStatus = isSpeaking
+    ? 'falando'
+    : isThinking
+      ? 'pensando'
+      : 'ouvindo'
 
   return {
     isRecording,

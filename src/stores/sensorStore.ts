@@ -4,7 +4,6 @@ import {
   closeWebcam,
   isRecording,
   openWebcam,
-  speakText,
   startRecording,
   stopRecording,
   stopSpeaking,
@@ -127,8 +126,6 @@ interface SensorState {
    * janelinha não é dizer "pare de me ouvir".
    */
   isConversing: boolean
-  /** O que ele está fazendo agora, para a UI dizer em vez de ficar parada. */
-  conversationStatus: 'ouvindo' | 'pensando' | 'falando' | null
   toggleConversation: () => Promise<void>
 }
 
@@ -223,11 +220,15 @@ export const useSensorStore = create<SensorState>((set, get) => {
         // Desligar o modo no meio de um turno descarta a frase de propósito: o
         // clique foi "pare", e mandar a última coisa ouvida seria o contrário.
         if (!get().isConversing) return
-        if (ouvido) await responder(ouvido)
+
+        // O modo conversa manda TUDO direto, sem exigir o vocativo que o botão de
+        // ditado exige (`comandoEnderecado`): ligar o modo já é a declaração de que
+        // a fala é para ele. O `send` responde E fala — só volta quando ele calou,
+        // que é exatamente quando o microfone pode reabrir sem ouvir a si mesmo.
+        if (ouvido) await useChatStore.getState().send(ouvido)
       }
 
       if (!get().isConversing) return
-      set({ conversationStatus: 'ouvindo' })
       await get().startDictation()
 
       // Não conseguiu reabrir o microfone (dispositivo arrancado, permissão
@@ -235,30 +236,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
       // `startDictation` já deixou o motivo em `dictationError`.
       if (!get().isDictating) {
         stopConversationLoop()
-        set({ isConversing: false, conversationStatus: null })
-      }
-    }
-
-    /**
-     * Envia o que foi ouvido e fala a resposta.
-     *
-     * O modo conversa manda TUDO direto, sem exigir o vocativo que o botão de ditado
-     * exige (`comandoEnderecado`): ligar o modo já é a declaração de que a fala é
-     * para ele. É também por isso que ele fala só o `content` que o `send` devolve —
-     * o log de ação que o backend empurra junto é registro para ler, não fala.
-     */
-    async function responder(ouvido: string) {
-      set({ conversationStatus: 'pensando' })
-      const resposta = await useChatStore.getState().send(ouvido)
-      if (!resposta || !get().isConversing) return
-
-      set({ conversationStatus: 'falando' })
-      try {
-        await speakText(resposta)
-      } catch (cause) {
-        // A voz caiu (cota, rede, chave trocada) — mas a resposta já está escrita no
-        // chat. Ficar mudo e continuar ouvindo é melhor que derrubar o modo inteiro.
-        set({ dictationError: describe(cause) })
+        set({ isConversing: false })
       }
     }
   }
@@ -390,12 +368,11 @@ export const useSensorStore = create<SensorState>((set, get) => {
     },
 
     isConversing: false,
-    conversationStatus: null,
 
     toggleConversation: async () => {
       if (get().isConversing) {
         stopConversationLoop()
-        set({ isConversing: false, conversationStatus: null })
+        set({ isConversing: false })
         // Calar vem ANTES de soltar o microfone: quem clicou em desligar quer
         // silêncio agora, não quando a frase em curso terminar.
         await stopSpeaking().catch(() => undefined)
@@ -418,7 +395,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
       await get().startDictation()
       if (!get().isDictating) return
 
-      set({ isConversing: true, conversationStatus: 'ouvindo' })
+      set({ isConversing: true })
       runConversationLoop()
     },
   }

@@ -12,7 +12,6 @@ import { cn } from '@/lib/utils'
  * parada: sem isto, "está me ouvindo", "está pensando" e "travou" são a mesma coisa.
  */
 const ROTULOS = {
-  ocioso: 'Ouvindo',
   ouvindo: 'Ouvindo',
   pensando: 'Pensando',
   falando: 'Falando',
@@ -95,7 +94,7 @@ export function ChatInput({ onSend, disabled, assistantName }: ChatInputProps) {
     await start()
   }
 
-  const estado = ROTULOS[conversationStatus ?? 'ocioso']
+  const estado = ROTULOS[conversationStatus]
 
   return (
     <div className="border-border-soft bg-surface/70 border-t px-3 py-3 backdrop-blur-sm">

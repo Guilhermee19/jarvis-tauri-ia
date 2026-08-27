@@ -17,12 +17,16 @@ achou que foi pedido.
 dizer "**Jarvis**, abre o youtube" manda direto para o roteador. O nome é a declaração
 de que a frase é para ele — sem ele, conversa perto do microfone não vira comando.
 
+**Ele responde falando** (ElevenLabs), em qualquer caminho — o que você digita no chat
+também sai em voz alta. Basta ter a key e uma voz escolhida em Diagnóstico › Voz; sem
+isso ele fica calado, e nada mais muda.
+
 **E dá para simplesmente conversar.** O botão de ondas ao lado do microfone liga o
 _modo conversa_: o microfone fica aberto, o silêncio de 1,2 s marca o fim da sua frase,
-ele **responde falando** (ElevenLabs) e volta a ouvir sozinho — sem clique nenhum entre
-uma frase e a próxima. Tudo continua indo para o chat escrito, que é onde você lê o que
-o Whisper entendeu e o que ele respondeu. Ali o vocativo não é exigido: ligar o modo já
-é a declaração de que a fala é para ele.
+ele responde e volta a ouvir sozinho — sem clique nenhum entre uma frase e a próxima.
+Tudo continua indo para o chat escrito, que é onde você lê o que o Whisper entendeu e o
+que ele respondeu. Ali o vocativo não é exigido: ligar o modo já é a declaração de que a
+fala é para ele.
 
 O que ainda não existe: wake word (o modo conversa ainda tem que ser ligado no botão) e
 o agente da Anthropic com tool use, com a `anthropicApiKey` nas configurações sem
@@ -506,9 +510,19 @@ reagindo à mudança do valor. Em silêncio o pico chega `0` repetido, e o zusta
 notifica quem seleciona um valor igual ao anterior — reagir à mudança perderia
 exatamente o caso que interessa, que é o silêncio parado.
 
-**Ele fala a resposta e só ela.** `chatStore.send` devolve o `content` da resposta; o
-log de ação (papel `system`) vem no `loadHistory` logo depois e fica só escrito. Ninguém
-quer ouvir "open_site url=https://…" em voz alta — mas quer poder ler depois.
+**A fala mora no `chatStore.send`, não no laço.** Toda resposta é falada — a do modo
+conversa e a do que você digitou —, porque a voz acompanha a RESPOSTA, não o caminho de
+entrada. E como o `send` só volta quando ele calou, o laço da conversa ganha de graça o
+sinal de quando pode reabrir o microfone: sem chave da ElevenLabs ele fica calado e o
+`await` passa reto.
+
+**Só a resposta, e só ela.** O log de ação (papel `system`) vem no `loadHistory` junto e
+fica só escrito. Ninguém quer ouvir "open_site url=https://…" em voz alta — mas quer
+poder ler depois.
+
+**Sem chave, ele fica calado e sem erro.** Voz é opcional: um aviso vermelho a cada
+mensagem digitada seria ruído por algo que ninguém pediu. Quem liga o modo conversa aí
+sim recebe a recusa no clique, porque ali a voz é o ponto.
 
 Enquanto ele fala, o microfone está fechado, então não existe eco para suprimir.
 `stop_speaking` existe porque o `sleep_until_end` do rodio não tem cancelamento: sem
