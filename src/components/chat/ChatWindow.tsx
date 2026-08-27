@@ -3,11 +3,13 @@
 import { useState } from 'react'
 import { ChatPanel } from './ChatPanel'
 import { FloatingPanel, type PanelPosition, type PanelSize } from '@/components/ui/FloatingPanel'
-import { useChatStore, useSheetStore } from '@/stores'
+import { useChatStore, useJanelaStore, zDaJanela } from '@/stores'
 
 export function ChatWindow() {
-  const isOpen = useSheetStore((state) => state.activeSheet === 'chat')
-  const close = useSheetStore((state) => state.close)
+  const abertas = useJanelaStore((state) => state.abertas)
+  const abrir = useJanelaStore((state) => state.abrir)
+  const fechar = useJanelaStore((state) => state.fechar)
+  const isOpen = abertas.includes('chat')
   // Posição e tamanho moram aqui, e não no `FloatingPanel`: ele some do DOM ao fechar,
   // e a janelinha precisa reabrir onde e do jeito que o usuário a deixou.
   const [position, setPosition] = useState<PanelPosition | null>(null)
@@ -19,7 +21,9 @@ export function ChatWindow() {
   return (
     <FloatingPanel
       open={isOpen}
-      onClose={close}
+      onClose={() => fechar('chat')}
+      zIndex={zDaJanela(abertas, 'chat')}
+      onFocus={() => abrir('chat')}
       position={position}
       onPositionChange={setPosition}
       size={size}

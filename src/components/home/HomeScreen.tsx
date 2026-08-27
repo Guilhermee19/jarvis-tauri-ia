@@ -2,7 +2,7 @@
 
 import { JarvisCore } from './JarvisCore'
 import { cn } from '@/lib/utils'
-import { useChatStore, useSensorStore, useSettingsStore, useSheetStore } from '@/stores'
+import { useChatStore, useJanelaStore, useSensorStore, useSettingsStore } from '@/stores'
 
 /**
  * O HUD ocioso do assistente — o que fica na frente do fundo da janela.
@@ -15,7 +15,7 @@ export function HomeScreen() {
   const assistantName = useSettingsStore((state) => state.settings.assistantName)
   const hasApiKey = useSettingsStore((state) => state.settings.anthropicApiKey.length > 0)
   const messageCount = useChatStore((state) => state.messages.length)
-  const openSheet = useSheetStore((state) => state.open)
+  const abrirJanela = useJanelaStore((state) => state.abrir)
   const isWebcamOn = useSensorStore((state) => state.isWebcamOn)
   const isMicOn = useSensorStore((state) => state.isMicOn)
 
@@ -29,7 +29,7 @@ export function HomeScreen() {
       >
         <button
           type="button"
-          onClick={() => openSheet('chat')}
+          onClick={() => abrirJanela('chat')}
           title="Abrir a conversa"
           className="text-accent relative transition-transform duration-300 hover:scale-[1.03] focus:outline-none"
         >

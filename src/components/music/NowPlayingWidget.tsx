@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { NextIcon, PauseIcon, PlayIcon, PrevIcon } from '@/components/ui/icons'
 import { pressMediaKey, type MediaKey } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { useNowPlayingStore, type WidgetPosition } from '@/stores'
+import { useJanelaStore, useNowPlayingStore, zDaJanela, type WidgetPosition } from '@/stores'
 
 /**
  * Cartão de "tocando agora", arrastável dentro da janela do Jarvis.
@@ -28,6 +28,22 @@ export function NowPlayingWidget() {
   const cartaoRef = useRef<HTMLDivElement>(null)
   const pegadaRef = useRef<WidgetPosition | null>(null)
 
+  const abertas = useJanelaStore((state) => state.abertas)
+  const abrirJanela = useJanelaStore((state) => state.abrir)
+  const fecharJanela = useJanelaStore((state) => state.fechar)
+
+  // Este cartão não é aberto por um botão: ele existe enquanto houver faixa. Mas
+  // participa do mesmo empilhamento das outras janelinhas — senão ele fica eternamente
+  // por cima (era um `z-40` fixo) e não há como trazer a conversa para a frente dele.
+  //
+  // A dependência é `faixa !== null` e não `faixa`: trocar de música criaria um objeto
+  // novo, e o cartão pularia para a frente sozinho a cada faixa.
+  const tocandoAlgo = faixa !== null
+  useEffect(() => {
+    if (tocandoAlgo) abrirJanela('musica')
+    else fecharJanela('musica')
+  }, [tocandoAlgo, abrirJanela, fecharJanela])
+
   const prender = useCallback((x: number, y: number): WidgetPosition => {
     const cartao = cartaoRef.current
     const area = cartao?.offsetParent
@@ -40,6 +56,10 @@ export function NowPlayingWidget() {
   }, [])
 
   function comecarArrasto(event: ReactPointerEvent<HTMLElement>) {
+    // Encostar traz para a frente, mesmo que o alvo seja um botão e não vire arrasto —
+    // por isso vem antes da guarda abaixo.
+    abrirJanela('musica')
+
     // Os botões moram dentro do cartão: clicar neles não é arrastar.
     if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
 
@@ -79,9 +99,12 @@ export function NowPlayingWidget() {
       onPointerMove={arrastar}
       onPointerUp={soltar}
       onPointerCancel={soltar}
-      style={posicao ? { left: posicao.x, top: posicao.y } : undefined}
+      style={{
+        zIndex: zDaJanela(abertas, 'musica'),
+        ...(posicao ? { left: posicao.x, top: posicao.y } : {}),
+      }}
       className={cn(
-        'no-select border-accent/25 bg-surface/95 absolute z-40 flex w-[300px] cursor-grab',
+        'no-select border-accent/25 bg-surface/95 absolute flex w-[300px] cursor-grab',
         'flex-col gap-2 rounded-xl border p-3 shadow-2xl shadow-black/60 backdrop-blur-md',
         'active:cursor-grabbing',
         // Enquanto ninguém arrastou, nasce no canto de baixo à direita — longe do

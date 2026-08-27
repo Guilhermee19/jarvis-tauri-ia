@@ -42,6 +42,15 @@ interface FloatingPanelProps {
   maximized: boolean
   onMaximizedChange: (maximized: boolean) => void
   onClose: () => void
+  /** Empilhamento entre janelinhas abertas. Quem manda é o `janelaStore`. */
+  zIndex: number
+  /**
+   * Chamado quando alguém encosta em qualquer parte da janelinha, para ela vir à frente.
+   *
+   * `onPointerDown` e não `onClick`: a janela precisa subir ANTES do arrasto começar,
+   * senão o primeiro movimento acontece com ela ainda atrás da outra.
+   */
+  onFocus: () => void
   children: React.ReactNode
 }
 
@@ -67,6 +76,8 @@ export function FloatingPanel({
   maximized,
   onMaximizedChange,
   onClose,
+  zIndex,
+  onFocus,
   children,
 }: FloatingPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -247,16 +258,21 @@ export function FloatingPanel({
       aria-label={title}
       aria-describedby={descriptionId}
       tabIndex={-1}
+      // Encostar em qualquer lugar traz para a frente. No cabeçalho isso acontece antes
+      // do `startDrag` porque o evento sobe do filho para cá — a janela já está no topo
+      // quando o primeiro pixel de arrasto é processado.
+      onPointerDown={onFocus}
       style={
         maximized
-          ? { left: 0, top: 0, width: '100%', height: '100%' }
+          ? { left: 0, top: 0, width: '100%', height: '100%', zIndex }
           : {
+              zIndex,
               ...(position ? { left: position.x, top: position.y } : {}),
               ...(size ? { width: size.width, height: size.height } : {}),
             }
       }
       className={cn(
-        'floating-panel border-accent/25 bg-surface/95 absolute z-30 flex flex-col',
+        'floating-panel border-accent/25 bg-surface/95 absolute flex flex-col',
         'border shadow-2xl shadow-black/60 backdrop-blur-md focus:outline-none',
         // Maximizada encosta nas bordas: canto arredondado ali vira falha de pintura.
         maximized ? 'rounded-none' : 'rounded-lg',

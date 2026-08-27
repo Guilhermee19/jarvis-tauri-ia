@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { CasaPanel } from './CasaPanel'
 import { FloatingPanel, type PanelPosition, type PanelSize } from '@/components/ui/FloatingPanel'
-import { useCasaStore, useSheetStore } from '@/stores'
+import { useCasaStore, useJanelaStore, zDaJanela } from '@/stores'
 
 /**
  * Janelinha flutuante, como a da conversa — e não gaveta como o Diagnóstico.
@@ -13,8 +13,10 @@ import { useCasaStore, useSheetStore } from '@/stores'
  * conversando é o uso normal dela.
  */
 export function CasaWindow() {
-  const isOpen = useSheetStore((state) => state.activeSheet === 'casa')
-  const close = useSheetStore((state) => state.close)
+  const abertas = useJanelaStore((state) => state.abertas)
+  const abrir = useJanelaStore((state) => state.abrir)
+  const fechar = useJanelaStore((state) => state.fechar)
+  const isOpen = abertas.includes('casa')
   // Fora do `FloatingPanel` pelo mesmo motivo do chat: ele some do DOM ao fechar, e a
   // janelinha precisa reabrir onde e do tamanho que você a deixou.
   const [position, setPosition] = useState<PanelPosition | null>(null)
@@ -24,7 +26,9 @@ export function CasaWindow() {
   return (
     <FloatingPanel
       open={isOpen}
-      onClose={close}
+      onClose={() => fechar('casa')}
+      zIndex={zDaJanela(abertas, 'casa')}
+      onFocus={() => abrir('casa')}
       position={position}
       onPositionChange={setPosition}
       size={size}

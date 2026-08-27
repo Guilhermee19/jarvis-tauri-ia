@@ -34,7 +34,11 @@ export function SheetContent({ title, description, actions, children }: SheetCon
 
       <DialogPrimitive.Content
         className={cn(
-          'sheet-panel border-accent/25 bg-surface/95 absolute inset-y-0 right-0 z-30 flex',
+          // `z-40` e não `z-30`: a faixa 30–39 é das janelinhas flutuantes, que se
+          // empilham entre si (ver `zDaJanela`). A gaveta é temporária e cobre o que
+          // estiver embaixo — se dividisse a faixa com elas, uma janela por cima de
+          // outra também passaria por cima da gaveta.
+          'sheet-panel border-accent/25 bg-surface/95 absolute inset-y-0 right-0 z-40 flex',
           'w-full max-w-[380px] flex-col border-l shadow-2xl shadow-black/60 backdrop-blur-md',
           'focus:outline-none',
         )}

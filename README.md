@@ -338,14 +338,17 @@ src/
 ├── app/                  rotas do App Router (layout + a única página)
 ├── components/
 │   ├── home/             HomeScreen + JarvisCore — o HUD de fundo
-│   ├── panels/           FloatingPanel + PanelLayer — as janelas internas
-│   ├── chat/             ChatPanel, MessageList, MessageBubble, ChatInput
+│   ├── chat/             ChatWindow (a janelinha) + ChatPanel, MessageList, ChatInput
+│   ├── casa/             CasaWindow + CasaPanel — os aparelhos da rede
+│   ├── music/            NowPlayingWidget — o cartão de "tocando agora"
+│   ├── diagnostics/      as seções da bancada de testes
+│   ├── sheets/           as gavetas da borda: diagnóstico e configurações
 │   ├── tray-window/      TitleBar, BottomNav, HudFrame — o chrome da janela
-│   ├── settings/         SettingsPanel + SettingsForm
-│   └── ui/               Button, Input, icons — genéricos
-├── hooks/                useBootstrap, useChat, useTrayEvents, usePointerDrag
+│   ├── settings/         SettingsForm
+│   └── ui/               Button, Input, Sheet, FloatingPanel, icons — genéricos
+├── hooks/                useBootstrap, useChat, useVoiceInput, useTrayEvents, useNowPlaying
 ├── lib/tauri/            wrappers tipados de invoke(), um arquivo por domínio
-├── stores/               zustand: chat, settings, panels
+├── stores/               zustand: chat, casa, sensor, settings, nowPlaying, janela
 ├── types/                espelho TS dos structs Rust
 └── styles/               tema Tailwind v4
 ```
@@ -370,28 +373,50 @@ pintado depois dos filhos com `-z-10`, o que apagava a grade. A cor base vem do 
 
 ### Janelas internas, não rotas
 
-O app não navega entre telas. O HUD é o fundo permanente da janela e cada feature é uma
-**janelinha flutuante** por cima dele: abre, fecha, minimiza, arrasta e redimensiona dentro
-da janela principal. `BottomNav` funciona como barra de tarefas — clicar abre, restaura ou
-minimiza o painel correspondente.
+O app não navega entre telas. O HUD é o fundo permanente da janela, e as features vivem
+por cima dele em **duas famílias com regras diferentes** — e a diferença é física, não de
+gosto:
 
-- `src/stores/panelStore.ts` — estado de cada painel (aberto, minimizado, posição, tamanho)
-  e a ordem de empilhamento. `toggle` implementa a semântica de barra de tarefas: fechado
-  abre, minimizado restaura, aberto minimiza.
-- `src/components/panels/FloatingPanel.tsx` — o chrome da janelinha (cabeçalho arrastável,
-  minimizar, fechar, canto de redimensionar).
-- `src/components/panels/PanelLayer.tsx` — a área onde os painéis vivem, entre a barra de
-  título e a de ícones. É ela que limita até onde dá para arrastar, e um `ResizeObserver`
-  reposiciona o que ficaria fora quando a janela principal muda de tamanho.
-- `src/hooks/usePointerDrag.ts` — arrasto com `setPointerCapture`, usado por mover e
-  redimensionar. Sem a captura, arrastar rápido solta o painel no meio do caminho.
+|                                         | O que é                                             | Quantas ao mesmo tempo                      |
+| --------------------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| **Janelinha** (conversa, casa, música)  | flutua sobre o HUD, arrasta, redimensiona, maximiza | **quantas você quiser**                     |
+| **Gaveta** (diagnóstico, configurações) | ocupa a faixa da borda direita                      | uma — duas se desenhariam uma sobre a outra |
 
-Para adicionar uma feature nova (voz, automação): um id em `PanelId`, um par de valores
-padrão em `DEFAULTS`, uma entrada em `ITEMS` do `BottomNav` e um `<FloatingPanel>` no
-`PanelLayer`. As linhas "offline" do HUD já marcam quais vêm por aí.
+`src/stores/janelaStore.ts` guarda as duas. As janelinhas ficam num **array ordenado do
+fundo para a frente**, e a ordem É o empilhamento: `zDaJanela` deriva o `z-index` da
+posição, em vez de guardar um número ao lado de cada uma — a mesma informação em dois
+lugares acaba com os dois discordando.
 
-Detalhe de implementação: os botões do cabeçalho param a propagação do `pointerdown` —
-sem isso, clicar em "fechar" arrastaria o painel junto.
+**Encostar traz para a frente**, via `onPointerDown` no `FloatingPanel` inteiro. É
+`pointerdown` e não `click` porque a janela precisa subir **antes** do arrasto começar,
+senão o primeiro movimento acontece com ela ainda atrás da outra.
+
+O `BottomNav` é a barra de tarefas, com a semântica do Windows: **fechada abre, atrás vem
+para a frente, na frente fecha**. O passo do meio é o que importa — sem ele, clicar no
+ícone de uma janela escondida atrás de outra a fecharia, que é o oposto do que a pessoa
+quis ao clicar.
+
+O cartão de música entra na mesma pilha, mesmo não tendo botão que o abra: ele existe
+enquanto houver faixa, e se registra num `useEffect`. Antes disso ele tinha `z-40` fixo e
+ficava eternamente por cima — não havia como trazer a conversa para a frente dele.
+
+Faixas de `z-index`: **30–39 para as janelinhas**, `z-40` para a gaveta. Se a gaveta
+dividisse a faixa, uma janela empilhada passaria por cima dela.
+
+- `src/components/ui/FloatingPanel.tsx` — o chrome da janelinha: cabeçalho arrastável,
+  maximizar, fechar, canto de redimensionar. Prende a janela dentro da área de conteúdo
+  (arrastar para fora deixaria o cabeçalho inalcançável) e reprende quando a janela do
+  app muda de tamanho.
+- A área onde elas vivem é o `<div className="relative min-h-0 flex-1">` do `app/page.tsx`,
+  entre a barra de título e a de ícones — é o `offsetParent` que limita o arrasto.
+
+Para adicionar uma janelinha nova: um id em `JanelaId`, uma entrada em `JANELAS` do
+`BottomNav`, e um componente no molde do `ChatWindow` (posição, tamanho e maximizado como
+`useState` local, porque o `FloatingPanel` some do DOM ao fechar e ela precisa reabrir onde
+você a deixou).
+
+Detalhe de implementação: os botões do cabeçalho são ignorados pelo `startDrag` — sem
+isso, clicar em "fechar" arrastaria o painel junto.
 
 ### Backend — `src-tauri/src/`
 

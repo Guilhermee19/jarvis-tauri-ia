@@ -2,18 +2,18 @@
 
 import { DiagnosticsPanel } from '@/components/diagnostics/DiagnosticsPanel'
 import { Sheet, SheetContent } from '@/components/ui/Sheet'
-import { useSheetStore } from '@/stores'
+import { useJanelaStore } from '@/stores'
 
 export function DiagnosticsSheet() {
-  const isOpen = useSheetStore((state) => state.activeSheet === 'diagnostics')
-  const open = useSheetStore((state) => state.open)
-  const close = useSheetStore((state) => state.close)
+  const isOpen = useJanelaStore((state) => state.gaveta === 'diagnostics')
+  const abrirGaveta = useJanelaStore((state) => state.abrirGaveta)
+  const fecharGaveta = useJanelaStore((state) => state.fecharGaveta)
 
   return (
     <Sheet
       modal={false}
       open={isOpen}
-      onOpenChange={(next) => (next ? open('diagnostics') : close())}
+      onOpenChange={(next) => (next ? abrirGaveta('diagnostics') : fecharGaveta())}
     >
       {/* Fechar a gaveta desmonta as seções, e é o `useEffect` de limpeza delas que
           solta microfone e câmera — nenhum sensor sobrevive à gaveta fechada. */}

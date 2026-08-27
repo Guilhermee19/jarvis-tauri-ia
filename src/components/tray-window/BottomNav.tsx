@@ -11,10 +11,16 @@ import {
 } from '@/components/ui/icons'
 import { quitApp } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { useChatStore, useSensorStore, useSheetStore, type SheetId } from '@/stores'
+import {
+  useChatStore,
+  useJanelaStore,
+  useSensorStore,
+  type GavetaId,
+  type JanelaId,
+} from '@/stores'
 
-interface NavItem {
-  id: SheetId
+interface NavItem<Id> {
+  id: Id
   label: string
   Icon: (props: { className?: string }) => React.ReactElement
 }
@@ -27,16 +33,26 @@ interface NavItem {
  * - Gavetas (conversa, diagnóstico, configurações): barra de tarefas — clicar abre,
  *   clicar de novo fecha, e é assim que se volta para o núcleo.
  */
-const ITEMS: NavItem[] = [
+/**
+ * Janelinhas: convivem, então o botão aceso quer dizer "está aberta" — várias podem
+ * estar. Clicar segue a semântica de barra de tarefas do `janelaStore`.
+ */
+const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
   { id: 'casa', label: 'Casa', Icon: HouseIcon },
+]
+
+/** Gavetas: uma por vez, então o botão aceso quer dizer "é esta que está aberta". */
+const GAVETAS: NavItem<GavetaId>[] = [
   { id: 'diagnostics', label: 'Diagnóstico', Icon: PulseIcon },
   { id: 'settings', label: 'Configurações', Icon: SettingsIcon },
 ]
 
 export function BottomNav() {
-  const activeSheet = useSheetStore((state) => state.activeSheet)
-  const toggle = useSheetStore((state) => state.toggle)
+  const abertas = useJanelaStore((state) => state.abertas)
+  const alternar = useJanelaStore((state) => state.alternar)
+  const gaveta = useJanelaStore((state) => state.gaveta)
+  const alternarGaveta = useJanelaStore((state) => state.alternarGaveta)
   const hasMessages = useChatStore((state) => state.messages.length > 0)
 
   return (
@@ -46,13 +62,25 @@ export function BottomNav() {
 
       <span className="bg-border-soft mx-1 h-4 w-px" />
 
-      {ITEMS.map(({ id, label, Icon }) => (
+      {JANELAS.map(({ id, label, Icon }) => (
         <NavButton
           key={id}
           label={label}
-          isActive={activeSheet === id}
+          isActive={abertas.includes(id)}
           hasDot={id === 'chat' && hasMessages}
-          onClick={() => toggle(id)}
+          onClick={() => alternar(id)}
+          icon={<Icon className="h-4.5 w-4.5" />}
+        />
+      ))}
+
+      <span className="bg-border-soft mx-1 h-4 w-px" />
+
+      {GAVETAS.map(({ id, label, Icon }) => (
+        <NavButton
+          key={id}
+          label={label}
+          isActive={gaveta === id}
+          onClick={() => alternarGaveta(id)}
           icon={<Icon className="h-4.5 w-4.5" />}
         />
       ))}

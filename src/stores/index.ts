@@ -8,4 +8,4 @@ export {
 } from './nowPlayingStore'
 export { useSensorStore } from './sensorStore'
 export { useSettingsStore } from './settingsStore'
-export { useSheetStore, type SheetId } from './sheetStore'
+export { useJanelaStore, zDaJanela, type GavetaId, type JanelaId } from './janelaStore'

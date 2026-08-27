@@ -2,13 +2,13 @@
 
 import { SettingsForm } from '@/components/settings/SettingsForm'
 import { Sheet, SheetContent } from '@/components/ui/Sheet'
-import { useSettingsStore, useSheetStore } from '@/stores'
+import { useJanelaStore, useSettingsStore } from '@/stores'
 import type { AppSettings } from '@/types'
 
 export function SettingsSheet() {
-  const isOpen = useSheetStore((state) => state.activeSheet === 'settings')
-  const open = useSheetStore((state) => state.open)
-  const close = useSheetStore((state) => state.close)
+  const isOpen = useJanelaStore((state) => state.gaveta === 'settings')
+  const abrirGaveta = useJanelaStore((state) => state.abrirGaveta)
+  const close = useJanelaStore((state) => state.fecharGaveta)
 
   const settings = useSettingsStore((state) => state.settings)
   const isSaving = useSettingsStore((state) => state.isSaving)
@@ -20,7 +20,11 @@ export function SettingsSheet() {
   }
 
   return (
-    <Sheet modal={false} open={isOpen} onOpenChange={(next) => (next ? open('settings') : close())}>
+    <Sheet
+      modal={false}
+      open={isOpen}
+      onOpenChange={(next) => (next ? abrirGaveta('settings') : close())}
+    >
       <SheetContent title="Configurações" description="Chave da API e nome do assistente.">
         <div className="scroll-thin flex-1 overflow-y-auto p-3">
           {error ? (
