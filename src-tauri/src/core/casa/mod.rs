@@ -518,6 +518,46 @@ pub fn endereco_de(chaveiro: &Chaveiro, id: &str, ip: &str, versao: &str) -> Opt
     })
 }
 
+/// Lê o estado de vários aparelhos de uma vez, agrupando por gateway.
+///
+/// É o que permite acompanhar sensor: uma porta abre a qualquer momento, e um estado que
+/// só é buscado quando alguém clica não é um sensor, é uma consulta.
+///
+/// O agrupamento não é economia, é correção — aparelho Tuya aceita **uma sessão por
+/// vez**, e três conexões ao mesmo gateway competiriam entre si. Aparelho de Wi-Fi cai
+/// cada um no seu grupo, porque cada um é o próprio gateway.
+pub fn ler_estados(chaveiro: &Chaveiro, ids: &[String]) -> Vec<(String, controle::Detalhe)> {
+    let mut por_gateway: BTreeMap<String, Vec<Endereco>> = BTreeMap::new();
+
+    for id in ids {
+        let Some(endereco) = endereco_de(chaveiro, id, "", "") else {
+            continue;
+        };
+        // Sem endereço não há a quem perguntar: subaparelho órfão, ou aparelho de rede
+        // que a varredura ainda não viu.
+        if endereco.ip.trim().is_empty() {
+            continue;
+        }
+
+        por_gateway
+            .entry(endereco.ip.clone())
+            .or_default()
+            .push(endereco);
+    }
+
+    por_gateway
+        .into_values()
+        .flat_map(|grupo| {
+            let alvos: Vec<controle::Alvo<'_>> = grupo.iter().map(Endereco::alvo).collect();
+
+            controle::detalhar_varios(&alvos)
+                .into_iter()
+                .map(|(id, detalhe)| (id.to_owned(), detalhe))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// Tudo o que já se conhece, sem encostar na rede.
 ///
 /// É o que o painel mostra no instante em que abre. Sem isto, toda abertura começava com
@@ -907,5 +947,34 @@ mod tests {
 
         assert!(decifrar(&[0x00; 15]).is_none(), "tamanho fora do bloco");
         assert!(decifrar(&[]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod testes_de_campo {
+    use super::*;
+
+    /// Lê os sensores DESTA casa, agrupando por gateway. Fora do `cargo test` comum
+    /// porque depende de ter os aparelhos ligados.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture le_os_sensores_de_verdade`
+    #[test]
+    #[ignore]
+    fn le_os_sensores_de_verdade() {
+        let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+            .join("com.jarvis.app");
+        let chaveiro = Chaveiro::new(&dir);
+
+        let ids: Vec<String> = chaveiro
+            .todos()
+            .into_iter()
+            .filter(|ficha| !ficha.cid.is_empty())
+            .map(|ficha| ficha.id)
+            .collect();
+
+        println!("{} subaparelhos", ids.len());
+        for (id, detalhe) in ler_estados(&chaveiro, &ids) {
+            println!("{id}: {:?}", detalhe.leituras);
+        }
     }
 }

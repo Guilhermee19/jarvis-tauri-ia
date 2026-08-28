@@ -6,6 +6,7 @@ import {
   irKeys,
   knownDevices,
   sendIrKey,
+  sensorStates,
   setDeviceDp,
   setDeviceHidden,
   setDevicePower,
@@ -16,6 +17,22 @@ import { useSettingsStore } from './settingsStore'
 
 /** De quanto em quanto tempo a ronda repete, enquanto o painel estiver aberto. */
 const RONDA_MS = 30_000
+
+/**
+ * De quanto em quanto tempo reler os sensores.
+ *
+ * Muito mais curto que a ronda porque as duas perguntam coisas de naturezas diferentes: a
+ * ronda pergunta **quem existe** na rede, que muda quando alguém pluga um aparelho novo;
+ * esta pergunta **o que está acontecendo**, e uma porta abre entre um piscar e outro.
+ *
+ * Cinco segundos é o meio-termo: uma conexão por gateway a cada cinco segundos é barato
+ * numa rede local, e ninguém percebe cinco segundos de atraso numa porta que abriu.
+ *
+ * ponytail: o certo seria o gateway EMPURRAR a mudança — ele manda o aviso sozinho na
+ * conexão aberta, e a latência cairia para o tempo do rádio. Isso pede uma thread viva no
+ * Rust emitindo evento para a UI, e é outra tarefa.
+ */
+const SENSORES_MS = 5_000
 
 /**
  * Os aparelhos da casa encontrados na rede.
@@ -86,6 +103,8 @@ interface CasaState {
   alternarChave: (aparelho: Aparelho, dp: string, ligado: boolean) => Promise<void>
   /** Tira da lista principal, ou devolve para ela. Só a tela muda. */
   ocultar: (aparelho: Aparelho, oculto: boolean) => Promise<void>
+  /** Relê os sensores. Chamado pelo laço, não pela tela. */
+  olharSensores: () => Promise<void>
   /**
    * As teclas de cada controle de infravermelho, por id.
    *
@@ -112,6 +131,25 @@ interface CasaState {
  * id de timer no estado faria toda batida da ronda notificar todo componente inscrito.
  */
 let ronda: ReturnType<typeof setInterval> | null = null
+let vigia: ReturnType<typeof setInterval> | null = null
+
+/**
+ * As categorias que mudam de estado sozinhas.
+ *
+ * Espelha o `SENSORES` de `core/casa/controle.rs`, e a duplicação é consciente: lá ela
+ * decide se um booleano é leitura ou botão; aqui, quem vale a pena reler sem parar.
+ */
+const SENSORES = new Set([
+  'mcs',
+  'mcs2',
+  'pir',
+  'hps',
+  'ywbj',
+  'rqbj',
+  'sj',
+  'wsdcg',
+  'ldcg',
+])
 
 /**
  * O id que a busca na nuvem usa como ponto de partida.
@@ -287,13 +325,35 @@ export const useCasaStore = create<CasaState>((set, get) => ({
     void get().carregar()
     void get().procurar()
     ronda = setInterval(() => void get().procurar(), RONDA_MS)
+    vigia = setInterval(() => void get().olharSensores(), SENSORES_MS)
   },
 
   pararRonda: () => {
-    if (ronda === null) return
-
-    clearInterval(ronda)
+    if (ronda !== null) clearInterval(ronda)
+    if (vigia !== null) clearInterval(vigia)
     ronda = null
+    vigia = null
+  },
+
+  olharSensores: async () => {
+    // Categoria e não capacidade: perguntar A TODOS os aparelhos de cinco em cinco
+    // segundos acenderia o rádio de tudo na casa para saber o que já se sabe. Sensor é o
+    // que muda sozinho; o resto muda quando alguém manda.
+    const ids = get()
+      .aparelhos.filter((aparelho) => SENSORES.has(aparelho.categoria) && aparelho.temChave)
+      .map((aparelho) => aparelho.id)
+
+    if (ids.length === 0 || get().detalhando !== null) return
+
+    try {
+      const lidos = await sensorStates(ids)
+      if (lidos.length === 0) return
+
+      set({ detalhes: { ...get().detalhes, ...Object.fromEntries(lidos) } })
+    } catch {
+      // Silêncio: é um laço de fundo. Um erro aqui viraria a mesma mensagem na tela a
+      // cada cinco segundos, e o que ele diria já está no cartão — o sensor sem leitura.
+    }
   },
 
   alternar: async (aparelho, ligado) => {

@@ -402,17 +402,28 @@ const SENSORES: [&str; 9] = [
 
 /// O nome de um data point, quando ele é conhecido.
 ///
-/// A tabela é pequena de propósito. Ela cobre o que existe nesta casa e o que é padrão no
-/// catálogo da Tuya; o que não estiver aqui aparece como "DP 7", que é feio e honesto —
-/// inventar um nome seria pior, porque ninguém saberia que foi inventado.
+/// **A numeração muda de produto para produto.** Um sensor de presença desta casa reporta
+/// a detecção no DP 1 e outro no 101; a bateria de um está no 2 e a do outro no 103. Não
+/// existe padrão a deduzir, e a tabela abaixo cobre só o que é convenção de fato no
+/// catálogo da Tuya.
+///
+/// O resto aparece como "DP 101", que é feio e honesto — inventar um nome seria pior,
+/// porque ninguém saberia que foi inventado, e um rótulo errado num sensor de gás é uma
+/// informação perigosa.
+///
+/// ponytail: o mapa de verdade existe na nuvem, em `/v2.0/cloud/thing/{id}/model`, que
+/// devolve o código de cada DP. Ele **não é autorizado no projeto trial** — foi testado
+/// contra esta conta e respondeu 28841105. Com um plano que o libere, este palpite todo
+/// vira uma consulta por produto, feita uma vez na importação.
 fn rotulo(categoria: &str, dp: &str) -> String {
     let conhecido = match (categoria, dp) {
         ("mcs" | "mcs2", "1") => Some("Porta"),
         ("hps", "1") => Some("Presença"),
         ("pir", "1") => Some("Movimento"),
         (_, "1") if SENSORES.contains(&categoria) => Some("Detecção"),
+        // Só o DP 2, e não o 3: chamar os dois de bateria mostrava "Bateria 6%" e
+        // "Bateria 60%" no mesmo sensor, e nenhum dos dois merecia crédito.
         (_, "2") if SENSORES.contains(&categoria) => Some("Bateria"),
-        (_, "3") if SENSORES.contains(&categoria) => Some("Bateria"),
         ("dj" | "xdd" | "fwd" | "dc" | "dd" | "gyd", "20") => Some("Luz"),
         (_, "1" | "switch_1") => Some("Chave 1"),
         (_, "2" | "switch_2") => Some("Chave 2"),
@@ -458,6 +469,14 @@ fn ler_leituras(dps: &BTreeMap<String, serde_json::Value>, categoria: &str) -> V
                 serde_json::Value::Bool(ligado) if categoria == "pir" || categoria == "hps" => {
                     if *ligado { "Detectado" } else { "Nada" }.to_owned()
                 }
+                // Parte dos sensores reporta enumeração e não booleano: o de presença
+                // desta casa responde "presence"/"none" num campo de texto.
+                serde_json::Value::String(estado)
+                    if matches!(estado.as_str(), "presence" | "pir" | "motion") =>
+                {
+                    "Detectado".to_owned()
+                }
+                serde_json::Value::String(estado) if estado == "none" => "Nada".to_owned(),
                 serde_json::Value::Bool(ligado) => {
                     if *ligado { "Sim" } else { "Não" }.to_owned()
                 }
@@ -472,6 +491,35 @@ fn ler_leituras(dps: &BTreeMap<String, serde_json::Value>, categoria: &str) -> V
                 rotulo,
                 valor: texto,
             })
+        })
+        .collect()
+}
+
+/// Lê vários subaparelhos do MESMO gateway, numa conexão só.
+///
+/// **Uma conexão, e não uma por sensor.** Aparelho Tuya aceita uma sessão por vez: três
+/// conexões seguidas ao mesmo gateway disputam a mesma vaga, e a segunda encontra a porta
+/// fechada pela primeira. Como o aperto de mão do 3.4 custa três quadros, reaproveitar a
+/// sessão ainda sai três vezes mais barato.
+///
+/// Todos os alvos precisam apontar para o mesmo gateway — quem garante isso é quem agrupa
+/// antes de chamar. Um alvo que falhe sai da lista sem derrubar os outros: um sensor com
+/// pilha fraca não pode apagar a leitura dos vizinhos.
+pub fn detalhar_varios<'a>(alvos: &[Alvo<'a>]) -> Vec<(&'a str, Detalhe)> {
+    let Some(primeiro) = alvos.first() else {
+        return Vec::new();
+    };
+
+    let Ok(mut sessao) = Sessao::abrir(primeiro) else {
+        return Vec::new();
+    };
+
+    alvos
+        .iter()
+        .filter_map(|alvo| {
+            let dps = sessao.consultar(alvo).ok()?;
+
+            Some((alvo.id, detalhe_de(dps, alvo.categoria)))
         })
         .collect()
 }

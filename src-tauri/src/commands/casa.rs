@@ -4,7 +4,7 @@ use tauri::State;
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::casa::controle::{self, Ajuste, Detalhe, Estado};
 use crate::core::casa::nuvem::{Controle, Tecla};
-use crate::core::casa::{conhecidos, endereco_de, descobrir_com, nuvem, Aparelho, CasaError, Varredura};
+use crate::core::casa::{conhecidos, endereco_de, ler_estados, descobrir_com, nuvem, Aparelho, CasaError, Varredura};
 use crate::state::AppState;
 
 /// `(async)` porque **bloqueia por segundos**: não é uma consulta, é uma janela de
@@ -230,4 +230,23 @@ pub fn set_device_dp(
         [(dp, serde_json::Value::Bool(ligado))].into_iter().collect(),
     )
     .map_err(|erro| erro.to_string())
+}
+
+/// O estado de vários aparelhos de uma vez.
+///
+/// Existe para o painel poder ACOMPANHAR sensores: uma porta abre a qualquer momento, e
+/// um estado que só é buscado quando alguém clica não é um sensor, é uma consulta.
+///
+/// Recebe a lista de uma vez em vez de um comando por aparelho porque a leitura é
+/// agrupada por gateway — três sensores do mesmo hub viram uma conexão só, que é o que o
+/// aparelho aceita: **uma sessão por vez**.
+///
+/// Aparelho que não responder simplesmente não aparece na resposta. Um sensor com pilha
+/// fraca não pode apagar a leitura dos vizinhos.
+#[tauri::command(async)]
+pub fn sensor_states(
+    ids: Vec<String>,
+    chaveiro: State<'_, Chaveiro>,
+) -> Vec<(String, Detalhe)> {
+    ler_estados(&chaveiro, &ids)
 }

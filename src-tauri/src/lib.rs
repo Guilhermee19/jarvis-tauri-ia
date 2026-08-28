@@ -113,6 +113,7 @@ pub fn run() {
             commands::casa::device_state,
             commands::casa::set_light,
             commands::casa::set_device_dp,
+            commands::casa::sensor_states,
             commands::casa::set_device_hidden,
             commands::casa::ir_keys,
             commands::casa::send_ir_key,

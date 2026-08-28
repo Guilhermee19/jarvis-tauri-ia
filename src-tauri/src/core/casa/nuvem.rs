@@ -798,7 +798,14 @@ mod tests {
         });
     }
 
-    /// TEMPORARIO: o que a nuvem sabe sobre um aparelho.
+    /// O que a nuvem sabe sobre um aparelho — inclusive os nomes dos data points.
+    ///
+    /// Fora do `cargo test` comum porque depende de credencial e de internet. É por onde
+    /// se descobre o que um DP desconhecido significa.
+    ///
+    /// ```text
+    /// TUYA_ID=… TUYA_SEGREDO=… TUYA_REGIAO=us TUYA_ALVO=<id>     ///   cargo test --lib -- --ignored --nocapture sondar_aparelho
+    /// ```
     #[test]
     #[ignore]
     fn sondar_aparelho() {
@@ -820,8 +827,8 @@ mod tests {
                 let token = autenticar(&http, &base, &id, &segredo).await.expect("token");
 
                 for caminho in [
-                    format!("/v1.0/devices/{alvo}"),
-                    format!("/v1.0/devices/{alvo}/status"),
+                    format!("/v2.0/cloud/thing/{alvo}/model"),
+                    format!("/v1.0/devices/{alvo}/specifications"),
                 ] {
                     let bruto: Result<serde_json::Value, _> =
                         chamar(&http, &base, &id, &segredo, Some(&token), &caminho).await;

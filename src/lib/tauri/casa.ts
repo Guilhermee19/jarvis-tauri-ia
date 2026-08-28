@@ -127,3 +127,17 @@ export function setDeviceDp(
 ): Promise<DetalheAparelho> {
   return call<DetalheAparelho>('set_device_dp', { id, ip, versao, dp, ligado })
 }
+
+/**
+ * O estado de vários aparelhos de uma vez.
+ *
+ * A lista vai junta, e não um comando por aparelho, porque a leitura é agrupada por
+ * gateway no Rust: três sensores do mesmo hub viram uma conexão só — que é o que o
+ * aparelho aceita, **uma sessão por vez**.
+ *
+ * Quem não responder não aparece na resposta. Um sensor com pilha fraca não apaga a
+ * leitura dos vizinhos.
+ */
+export function sensorStates(ids: string[]): Promise<[string, DetalheAparelho][]> {
+  return call<[string, DetalheAparelho][]>('sensor_states', { ids })
+}
