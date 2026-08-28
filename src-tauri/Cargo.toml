@@ -63,3 +63,27 @@ windows = { version = "0.62", features = [
 
 [lints.clippy]
 all = "deny"
+
+# **Sem isto, a prévia da webcam roda a meio quadro por segundo em `tauri dev`.**
+#
+# Reduzir um quadro 1080p custa 32 ms com o `image` otimizado e **1826 ms** sem — 57×,
+# medido no `bench_filtros` de `core/automation`. O mesmo vale para decodificar MJPEG e
+# para o JPEG de saída, que passam pelas mesmas crates.
+#
+# Só as DEPENDÊNCIAS são otimizadas; o código do projeto continua sem otimização, então
+# `panic` ainda aponta a linha certa e o depurador continua útil. Custa alguns minutos na
+# primeira compilação e nada nas seguintes, porque elas não mudam.
+# Código genérico de dependência (o codificador de JPEG é o caso) é gerado DENTRO do
+# nosso crate, então ele herda as opções daqui — foi o que manteve o JPEG em 51 ms mesmo
+# com as dependências já otimizadas. O nível 1 resolve isso e ainda mantém `panic` com a
+# linha certa e o depurador utilizável; o 2 e o 3 é que começam a embaralhar o passo a
+# passo.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+# As checagens de estouro custam caro em código que percorre pixel a pixel, e o que elas
+# protegem aqui é código de terceiros já testado — não o nosso, que continua com elas.
+debug-assertions = false
+overflow-checks = false

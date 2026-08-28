@@ -89,7 +89,15 @@ impl CapturedImage {
         let frame = RgbImage::from_raw(width, height, pixels)
             .ok_or_else(|| AutomationError::Encode("frame com tamanho inesperado".into()))?;
 
-        Self::encode_jpeg(&reduzir(DynamicImage::from(frame), max_width))
+        // `Triangle` e não `Lanczos3`: são 19 ms contra 32 num quadro 1080p (medido no
+        // `bench_filtros`), e a diferença não aparece num fundo que ainda vai passar por
+        // baixo da grade e da vinheta do HUD. A prévia troca nitidez por cadência de
+        // propósito — quem NÃO troca é a tela, logo abaixo.
+        Self::encode_jpeg(&reduzir(
+            DynamicImage::from(frame),
+            max_width,
+            FilterType::Triangle,
+        ))
     }
 
     /// PNG para a tela: texto de interface vira borrão nos artefatos do JPEG, e é
@@ -109,8 +117,11 @@ impl CapturedImage {
         let shot = RgbaImage::from_raw(width, height, pixels)
             .ok_or_else(|| AutomationError::Encode("captura com tamanho inesperado".into()))?;
 
+        // Aqui o filtro caro se paga: é uma captura só, e o que o modelo precisa ler é
+        // TEXTO — o nome num cartaz, a mensagem de erro numa caixa de diálogo. Reduzir
+        // texto com filtro barato é o caminho mais curto para ele ler errado.
         Self::encode(
-            &reduzir(shot.into(), max_width),
+            &reduzir(shot.into(), max_width, FilterType::Lanczos3),
             ImageFormat::Png,
             "image/png",
         )
@@ -161,7 +172,13 @@ impl CapturedImage {
 /// Lanczos3 e não o filtro rápido: o destino é ou uma prévia que o usuário olha, ou um
 /// modelo que vai LER a imagem — e reduzir com vizinho mais próximo serrilha justamente
 /// as bordas finas (texto, contorno de objeto) das quais os dois dependem.
-fn reduzir(imagem: DynamicImage, max_width: Option<u32>) -> DynamicImage {
+/// Reduz para caber em `max_width`, mantendo a proporção.
+///
+/// O `filtro` é escolha de quem chama porque os dois usos têm objetivos opostos: a prévia
+/// da webcam precisa de 25 quadros por segundo e o custo dela é recorrente; a captura de
+/// tela acontece uma vez e vai para um modelo ler texto. Um filtro só serviria mal aos
+/// dois.
+fn reduzir(imagem: DynamicImage, max_width: Option<u32>, filtro: FilterType) -> DynamicImage {
     let largura = imagem.width();
     let Some(teto) = max_width.filter(|teto| largura > *teto) else {
         return imagem;
@@ -170,7 +187,7 @@ fn reduzir(imagem: DynamicImage, max_width: Option<u32>) -> DynamicImage {
     // `.max(1)` porque uma imagem muito mais larga que alta zeraria a altura, e
     // `resize_exact(_, 0, _)` entra em pânico.
     let altura = (u64::from(imagem.height()) * u64::from(teto) / u64::from(largura)).max(1) as u32;
-    imagem.resize_exact(teto, altura, FilterType::Lanczos3)
+    imagem.resize_exact(teto, altura, filtro)
 }
 
 fn data_url(bytes: &[u8], mime: &str) -> String {
@@ -253,6 +270,47 @@ mod tests {
 
     /// O caso que motivou o teto: 1080p numa janela de ~620px. Sem reduzir, cada
     /// quadro atravessa o IPC com ~9× os pixels que a tela mostra.
+    /// Quanto custa reduzir um quadro, por filtro e por tamanho de saída.
+    ///
+    /// É o que sustenta duas decisões deste arquivo: o `Triangle` na prévia e o
+    /// `opt-level` das dependências no `Cargo.toml`. **Rode nos dois perfis** — a
+    /// diferença entre eles é de 57×, e é ela que explica uma prévia que trava só em
+    /// desenvolvimento.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture bench_filtros`
+    /// `cargo test --release --lib -- --ignored --nocapture bench_filtros`
+    #[test]
+    #[ignore]
+    fn bench_filtros() {
+        use std::time::Instant;
+
+        let frame = RgbImage::from_raw(1920, 1080, pixels(1920, 1080)).expect("frame");
+        let imagem = DynamicImage::from(frame);
+
+        for (largura, altura) in [(900u32, 506u32), (480, 270)] {
+            for (nome, filtro) in [
+                ("Lanczos3", FilterType::Lanczos3),
+                ("Triangle", FilterType::Triangle),
+            ] {
+                let relogio = Instant::now();
+                for _ in 0..3 {
+                    let _ = imagem.resize_exact(largura, altura, filtro);
+                }
+                println!(
+                    "{largura}px {nome}: {} ms/quadro",
+                    relogio.elapsed().as_millis() / 3
+                );
+            }
+        }
+
+        let reduzida = imagem.resize_exact(900, 506, FilterType::Triangle);
+        let relogio = Instant::now();
+        for _ in 0..5 {
+            let _ = CapturedImage::encode_jpeg(&reduzida);
+        }
+        println!("jpeg 900px: {} ms/quadro", relogio.elapsed().as_millis() / 5);
+    }
+
     #[test]
     fn reduzir_respeita_o_teto_e_mantem_a_proporcao() {
         let imagem =

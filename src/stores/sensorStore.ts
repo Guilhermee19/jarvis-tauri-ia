@@ -48,11 +48,23 @@ const AMOSTRAGEM_VAD_MS = 200
  *
  * O teto de 1920 impede que um monitor 4K peça mais que a própria câmera entrega.
  */
+/**
+ * Quantos pixels de largura pedir por quadro.
+ *
+ * O teto é 1280 e não 1920 por causa de um penhasco: numa tela de alta densidade, uma
+ * janela de 620 px pediria 1240 — e se a câmera estiver em 1080p, um pedido de 1920
+ * cairia no caso "já cabe", que **não reduz nada**. Aí o quadro atravessa o IPC inteiro,
+ * ~530 KB de base64 25 vezes por segundo, e a prévia trava sem que nenhuma conta de
+ * redimensionamento apareça no perfil.
+ *
+ * Recalculado a cada quadro: a janela é redimensionável, e arrastar a borda tem que mudar
+ * o tamanho pedido sem reabrir a câmera.
+ */
 function larguraDaPrevia(): number {
   if (typeof window === 'undefined') return 1280
 
   const densidade = window.devicePixelRatio || 1
-  return Math.min(1920, Math.max(640, Math.round(window.innerWidth * densidade)))
+  return Math.min(1280, Math.max(640, Math.round(window.innerWidth * densidade)))
 }
 
 /**
