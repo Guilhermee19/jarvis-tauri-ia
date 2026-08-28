@@ -202,3 +202,14 @@ export function EyeOffIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function GaugeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4.5 19.5v-5" />
+      <path d="M9.5 19.5v-9" />
+      <path d="M14.5 19.5v-13" />
+      <path d="M19.5 19.5v-6.5" />
+    </Svg>
+  )
+}

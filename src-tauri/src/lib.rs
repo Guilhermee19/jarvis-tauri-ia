@@ -67,6 +67,10 @@ pub fn run() {
             // Dono dos processos externos (whisper-server, ollama). Nada sobe aqui:
             // a subida é preguiçosa, na primeira vez que a voz é usada.
             app.manage(Services::new());
+            // Os contadores de desempenho, que só abrem na primeira vez que o painel
+            // perguntar — e ficam abertos depois, porque uso de CPU é uma taxa entre
+            // duas leituras.
+            app.manage(crate::core::system::DesempenhoState::new());
             // As chaves dos aparelhos da casa. Fica ao lado do `AppState` e não dentro
             // dele porque é DADO buscado, não configuração escolhida — e porque o botão
             // de importar reescreve o arquivo inteiro, o que ninguém quer que aconteça
@@ -93,6 +97,7 @@ pub fn run() {
             commands::system::press_media_key,
             commands::system::identify_track,
             commands::system::quit_app,
+            commands::system::performance_metrics,
             commands::voice::start_recording,
             commands::voice::stop_recording,
             commands::voice::is_recording,

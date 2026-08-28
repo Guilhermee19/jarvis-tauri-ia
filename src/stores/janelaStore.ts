@@ -12,7 +12,7 @@ import { create } from 'zustand'
  * Antes disto o store guardava UM painel ativo para os dois casos, e abrir a casa fechava
  * a conversa — que é o comportamento certo para gaveta e errado para janela.
  */
-export type JanelaId = 'chat' | 'casa' | 'musica'
+export type JanelaId = 'chat' | 'casa' | 'desempenho' | 'musica'
 export type GavetaId = 'settings'
 
 /**

@@ -16,6 +16,7 @@ export {
   isWindowMaximized,
   minimizeWindow,
   nowPlaying,
+  performanceMetrics,
   pressMediaKey,
   quitApp,
   showWindow,

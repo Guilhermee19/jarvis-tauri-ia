@@ -1,5 +1,6 @@
 import { call } from './client'
 import type { Faixa } from './events'
+import type { Metricas } from '@/types'
 
 /** Wrappers de `src-tauri/src/commands/system.rs`. */
 
@@ -64,4 +65,14 @@ export function pressMediaKey(key: MediaKey): Promise<void> {
 
 export function quitApp(): Promise<void> {
   return call<void>('quit_app')
+}
+
+/**
+ * Quanto do computador está sendo usado agora.
+ *
+ * A PRIMEIRA chamada abre os contadores do Windows e sai zerada: uso de processador é
+ * uma taxa entre duas leituras, e a primeira não tem de quando medir.
+ */
+export function performanceMetrics(): Promise<Metricas> {
+  return call<Metricas>('performance_metrics')
 }

@@ -126,3 +126,15 @@ pub fn press_media_key(key: String) -> Result<(), String> {
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
 }
+
+/// Quanto do computador está sendo usado agora.
+///
+/// `(async)` porque ler os contadores conversa com o subsistema de desempenho do Windows
+/// e a primeira chamada ainda abre a consulta — dezenas de milissegundos que não podem
+/// segurar a thread principal.
+#[tauri::command(async)]
+pub fn performance_metrics(
+    desempenho: tauri::State<'_, crate::core::system::DesempenhoState>,
+) -> Result<crate::core::system::Metricas, String> {
+    desempenho.amostrar().map_err(|erro| erro.to_string())
+}

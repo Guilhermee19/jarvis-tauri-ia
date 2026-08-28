@@ -1,6 +1,13 @@
 'use client'
 
-import { CameraIcon, ChatIcon, HouseIcon, MicIcon, SettingsIcon } from '@/components/ui/icons'
+import {
+  CameraIcon,
+  ChatIcon,
+  GaugeIcon,
+  HouseIcon,
+  MicIcon,
+  SettingsIcon,
+} from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useChatStore, useJanelaStore, useSensorStore, type JanelaId } from '@/stores'
 
@@ -25,6 +32,7 @@ interface NavItem<Id> {
 const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
   { id: 'casa', label: 'Casa', Icon: HouseIcon },
+  { id: 'desempenho', label: 'Desempenho', Icon: GaugeIcon },
 ]
 
 /** Gavetas: uma por vez, então o botão aceso quer dizer "é esta que está aberta". */

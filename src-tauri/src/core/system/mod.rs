@@ -11,10 +11,12 @@
 //! existe, e é a única parte do módulo com teste.
 
 mod audio;
+mod desempenho;
 mod janela;
 mod target;
 
 pub use audio::{nudge_volume, press, set_volume, toggle_mute, MediaKey};
+pub use desempenho::{DesempenhoState, Metricas};
 pub use janela::{esta_parado, titulo_do_spotify};
 
 #[derive(Debug, thiserror::Error)]
