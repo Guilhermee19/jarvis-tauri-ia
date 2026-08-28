@@ -171,6 +171,11 @@ pub struct Aparelho {
     /// Vazio em aparelho de rede. Preenchido, quer dizer que este cartão é uma TV ou um
     /// ar-condicionado: sem IP, sem protocolo, e comandado por teclas em vez de botão.
     pub emissor: String,
+    /// Subaparelho ZigBee: ele não fala na rede, quem fala é o gateway.
+    ///
+    /// Sem isto a tela o trataria como um aparelho de Wi-Fi que sumiu — "fora do ar",
+    /// "visto nunca" — quando ele nunca esteve na rede e nem deveria estar.
+    pub subaparelho: bool,
 }
 
 /// O JSON que vem dentro do anúncio. Nomes crus da Tuya, e todos opcionais porque cada
@@ -287,6 +292,7 @@ pub fn descobrir_com(chaveiro: &Chaveiro) -> Result<Varredura, CasaError> {
         aparelho.categoria = conhecido.categoria;
         aparelho.oculto = conhecido.oculto;
         aparelho.emissor = conhecido.emissor;
+        aparelho.subaparelho = !conhecido.cid.is_empty();
     }
 
     // E quem já foi visto um dia, mas ficou calado desta vez. Entra marcado como ausente
@@ -383,6 +389,7 @@ fn so_o_endereco(origem: &str) -> Aparelho {
         comutavel: false,
         oculto: false,
         emissor: String::new(),
+        subaparelho: false,
     }
 }
 
@@ -424,6 +431,7 @@ fn montar(json: &[u8], origem: &str, versao_padrao: &str, decifrado: bool) -> Op
         comutavel: false,
         oculto: false,
         emissor: String::new(),
+        subaparelho: false,
     })
 }
 
@@ -448,7 +456,66 @@ fn do_chaveiro(ficha: Conhecido) -> Aparelho {
         visto_em: ficha.visto_em,
         oculto: ficha.oculto,
         emissor: ficha.emissor,
+        subaparelho: !ficha.cid.is_empty(),
     }
+}
+
+/// Onde e como falar com um aparelho.
+///
+/// Existe por causa dos subaparelhos ZigBee: o sensor de porta **não tem endereço,
+/// protocolo nem chave** — os três são do gateway, e a única coisa dele é o `cid`.
+/// Montar o alvo à mão em cada chamador daria três lugares para esquecer isso.
+pub struct Endereco {
+    pub id: String,
+    pub ip: String,
+    pub versao: String,
+    pub chave: String,
+    pub cid: String,
+    pub categoria: String,
+}
+
+impl Endereco {
+    pub fn alvo(&self) -> controle::Alvo<'_> {
+        controle::Alvo {
+            id: &self.id,
+            ip: &self.ip,
+            versao: &self.versao,
+            local_key: &self.chave,
+            cid: &self.cid,
+            categoria: &self.categoria,
+        }
+    }
+}
+
+/// Resolve por onde falar com um aparelho, seguindo o gateway quando for o caso.
+///
+/// `ip` e `versao` vêm da tela, que tem a varredura mais recente — o backend não guarda o
+/// retrato da rede de propósito. Num subaparelho eles são ignorados: quem responde é o
+/// gateway, e o endereço dele sai do chaveiro.
+pub fn endereco_de(chaveiro: &Chaveiro, id: &str, ip: &str, versao: &str) -> Option<Endereco> {
+    let conhecido = chaveiro.de(id)?;
+
+    if conhecido.cid.is_empty() {
+        return Some(Endereco {
+            id: id.to_owned(),
+            ip: ip.to_owned(),
+            versao: versao.to_owned(),
+            chave: conhecido.local_key,
+            cid: String::new(),
+            categoria: conhecido.categoria,
+        });
+    }
+
+    let pai = chaveiro.de(&conhecido.pai)?;
+
+    Some(Endereco {
+        id: id.to_owned(),
+        ip: pai.ultimo_ip,
+        versao: pai.versao,
+        chave: pai.local_key,
+        cid: conhecido.cid,
+        categoria: conhecido.categoria,
+    })
 }
 
 /// Tudo o que já se conhece, sem encostar na rede.

@@ -170,10 +170,19 @@ export function CasaPanel() {
   )
 }
 
+/**
+ * As famílias que têm o que mostrar além do liga-desliga.
+ *
+ * Fora daqui o painel de ajustes abriria vazio, e um botão que leva a lugar nenhum é pior
+ * que a ausência dele.
+ */
+const COM_AJUSTES: string[] = ['lampada', 'sensor', 'tomada', 'interruptor', 'ventilador']
+
 function Card({ aparelho }: { aparelho: Aparelho }) {
   const estado = useCasaStore((state) => state.estados[aparelho.id])
   const comandando = useCasaStore((state) => state.comandando === aparelho.id)
   const alternar = useCasaStore((state) => state.alternar)
+  const detalhe = useCasaStore((state) => state.detalhes[aparelho.id])
   // Um painel por vez: abrir os ajustes fecha a ficha técnica. Os dois juntos
   // transformariam um cartão de uma linha numa tela inteira.
   const [painel, setPainel] = useState<'ajustes' | 'ficha' | null>(null)
@@ -189,21 +198,35 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
   // existe, e por isso ele sai de toda a conversa sobre presença.
   // A categoria basta, e é o que salva antes de a importação ligar o controle ao
   // emissor: sem isso a TV apareceria como um aparelho de rede que sumiu.
+  // Os dois tipos que **não estão na rede por projeto**: o controle de infravermelho,
+  // que é uma lista de códigos dentro do emissor, e o subaparelho ZigBee, que fala pelo
+  // gateway. Chamar qualquer um dos dois de "fora do ar" manda procurar um problema que
+  // não existe.
+  const foraDaRede = ehControleRemoto(aparelho) || aparelho.subaparelho
   const porInfravermelho = ehControleRemoto(aparelho)
 
   // O botão de ajustes só aparece quando esperamos que haja o que ajustar, e a aposta é
   // feita SEM perguntar ao aparelho: descobrir de verdade custa uma conexão por cartão, e
   // dez conexões para decidir se um ícone aparece seria caro demais.
   //
-  // Controle de infravermelho tem teclas; lâmpada tem brilho e, quase sempre, cor. O
-  // resto — tomada, interruptor, sensor — não tem nada além do liga-desliga que já está
-  // no cartão.
-  const temAjustes =
-    porInfravermelho || (aparelho.temChave && familiaDoAparelho(aparelho.categoria) === 'lampada')
+  // Controle de infravermelho tem teclas; lâmpada tem brilho e cor; sensor tem o que
+  // mede; tomada e interruptor podem ter mais de uma chave. Central, câmera e o que ainda
+  // não tem categoria ficam de fora — neles o liga-desliga do cartão é tudo o que há.
+  //
+  // A aposta erra às vezes: uma tomada simples abre e diz que não há mais nada. Errar
+  // para o lado de oferecer é melhor que esconder o painel de quem tem o que ajustar.
+  const familia = familiaDoAparelho(aparelho.categoria)
+  const temAjustes = porInfravermelho || (aparelho.temChave && COM_AJUSTES.includes(familia))
+
+  // A leitura principal no próprio cartão, quando já foi buscada: num sensor de porta
+  // "aberta" é o conteúdo inteiro, e escondê-la atrás de um clique anula o sensor.
+  // Só em sensor: numa tomada a primeira leitura é um `DP 14 = off` de configuração, e
+  // pô-lo no cartão trocaria a informação principal por ruído.
+  const leitura = familia === 'sensor' ? detalhe?.leituras[0] : undefined
 
   // O que o cartão fechado precisa gritar, e nada além. O resto — id, endereço, modelo,
   // data points — mora atrás do "i", porque só interessa quando algo não funciona.
-  const alerta = porInfravermelho
+  const alerta = foraDaRede
     ? null
     : !aparelho.presente
     ? 'fora do ar'
@@ -221,15 +244,15 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
     <li
       className={cn(
         'border-border-soft bg-base/40 rounded-md border px-3 py-2',
-        !porInfravermelho && (!aparelho.suportado || !aparelho.presente) && 'opacity-70',
+        !foraDaRede && (!aparelho.suportado || !aparelho.presente) && 'opacity-70',
       )}
     >
       <div className="flex items-center gap-2">
         <Status
           ativo={aparelho.ativo}
           suportado={aparelho.suportado}
-          presente={aparelho.presente || porInfravermelho}
-          porInfravermelho={porInfravermelho}
+          presente={aparelho.presente || foraDaRede}
+          porInfravermelho={foraDaRede}
         />
 
         {/* O tipo antes do nome: numa lista de dez, o ícone é o que deixa achar a
@@ -246,6 +269,12 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
         >
           {aparelho.nome || aparelho.ip || aparelho.id}
         </span>
+
+        {leitura ? (
+          <span className="text-accent shrink-0 text-[11px]" title={leitura.rotulo}>
+            {leitura.valor}
+          </span>
+        ) : null}
 
         {alerta ? <Etiqueta alerta={alerta === 'sem chave'}>{alerta}</Etiqueta> : null}
 
@@ -298,7 +327,7 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
       {/* Fora do painel de detalhes de propósito: é o que explica por que NÃO há botão,
           e uma explicação escondida atrás de um clique não seria encontrada por quem
           está justamente procurando o botão que falta. */}
-      {painel === 'ficha' && !dachaComandar && !porInfravermelho ? (
+      {painel === 'ficha' && !dachaComandar && !foraDaRede ? (
         <p className="text-muted mt-2 pl-4 text-[10px] leading-relaxed">
           {!aparelho.decifrado
             ? 'Anunciou num protocolo que não abriu. Fica na lista com o endereço para você saber que ele existe, em vez de sumir e parecer problema de rede.'

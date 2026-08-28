@@ -78,6 +78,13 @@ export interface Aparelho {
    * lista de códigos dentro do emissor.
    */
   emissor: string
+  /**
+   * Subaparelho ZigBee: ele **não fala na rede**, quem fala é o gateway.
+   *
+   * Sem isto a tela o trataria como um aparelho de Wi-Fi que sumiu — "fora do ar",
+   * "visto nunca" — quando ele nunca esteve na rede e nem deveria estar.
+   */
+  subaparelho: boolean
 }
 
 /** Uma tecla de controle remoto. Espelha `Tecla` de `core/casa/nuvem.rs`. */
@@ -169,11 +176,39 @@ export interface Luz {
   temBranco: boolean
 }
 
+/**
+ * Um liga-desliga do aparelho.
+ *
+ * Plural porque **um aparelho pode ter vários**: uma tomada dupla responde `1` e `2`, e
+ * mostrar só o primeiro deixaria metade dela sem botão.
+ */
+export interface Chave {
+  dp: string
+  rotulo: string
+  ligado: boolean
+}
+
+/**
+ * Uma medida que o aparelho reporta e que **não se comanda** — o estado de uma porta, a
+ * bateria de um sensor.
+ *
+ * Vem já em português do Rust: o booleano de um sensor é uma frase, e o significado dela
+ * muda com o aparelho. `true` num sensor de porta quer dizer "aberta".
+ */
+export interface Leitura {
+  rotulo: string
+  valor: string
+}
+
 /** O retrato completo de um aparelho. Espelha `Detalhe` do mesmo módulo. */
 export interface DetalheAparelho {
   ligado: boolean
   /** Qual data point acabou sendo o liga-desliga deste modelo. */
   interruptor: string
+  /** Todos os liga-desliga, não só o principal. */
+  chaves: Chave[]
+  /** O que o aparelho mede e não se comanda. */
+  leituras: Leitura[]
   /** `null` quando os data points não revelam uma lâmpada. */
   luz: Luz | null
   /**

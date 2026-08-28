@@ -28,7 +28,7 @@ use intent::Intent;
 use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
 use crate::core::casa::chaveiro::{Busca, Chaveiro};
-use crate::core::casa::controle::{self, Alvo};
+use crate::core::casa::controle;
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
 use crate::core::search;
@@ -740,15 +740,17 @@ fn casa(chaveiro: &Chaveiro, dito: &str, ligar: bool) -> Result<String, String> 
         ));
     }
 
-    controle::ligar(
-        &Alvo {
-            id: &aparelho.id,
-            ip: &aparelho.ultimo_ip,
-            versao: &aparelho.versao,
-            local_key: &aparelho.local_key,
-        },
-        ligar,
+    // Pelo `endereco_de` e não montando o alvo à mão: num subaparelho ZigBee o endereço,
+    // o protocolo e a chave são do GATEWAY, e só ele sabe disso.
+    let endereco = crate::core::casa::endereco_de(
+        chaveiro,
+        &aparelho.id,
+        &aparelho.ultimo_ip,
+        &aparelho.versao,
     )
+    .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
+
+    controle::ligar(&endereco.alvo(), ligar)
     .map(|_| {
         format!(
             "{} {}.",

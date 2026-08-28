@@ -1,10 +1,12 @@
 export type {
   AjusteLuz,
   Aparelho,
+  Chave,
   Controle,
   DetalheAparelho,
   EstadoAparelho,
   Importado,
+  Leitura,
   Luz,
   Tecla,
   Varredura,

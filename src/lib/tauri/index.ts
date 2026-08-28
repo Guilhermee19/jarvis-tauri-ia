@@ -5,6 +5,7 @@ export {
   importTuyaDevices,
   irKeys,
   knownDevices,
+  setDeviceDp,
   setDeviceHidden,
   setDevicePower,
   sendIrKey,

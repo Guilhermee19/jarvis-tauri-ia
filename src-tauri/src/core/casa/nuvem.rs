@@ -198,8 +198,32 @@ async fn terminar(
 ) -> Result<Vec<Conhecido>, NuvemError> {
     let mut aparelhos: Vec<Conhecido> = crus.into_iter().map(conhecido).collect();
     ligar_aos_emissores(http, client_id, client_secret, regiao, &mut aparelhos).await;
+    ligar_aos_gateways(&mut aparelhos);
 
     Ok(aparelhos)
+}
+
+/// Anota, em cada subaparelho ZigBee, por qual gateway ele é alcançado.
+///
+/// **Pela chave, e não por um campo de parentesco.** A nuvem não diz de quem cada sensor
+/// é filho, mas dá a `local_key` de todo mundo — e a de um subaparelho é *a mesma* do
+/// gateway dele, porque quem cifra a conversa é o gateway. Isso foi verificado contra os
+/// aparelhos: a chave do sensor de porta é byte a byte a do hub ZigBee.
+///
+/// Sem pai encontrado o sensor fica como está: aparece na lista e não responde, que é
+/// melhor que sumir.
+fn ligar_aos_gateways(aparelhos: &mut [Conhecido]) {
+    let pais: Vec<(String, String)> = aparelhos
+        .iter()
+        .filter(|aparelho| aparelho.cid.is_empty() && !aparelho.local_key.trim().is_empty())
+        .map(|aparelho| (aparelho.local_key.clone(), aparelho.id.clone()))
+        .collect();
+
+    for aparelho in aparelhos.iter_mut().filter(|atual| !atual.cid.is_empty()) {
+        if let Some((_, pai)) = pais.iter().find(|(chave, _)| *chave == aparelho.local_key) {
+            aparelho.pai = pai.clone();
+        }
+    }
 }
 
 /// As categorias de emissor de infravermelho.
@@ -254,6 +278,12 @@ struct Cru {
     category: String,
     #[serde(default)]
     online: bool,
+    /// `true` num subaparelho ZigBee — ele não tem Wi-Fi próprio.
+    #[serde(default)]
+    sub: bool,
+    /// O identificador dele dentro do gateway.
+    #[serde(default)]
+    node_id: String,
 }
 
 fn conhecido(cru: Cru) -> Conhecido {
@@ -264,6 +294,8 @@ fn conhecido(cru: Cru) -> Conhecido {
         produto: cru.product_id,
         categoria: cru.category,
         online: cru.online,
+        // O `cid` só vale para subaparelho; o `pai` é descoberto depois, pela chave.
+        cid: if cru.sub { cru.node_id } else { String::new() },
         // A nuvem manda um `ip`, mas é o PÚBLICO do roteador — não serve para falar com
         // o aparelho. Endereço, versão e a hora em que foi visto são todos da varredura
         // local, e entram depois pelo `Chaveiro::vistos`.
@@ -764,6 +796,42 @@ mod tests {
                 Err(erro) => println!("falhou: {erro}"),
             }
         });
+    }
+
+    /// TEMPORARIO: o que a nuvem sabe sobre um aparelho.
+    #[test]
+    #[ignore]
+    fn sondar_aparelho() {
+        let ler = |chave: &str| std::env::var(chave).unwrap_or_default();
+        let (id, segredo, regiao, alvo) = (
+            ler("TUYA_ID"),
+            ler("TUYA_SEGREDO"),
+            ler("TUYA_REGIAO"),
+            ler("TUYA_ALVO"),
+        );
+        let base = base(&regiao);
+        let http = reqwest::Client::new();
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let token = autenticar(&http, &base, &id, &segredo).await.expect("token");
+
+                for caminho in [
+                    format!("/v1.0/devices/{alvo}"),
+                    format!("/v1.0/devices/{alvo}/status"),
+                ] {
+                    let bruto: Result<serde_json::Value, _> =
+                        chamar(&http, &base, &id, &segredo, Some(&token), &caminho).await;
+
+                    match bruto {
+                        Ok(valor) => println!("{caminho} -> {valor:#}"),
+                        Err(erro) => println!("{caminho} -> {erro}"),
+                    }
+                }
+            });
     }
 
     #[test]

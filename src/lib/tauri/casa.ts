@@ -111,3 +111,19 @@ export function sendIrKey(
 ): Promise<void> {
   return call<void>('send_ir_key', { emissor, remoto, categoria, tecla })
 }
+
+/**
+ * Liga ou desliga UMA das chaves do aparelho.
+ *
+ * Existe porque um aparelho pode ter várias — uma tomada dupla responde `1` e `2`, e o
+ * botão do cartão só alcança a primeira.
+ */
+export function setDeviceDp(
+  id: string,
+  ip: string,
+  versao: string,
+  dp: string,
+  ligado: boolean,
+): Promise<DetalheAparelho> {
+  return call<DetalheAparelho>('set_device_dp', { id, ip, versao, dp, ligado })
+}

@@ -2,9 +2,9 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::core::casa::chaveiro::Chaveiro;
-use crate::core::casa::controle::{self, Ajuste, Alvo, Detalhe, Estado};
+use crate::core::casa::controle::{self, Ajuste, Detalhe, Estado};
 use crate::core::casa::nuvem::{Controle, Tecla};
-use crate::core::casa::{conhecidos, descobrir_com, nuvem, Aparelho, CasaError, Varredura};
+use crate::core::casa::{conhecidos, endereco_de, descobrir_com, nuvem, Aparelho, CasaError, Varredura};
 use crate::state::AppState;
 
 /// `(async)` porque **bloqueia por segundos**: não é uma consulta, é uma janela de
@@ -98,60 +98,10 @@ pub fn set_device_power(
     ligado: bool,
     chaveiro: State<'_, Chaveiro>,
 ) -> Result<Estado, String> {
-    let conhecido = chaveiro
-        .de(&id)
+    let endereco = endereco_de(&chaveiro, &id, &ip, &versao)
         .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
 
-    controle::ligar(
-        &Alvo {
-            id: &id,
-            ip: &ip,
-            versao: &versao,
-            local_key: &conhecido.local_key,
-        },
-        ligado,
-    )
-    .map_err(|erro| erro.to_string())
-}
-
-/// O alvo de um comando, montado a partir do que a tela tem e do que o chaveiro guarda.
-///
-/// Existe para os três comandos de controle não repetirem a mesma busca de chave e o
-/// mesmo erro — e para o `clippy` não reclamar de função com sete argumentos.
-struct Pedido {
-    id: String,
-    ip: String,
-    versao: String,
-    chave: String,
-}
-
-impl Pedido {
-    fn novo(
-        id: String,
-        ip: String,
-        versao: String,
-        chaveiro: &Chaveiro,
-    ) -> Result<Self, String> {
-        let conhecido = chaveiro
-            .de(&id)
-            .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
-
-        Ok(Self {
-            id,
-            ip,
-            versao,
-            chave: conhecido.local_key,
-        })
-    }
-
-    fn alvo(&self) -> Alvo<'_> {
-        Alvo {
-            id: &self.id,
-            ip: &self.ip,
-            versao: &self.versao,
-            local_key: &self.chave,
-        }
-    }
+    controle::ligar(&endereco.alvo(), ligado).map_err(|erro| erro.to_string())
 }
 
 /// Tudo o que o aparelho sabe dizer sobre si: estado, capacidades de luz e os data points
@@ -166,9 +116,10 @@ pub fn device_state(
     versao: String,
     chaveiro: State<'_, Chaveiro>,
 ) -> Result<Detalhe, String> {
-    let pedido = Pedido::novo(id, ip, versao, &chaveiro)?;
+    let endereco = endereco_de(&chaveiro, &id, &ip, &versao)
+        .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
 
-    controle::detalhar(&pedido.alvo()).map_err(|erro| erro.to_string())
+    controle::detalhar(&endereco.alvo()).map_err(|erro| erro.to_string())
 }
 
 /// Muda cor, brilho ou temperatura de uma lâmpada.
@@ -180,9 +131,10 @@ pub fn set_light(
     ajuste: Ajuste,
     chaveiro: State<'_, Chaveiro>,
 ) -> Result<Detalhe, String> {
-    let pedido = Pedido::novo(id, ip, versao, &chaveiro)?;
+    let endereco = endereco_de(&chaveiro, &id, &ip, &versao)
+        .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
 
-    controle::ajustar(&pedido.alvo(), &ajuste).map_err(|erro| erro.to_string())
+    controle::ajustar(&endereco.alvo(), &ajuste).map_err(|erro| erro.to_string())
 }
 
 /// Tira um aparelho da lista principal, ou devolve para ela.
@@ -254,5 +206,28 @@ pub async fn send_ir_key(
         &tecla,
     )
     .await
+    .map_err(|erro| erro.to_string())
+}
+
+/// Liga ou desliga UMA das chaves do aparelho.
+///
+/// Existe porque um aparelho pode ter várias: a tomada dupla desta casa responde `1` e
+/// `2`, e o botão do cartão só alcança a primeira. Aqui a tela diz qual.
+#[tauri::command(async)]
+pub fn set_device_dp(
+    id: String,
+    ip: String,
+    versao: String,
+    dp: String,
+    ligado: bool,
+    chaveiro: State<'_, Chaveiro>,
+) -> Result<Detalhe, String> {
+    let endereco = endereco_de(&chaveiro, &id, &ip, &versao)
+        .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
+
+    controle::enviar_dps(
+        &endereco.alvo(),
+        [(dp, serde_json::Value::Bool(ligado))].into_iter().collect(),
+    )
     .map_err(|erro| erro.to_string())
 }

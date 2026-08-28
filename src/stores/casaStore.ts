@@ -6,6 +6,7 @@ import {
   irKeys,
   knownDevices,
   sendIrKey,
+  setDeviceDp,
   setDeviceHidden,
   setDevicePower,
   setLight,
@@ -81,6 +82,8 @@ interface CasaState {
   detalhando: string | null
   detalhar: (aparelho: Aparelho) => Promise<void>
   ajustarLuz: (aparelho: Aparelho, ajuste: AjusteLuz) => Promise<void>
+  /** Liga ou desliga uma chave específica — a segunda tomada, a terceira tecla. */
+  alternarChave: (aparelho: Aparelho, dp: string, ligado: boolean) => Promise<void>
   /** Tira da lista principal, ou devolve para ela. Só a tela muda. */
   ocultar: (aparelho: Aparelho, oculto: boolean) => Promise<void>
   /**
@@ -193,6 +196,23 @@ export const useCasaStore = create<CasaState>((set, get) => ({
 
     try {
       const detalhe = await deviceState(aparelho.id, aparelho.ip, aparelho.versao)
+      set({
+        detalhes: { ...get().detalhes, [aparelho.id]: detalhe },
+        estados: { ...get().estados, [aparelho.id]: detalhe.ligado },
+      })
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+    } finally {
+      set({ detalhando: null })
+    }
+  },
+
+  alternarChave: async (aparelho, dp, ligado) => {
+    if (get().detalhando !== null) return
+    set({ detalhando: aparelho.id, erro: null })
+
+    try {
+      const detalhe = await setDeviceDp(aparelho.id, aparelho.ip, aparelho.versao, dp, ligado)
       set({
         detalhes: { ...get().detalhes, [aparelho.id]: detalhe },
         estados: { ...get().estados, [aparelho.id]: detalhe.ligado },

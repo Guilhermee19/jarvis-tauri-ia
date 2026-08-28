@@ -60,6 +60,19 @@ pub struct Conhecido {
     pub versao: String,
     /// Quando a rede o anunciou pela última vez, em ms. `0` = nunca.
     pub visto_em: i64,
+    /// O identificador do subaparelho dentro do gateway ZigBee.
+    ///
+    /// Vazio em aparelho de Wi-Fi. Preenchido, quer dizer que este aparelho **não fala na
+    /// rede**: quem fala é o gateway, e ele só responde por este sensor quando a pergunta
+    /// leva o `cid` junto.
+    #[serde(default)]
+    pub cid: String,
+    /// O gateway por onde este subaparelho é alcançado.
+    ///
+    /// É de onde saem o endereço, o protocolo e a chave da conversa — o subaparelho não
+    /// tem nenhum dos três por conta própria.
+    #[serde(default)]
+    pub pai: String,
     /// O emissor de infravermelho que emite por este controle.
     ///
     /// Vazio em tudo que é aparelho de rede. A TV e o ar-condicionado não têm Wi-Fi: eles
@@ -146,6 +159,8 @@ impl Chaveiro {
             ficha.categoria = novo.categoria;
             ficha.online = novo.online;
             ficha.emissor = novo.emissor;
+            ficha.cid = novo.cid;
+            ficha.pai = novo.pai;
         }
 
         gravar(&self.path, &mapa)?;
@@ -407,6 +422,8 @@ mod tests {
                 categoria: "infrared_tv".to_owned(),
                 online: true,
                 emissor: "emissor-pai".to_owned(),
+                cid: "no-zigbee".to_owned(),
+                pai: "gateway".to_owned(),
                 ..Conhecido::default()
             }])
             .expect("grava");
@@ -418,6 +435,8 @@ mod tests {
         assert_eq!(ficha.categoria, "infrared_tv");
         assert!(ficha.online);
         assert_eq!(ficha.emissor, "emissor-pai", "o elo com o emissor tem que sobreviver");
+        assert_eq!(ficha.cid, "no-zigbee");
+        assert_eq!(ficha.pai, "gateway", "o elo com o gateway tem que sobreviver");
     }
 
     /// Aparelho que a rede anuncia mas que a nuvem nunca viu tem ficha do mesmo jeito —

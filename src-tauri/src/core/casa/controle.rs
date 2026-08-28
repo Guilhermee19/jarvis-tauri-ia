@@ -198,6 +198,15 @@ pub struct Alvo<'a> {
     pub ip: &'a str,
     pub versao: &'a str,
     pub local_key: &'a str,
+    /// A categoria da Tuya. Ela não muda a conversa com o aparelho — muda a LEITURA:
+    /// é ela que diz se um booleano é um botão ou o estado de uma porta.
+    pub categoria: &'a str,
+    /// O identificador do subaparelho dentro do gateway, quando é um.
+    ///
+    /// Vazio em aparelho de Wi-Fi. Preenchido, **o `ip`, a `versao` e a `local_key` são
+    /// os do GATEWAY** — o subaparelho não tem nenhum dos três, e a única coisa que é
+    /// dele nesta estrutura é o `cid`.
+    pub cid: &'a str,
 }
 
 /// O que o aparelho respondeu sobre si.
@@ -211,6 +220,27 @@ pub struct Estado {
     pub interruptor: String,
 }
 
+/// Um liga-desliga do aparelho.
+///
+/// Plural porque **um aparelho pode ter vários**: a tomada dupla desta casa responde
+/// `1` e `2`, e mostrar só o primeiro deixaria metade dela sem botão.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chave {
+    pub dp: String,
+    pub rotulo: String,
+    pub ligado: bool,
+}
+
+/// Uma medida que o aparelho reporta e que não se comanda — o estado de uma porta, a
+/// bateria de um sensor.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Leitura {
+    pub rotulo: String,
+    pub valor: String,
+}
+
 /// O retrato completo de um aparelho, para a tela de detalhes.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -221,6 +251,10 @@ pub struct Detalhe {
     /// categoria diz o que a nuvem acha que o aparelho é, e os DPs dizem o que ele
     /// realmente aceita — que é o que importa para desenhar um controle.
     pub luz: Option<Luz>,
+    /// Todos os liga-desliga, não só o principal.
+    pub chaves: Vec<Chave>,
+    /// O que o aparelho mede e não se comanda, já em português.
+    pub leituras: Vec<Leitura>,
     /// Os data points crus, do jeito que ele respondeu. É o que a tela mostra quando
     /// você abre os detalhes técnicos, e o que permite descobrir um aparelho que faz
     /// algo que este código ainda não modela.
@@ -331,10 +365,10 @@ pub fn detalhar(alvo: &Alvo) -> Result<Detalhe, ControleError> {
     let mut sessao = Sessao::abrir(alvo)?;
     let dps = sessao.consultar(alvo)?;
 
-    Ok(detalhe_de(dps))
+    Ok(detalhe_de(dps, alvo.categoria))
 }
 
-fn detalhe_de(dps: BTreeMap<String, serde_json::Value>) -> Detalhe {
+fn detalhe_de(dps: BTreeMap<String, serde_json::Value>, categoria: &str) -> Detalhe {
     // `ok()` e não `?`: sem interruptor o cartão fica sem botão, e é só isso.
     let estado = ler_interruptor(&dps).ok();
 
@@ -342,8 +376,104 @@ fn detalhe_de(dps: BTreeMap<String, serde_json::Value>) -> Detalhe {
         ligado: estado.as_ref().is_some_and(|estado| estado.ligado),
         interruptor: estado.map(|estado| estado.interruptor).unwrap_or_default(),
         luz: ler_luz(&dps),
+        chaves: ler_chaves(&dps, categoria),
+        leituras: ler_leituras(&dps, categoria),
         dps,
     }
+}
+
+/// As categorias que só MEDEM. Nelas um booleano é uma leitura, e não um botão.
+///
+/// A distinção não é cosmética: no sensor de porta o data point `1` é "está aberta", e
+/// tratá-lo como interruptor faria a tela oferecer um botão que manda o sensor abrir a
+/// porta — coisa que ele não faz, e que a lista de suspeitos do `ler_interruptor` teria
+/// escolhido sem hesitar.
+const SENSORES: [&str; 9] = [
+    "mcs",   // contato de porta e janela
+    "pir",   // presença por infravermelho
+    "hps",   // presença por micro-ondas
+    "ywbj",  // fumaça
+    "rqbj",  // gás
+    "sj",    // vazamento de água
+    "wsdcg", // temperatura e umidade
+    "ldcg",  // luminosidade
+    "mcs2",  // contato, geração nova
+];
+
+/// O nome de um data point, quando ele é conhecido.
+///
+/// A tabela é pequena de propósito. Ela cobre o que existe nesta casa e o que é padrão no
+/// catálogo da Tuya; o que não estiver aqui aparece como "DP 7", que é feio e honesto —
+/// inventar um nome seria pior, porque ninguém saberia que foi inventado.
+fn rotulo(categoria: &str, dp: &str) -> String {
+    let conhecido = match (categoria, dp) {
+        ("mcs" | "mcs2", "1") => Some("Porta"),
+        ("hps", "1") => Some("Presença"),
+        ("pir", "1") => Some("Movimento"),
+        (_, "1") if SENSORES.contains(&categoria) => Some("Detecção"),
+        (_, "2") if SENSORES.contains(&categoria) => Some("Bateria"),
+        (_, "3") if SENSORES.contains(&categoria) => Some("Bateria"),
+        ("dj" | "xdd" | "fwd" | "dc" | "dd" | "gyd", "20") => Some("Luz"),
+        (_, "1" | "switch_1") => Some("Chave 1"),
+        (_, "2" | "switch_2") => Some("Chave 2"),
+        (_, "3" | "switch_3") => Some("Chave 3"),
+        (_, "4" | "switch_4") => Some("Chave 4"),
+        (_, "9" | "countdown_1") => Some("Temporizador"),
+        _ => None,
+    };
+
+    conhecido.map_or_else(|| format!("DP {dp}"), ToOwned::to_owned)
+}
+
+fn ler_chaves(dps: &BTreeMap<String, serde_json::Value>, categoria: &str) -> Vec<Chave> {
+    if SENSORES.contains(&categoria) {
+        return Vec::new();
+    }
+
+    dps.iter()
+        .filter_map(|(dp, valor)| {
+            Some(Chave {
+                rotulo: rotulo(categoria, dp),
+                ligado: valor.as_bool()?,
+                dp: dp.clone(),
+            })
+        })
+        .collect()
+}
+
+fn ler_leituras(dps: &BTreeMap<String, serde_json::Value>, categoria: &str) -> Vec<Leitura> {
+    let e_sensor = SENSORES.contains(&categoria);
+
+    dps.iter()
+        .filter(|(_, valor)| e_sensor || !valor.is_boolean())
+        .filter_map(|(dp, valor)| {
+            let rotulo = rotulo(categoria, dp);
+
+            let texto = match valor {
+                // "Aberta"/"Fechada" e não "true"/"false": o booleano de um sensor é uma
+                // FRASE, e o significado dela muda com o aparelho.
+                serde_json::Value::Bool(ligado) if categoria.starts_with("mcs") => {
+                    if *ligado { "Aberta" } else { "Fechada" }.to_owned()
+                }
+                serde_json::Value::Bool(ligado) if categoria == "pir" || categoria == "hps" => {
+                    if *ligado { "Detectado" } else { "Nada" }.to_owned()
+                }
+                serde_json::Value::Bool(ligado) => {
+                    if *ligado { "Sim" } else { "Não" }.to_owned()
+                }
+                serde_json::Value::Number(numero) if rotulo == "Bateria" => format!("{numero}%"),
+                serde_json::Value::Number(numero) => numero.to_string(),
+                serde_json::Value::String(texto) if texto.is_empty() => return None,
+                serde_json::Value::String(texto) => texto.clone(),
+                _ => return None,
+            };
+
+            Some(Leitura {
+                rotulo,
+                valor: texto,
+            })
+        })
+        .collect()
 }
 
 /// Aplica um ajuste de lâmpada e devolve o retrato depois dele.
@@ -643,12 +773,20 @@ impl Sessao {
         &mut self,
         alvo: &Alvo,
     ) -> Result<BTreeMap<String, serde_json::Value>, ControleError> {
-        let pedido = serde_json::json!({
-            "gwId": alvo.id,
-            "devId": alvo.id,
-            "uid": alvo.id,
-            "t": agora_s().to_string(),
-        });
+        // Com `cid`, a pergunta muda de destinatário: ela vai para o gateway e ele
+        // responde pelo subaparelho. Mandar `devId` junto faz ele responder pelos DPs
+        // DELE mesmo — foi o que se viu na sondagem, e é um erro que passa despercebido
+        // porque a resposta é válida, só que do aparelho errado.
+        let pedido = if alvo.cid.is_empty() {
+            serde_json::json!({
+                "gwId": alvo.id,
+                "devId": alvo.id,
+                "uid": alvo.id,
+                "t": agora_s().to_string(),
+            })
+        } else {
+            serde_json::json!({ "cid": alvo.cid, "t": agora_s() })
+        };
 
         // A consulta é dos comandos que NÃO levam o cabeçalho de versão, nas três
         // versões. Com ele, o aparelho fecha a conexão sem responder — e isso parece
@@ -668,8 +806,13 @@ impl Sessao {
         alvo: &Alvo,
         dps: BTreeMap<String, serde_json::Value>,
     ) -> Result<(), ControleError> {
-        let pedido = match self.dialeto {
-            Dialeto::Direto => serde_json::json!({
+        let pedido = match (self.dialeto, alvo.cid.is_empty()) {
+            (_, false) => serde_json::json!({
+                "protocol": 5,
+                "t": agora_s(),
+                "data": { "cid": alvo.cid, "dps": dps },
+            }),
+            (Dialeto::Direto, _) => serde_json::json!({
                 "devId": alvo.id,
                 "uid": alvo.id,
                 "t": agora_s().to_string(),
@@ -737,14 +880,29 @@ impl Sessao {
         payload: &[u8],
         com_cabecalho_de_versao: bool,
     ) -> Result<(), ControleError> {
-        let mut claro = Vec::new();
-        if com_cabecalho_de_versao {
-            claro.extend_from_slice(&self.dialeto.cabecalho_da_versao());
-        }
-        claro.extend_from_slice(payload);
+        // **O cabeçalho de versão fica em lugares diferentes em cada geração.** No 3.3 ele
+        // vai EM CLARO, na frente do trecho cifrado: o aparelho precisa lê-lo para saber
+        // como decifrar o resto. No 3.4 e no 3.5 ele entra junto com o payload, dentro da
+        // cifra, porque a versão já foi acertada no aperto de mão.
+        //
+        // Cifrar o cabeçalho do 3.3 junto dá um quadro que o aparelho ACEITA e ignora —
+        // sem erro, sem resposta diferente, e sem o relé se mexer.
+        let cabecalho = com_cabecalho_de_versao.then(|| self.dialeto.cabecalho_da_versao());
+        let (claro, prefixo) = match (self.dialeto, cabecalho) {
+            (Dialeto::Direto, Some(cabecalho)) => (payload.to_vec(), Some(cabecalho)),
+            (_, Some(cabecalho)) => ([&cabecalho[..], payload].concat(), None),
+            (_, None) => (payload.to_vec(), None),
+        };
 
         self.sequencia += 1;
-        let quadro = empacotar(self.dialeto, self.sequencia, comando, &claro, &self.chave);
+        let quadro = empacotar(
+            self.dialeto,
+            self.sequencia,
+            comando,
+            &claro,
+            prefixo.as_ref().map(|cabecalho| &cabecalho[..]),
+            &self.chave,
+        );
 
         self.fluxo
             .write_all(&quadro)
@@ -800,13 +958,16 @@ fn empacotar(
     sequencia: u32,
     comando: u32,
     claro: &[u8],
+    prefixo: Option<&[u8]>,
     chave: &[u8; 16],
 ) -> Vec<u8> {
     if dialeto == Dialeto::Gcm {
         return empacotar_gcm(sequencia, comando, claro, chave);
     }
 
-    let payload = cifrar(chave, claro);
+    // O prefixo é o cabeçalho de versão do 3.3, que viaja FORA da cifra.
+    let mut payload = prefixo.unwrap_or_default().to_vec();
+    payload.extend(cifrar(chave, claro));
     let rodape = dialeto.rodape();
 
     let mut quadro = Vec::with_capacity(CABECALHO + payload.len() + rodape);
@@ -877,6 +1038,9 @@ fn desempacotar(dialeto: Dialeto, quadro: &[u8], chave: &[u8; 16]) -> Option<Vec
     }
 
     let corpo = sem_codigo_de_retorno(quadro.get(CABECALHO..quadro.len() - rodape)?);
+    // A resposta do 3.3 traz o mesmo cabeçalho em claro que a pergunta leva, e ele tem de
+    // sair ANTES da decifragem — 15 bytes a mais quebram o bloco do AES.
+    let corpo = sem_cabecalho_de_versao(corpo);
 
     // Texto puro acontece em resposta de erro do próprio aparelho; o resto vem cifrado.
     let aberto = if corpo.starts_with(b"{") || corpo.is_empty() {
@@ -885,6 +1049,7 @@ fn desempacotar(dialeto: Dialeto, quadro: &[u8], chave: &[u8; 16]) -> Option<Vec
         decifrar(chave, corpo)?
     };
 
+    // E de novo depois: no 3.4 e no 3.5 ele vem por dentro.
     Some(sem_cabecalho_de_versao(&aberto).to_vec())
 }
 
@@ -1077,8 +1242,8 @@ mod tests {
     /// do 3.3 — 32 bytes de HMAC contra 4 de CRC.
     #[test]
     fn cada_dialeto_declara_o_proprio_rodape() {
-        let curto = empacotar(Dialeto::Direto, 1, CONTROL, b"oi", &CHAVE);
-        let longo = empacotar(Dialeto::Sessao, 1, CONTROL_NEW, b"oi", &CHAVE);
+        let curto = empacotar(Dialeto::Direto, 1, CONTROL, b"oi", None, &CHAVE);
+        let longo = empacotar(Dialeto::Sessao, 1, CONTROL_NEW, b"oi", None, &CHAVE);
 
         let tamanho =
             |quadro: &[u8]| u32::from_be_bytes(quadro[12..16].try_into().expect("4 bytes")) as usize;
@@ -1091,12 +1256,12 @@ mod tests {
     /// O selo cobre cabeçalho e payload, e nada além.
     #[test]
     fn o_selo_cobre_o_cabecalho_e_o_payload() {
-        let quadro = empacotar(Dialeto::Direto, 7, DP_QUERY, b"payload", &CHAVE);
+        let quadro = empacotar(Dialeto::Direto, 7, DP_QUERY, b"payload", None, &CHAVE);
         let fim = quadro.len() - RODAPE;
         let gravado = u32::from_be_bytes(quadro[fim..fim + 4].try_into().expect("4 bytes"));
         assert_eq!(gravado, crc32(&quadro[..fim]));
 
-        let quadro = empacotar(Dialeto::Sessao, 7, DP_QUERY_NEW, b"payload", &CHAVE);
+        let quadro = empacotar(Dialeto::Sessao, 7, DP_QUERY_NEW, b"payload", None, &CHAVE);
         let fim = quadro.len() - RODAPE_HMAC;
         assert_eq!(quadro[fim..fim + 32], assinar(&CHAVE, &quadro[..fim]));
     }
@@ -1106,7 +1271,7 @@ mod tests {
     fn o_que_e_empacotado_desempacota() {
         for dialeto in [Dialeto::Direto, Dialeto::Sessao, Dialeto::Gcm] {
             let claro = br#"{"dps":{"1":true}}"#;
-            let quadro = empacotar(dialeto, 1, dialeto.consulta(), claro, &CHAVE);
+            let quadro = empacotar(dialeto, 1, dialeto.consulta(), claro, None, &CHAVE);
 
             assert_eq!(
                 desempacotar(dialeto, &quadro, &CHAVE).expect("abriu"),
@@ -1120,12 +1285,20 @@ mod tests {
     /// leitura — senão ele entra no JSON e o parse morre.
     #[test]
     fn o_cabecalho_de_versao_vai_e_volta() {
+        // O 3.3 leva o cabeçalho FORA da cifra; os outros dois, dentro. As duas formas
+        // têm que voltar ao mesmo payload na leitura.
         for dialeto in [Dialeto::Direto, Dialeto::Sessao, Dialeto::Gcm] {
             let claro = br#"{"protocol":5,"data":{}}"#;
-            let mut com_cabecalho = dialeto.cabecalho_da_versao().to_vec();
-            com_cabecalho.extend_from_slice(claro);
+            let cabecalho = dialeto.cabecalho_da_versao();
 
-            let quadro = empacotar(dialeto, 1, dialeto.comando(), &com_cabecalho, &CHAVE);
+            let quadro = if dialeto == Dialeto::Direto {
+                empacotar(dialeto, 1, dialeto.comando(), claro, Some(&cabecalho), &CHAVE)
+            } else {
+                let mut dentro = cabecalho.to_vec();
+                dentro.extend_from_slice(claro);
+                empacotar(dialeto, 1, dialeto.comando(), &dentro, None, &CHAVE)
+            };
+
             assert_eq!(
                 desempacotar(dialeto, &quadro, &CHAVE).expect("abriu"),
                 claro,
@@ -1183,7 +1356,7 @@ mod tests {
         }
 
         // E o GCM, que rejeita pela tag em vez do enchimento.
-        let quadro = empacotar(Dialeto::Gcm, 1, DP_QUERY_NEW, b"{}", &CHAVE);
+        let quadro = empacotar(Dialeto::Gcm, 1, DP_QUERY_NEW, b"{}", None, &CHAVE);
         assert!(desempacotar(Dialeto::Gcm, &quadro, &outra).is_none());
     }
 
@@ -1235,6 +1408,59 @@ mod tests {
         assert!(Dialeto::Sessao.negocia() && Dialeto::Gcm.negocia());
     }
 
+    /// TEMPORARIO: tenta ler um subaparelho ZigBee pelo gateway.
+    #[test]
+    #[ignore]
+    fn sondar_sub() {
+        let ler = |chave: &str| std::env::var(chave).unwrap_or_default();
+        let (ip, versao, chave, id, cid) = (
+            ler("JARVIS_IP"),
+            ler("JARVIS_VERSAO"),
+            ler("JARVIS_CHAVE"),
+            ler("JARVIS_ID"),
+            ler("JARVIS_CID"),
+        );
+        let alvo = Alvo {
+            id: &id,
+            ip: &ip,
+            versao: &versao,
+            local_key: &chave,
+            cid: &cid,
+            categoria: &ler("JARVIS_CATEGORIA"),
+        };
+
+        let variantes = [
+            ("so cid", serde_json::json!({ "cid": &cid })),
+            (
+                "cid + t",
+                serde_json::json!({ "cid": &cid, "t": agora_s() }),
+            ),
+            (
+                "envelope",
+                serde_json::json!({ "protocol": 4, "t": agora_s(), "data": { "cid": &cid } }),
+            ),
+            (
+                "gwId + cid",
+                serde_json::json!({ "gwId": &id, "devId": &id, "cid": &cid, "t": agora_s().to_string() }),
+            ),
+        ];
+
+        for (nome, corpo) in variantes {
+            let Ok(mut sessao) = Sessao::abrir(&alvo) else {
+                println!("{nome}: nao abriu a sessao");
+                continue;
+            };
+
+            match sessao.trocar_quadro(DP_QUERY_NEW, corpo.to_string().as_bytes(), false) {
+                Ok(aberto) => println!(
+                    "{nome}: {}",
+                    String::from_utf8_lossy(&aberto).chars().take(200).collect::<String>()
+                ),
+                Err(erro) => println!("{nome}: {erro}"),
+            }
+        }
+    }
+
     /// Conversa de verdade com um aparelho da sua rede, para quando o teste de mesa passa
     /// e o aparelho não obedece. Imprime cada passo do aperto de mão.
     ///
@@ -1256,6 +1482,8 @@ mod tests {
             ip: &ip,
             versao: &versao,
             local_key: &chave,
+            cid: &ler("JARVIS_CID"),
+            categoria: &ler("JARVIS_CATEGORIA"),
         };
 
         match Sessao::abrir(&alvo) {
@@ -1267,6 +1495,30 @@ mod tests {
                 }
             }
             Err(erro) => println!("não abriu: {erro}"),
+        }
+
+        // Alterna um data point específico, para provar o caminho da tomada dupla.
+        let dp = ler("JARVIS_DP");
+        if !dp.is_empty() {
+            for ligado in [true, false] {
+                // Envio e leitura separados por uma pausa: o aparelho confirma o quadro
+                // antes de mexer no relé, e reler na mesma hora mostra o estado velho.
+                let mut sessao = Sessao::abrir(&alvo).expect("sessao");
+                let envio = sessao.aplicar(
+                    &alvo,
+                    [(dp.clone(), serde_json::Value::Bool(ligado))]
+                        .into_iter()
+                        .collect(),
+                );
+                drop(sessao);
+                println!("envio {dp}={ligado}: {envio:?}");
+
+                std::thread::sleep(Duration::from_millis(1500));
+                match detalhar(&alvo) {
+                    Ok(detalhe) => println!("  leu: {:?}", detalhe.dps.get(&dp)),
+                    Err(erro) => println!("  leu: {erro}"),
+                }
+            }
         }
 
         // Pinta a lâmpada de uma cor e volta ao branco. Prova que o DP da cor e o do

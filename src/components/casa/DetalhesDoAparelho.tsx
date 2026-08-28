@@ -28,7 +28,9 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
   // protocolo por uma coisa que é a ausência de rede. Controle de infravermelho é o caso
   // normal disso: ele não tem endereço, e não há a quem perguntar.
   useEffect(() => {
-    if (detalhe === undefined && aparelho.versao && !aparelho.emissor) void detalhar(aparelho)
+    if (detalhe === undefined && !aparelho.emissor && (aparelho.versao || aparelho.subaparelho)) {
+      void detalhar(aparelho)
+    }
     // O aparelho muda de identidade só pelo id; as outras propriedades dele mudam a cada
     // varredura e reexecutariam isto sem necessidade.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -43,6 +45,10 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
             rede. Mostrar "—" em dois campos seria pior que mostrar de quem ele sai. */}
         {remoto ? (
           <Linha rotulo="Emite por">{aparelho.emissor || 'ainda não ligado a um emissor'}</Linha>
+        ) : aparelho.subaparelho ? (
+          // Subaparelho ZigBee não tem endereço nem protocolo próprios: os do gateway é
+          // que valem, e mostrar "—" em dois campos esconderia justamente isso.
+          <Linha rotulo="Ligado ao">gateway ZigBee</Linha>
         ) : (
           <>
             <Linha rotulo="Endereço">{aparelho.ip || '—'}</Linha>
@@ -55,7 +61,7 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
         {aparelho.produto ? <Linha rotulo="Modelo">{aparelho.produto}</Linha> : null}
         <Linha rotulo="Chave">{aparelho.temChave ? 'importada' : 'não importada'}</Linha>
 
-        {remoto ? null : (
+        {remoto || aparelho.subaparelho ? null : (
           <Linha rotulo="Visto">
             {aparelho.presente
               ? 'agora'

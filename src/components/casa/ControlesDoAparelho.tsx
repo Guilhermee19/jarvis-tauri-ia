@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect } from 'react'
+import { Fragment, useEffect } from 'react'
 
 import { cn } from '@/lib/utils'
 import { useCasaStore } from '@/stores'
-import type { Aparelho, Luz, Tecla } from '@/types'
+import type { Aparelho, Chave, Leitura, Luz, Tecla } from '@/types'
 
 /**
  * O que dá para MEXER num aparelho: as teclas de um controle, o brilho e a cor de uma
@@ -26,6 +26,7 @@ export function ControlesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
   const controle = useCasaStore((state) => state.controles[aparelho.id])
   const carregarTeclas = useCasaStore((state) => state.carregarTeclas)
   const apertarTecla = useCasaStore((state) => state.apertarTecla)
+  const alternarChave = useCasaStore((state) => state.alternarChave)
 
   // Dois caminhos, porque são dois tipos de aparelho. O de rede responde ele mesmo o que
   // aceita; o controle de infravermelho não tem endereço, e quem sabe as teclas dele é a
@@ -36,7 +37,11 @@ export function ControlesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
   // coisa que é a ausência de rede.
   useEffect(() => {
     if (aparelho.emissor) void carregarTeclas(aparelho)
-    else if (detalhe === undefined && aparelho.versao) void detalhar(aparelho)
+    else if (detalhe === undefined && (aparelho.versao || aparelho.subaparelho)) {
+      // Subaparelho não tem versão própria — a do gateway é que vale, e quem a resolve é
+      // o `endereco_de` do Rust. Exigir versão aqui deixava todo sensor ZigBee mudo.
+      void detalhar(aparelho)
+    }
     // O aparelho muda de identidade só pelo id; as outras propriedades dele mudam a cada
     // varredura e reexecutariam isto sem necessidade.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -52,6 +57,26 @@ export function ControlesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
         />
       ) : null}
 
+      {/* O que ele MEDE vem antes do que ele faz: num sensor de porta a leitura é o
+          conteúdo inteiro, e num aparelho misto ela é o contexto do botão. */}
+      {detalhe && detalhe.leituras.length > 0 ? <Leituras leituras={detalhe.leituras} /> : null}
+
+      {/* Todas as chaves, e não só a principal: uma tomada dupla responde `1` e `2`, e o
+          botão do cartão só alcança a primeira. Com uma chave só isto some, porque
+          repetiria o botão que já está no cartão. */}
+      {detalhe && detalhe.chaves.length > 1 ? (
+        <div className="flex flex-col gap-1.5">
+          {detalhe.chaves.map((chave) => (
+            <Comutador
+              key={chave.dp}
+              chave={chave}
+              ocupado={ocupado}
+              onAlternar={() => void alternarChave(aparelho, chave.dp, !chave.ligado)}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {detalhe?.luz && aparelho.temChave ? (
         <ControlesDaLuz
           luz={detalhe.luz}
@@ -62,14 +87,67 @@ export function ControlesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
 
       {/* Nem sempre há o que mexer, e o botão de ajustes só aparece quando esperamos que
           haja. Quando a expectativa erra, dizer isso é melhor que um painel vazio. */}
-      {!aparelho.emissor && !detalhe?.luz ? (
+      {!aparelho.emissor &&
+      !detalhe?.luz &&
+      (detalhe?.chaves.length ?? 0) < 2 &&
+      (detalhe?.leituras.length ?? 0) === 0 ? (
         <p className="text-muted text-[10px] leading-relaxed">
-          {ocupado
+          {ocupado || !detalhe
             ? 'perguntando ao aparelho o que ele aceita…'
             : 'Este aparelho não respondeu nenhum ajuste além do liga-desliga.'}
         </p>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * O que o aparelho mede.
+ *
+ * Só leitura, e sem nenhum controle ao lado: um sensor de porta não abre a porta, e um
+ * botão aqui prometeria o que ele não faz.
+ */
+function Leituras({ leituras }: { leituras: Leitura[] }) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+      {leituras.map((leitura) => (
+        <Fragment key={leitura.rotulo}>
+          <dt className="text-muted/70">{leitura.rotulo}</dt>
+          <dd className="text-content">{leitura.valor}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  )
+}
+
+/** Uma das chaves de um aparelho com várias. */
+function Comutador({
+  chave,
+  ocupado,
+  onAlternar,
+}: {
+  chave: Chave
+  ocupado: boolean
+  onAlternar: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={chave.ligado}
+      disabled={ocupado}
+      onClick={onAlternar}
+      className={cn(
+        'border-border-soft flex items-center justify-between gap-2 rounded border px-2.5 py-1.5 text-[11px]',
+        'disabled:opacity-50',
+        chave.ligado ? 'border-accent/40 bg-accent/10 text-accent' : 'text-muted hover:text-content',
+      )}
+    >
+      <span>{chave.rotulo}</span>
+      <span className="text-[10px] uppercase tracking-wide">
+        {chave.ligado ? 'ligada' : 'desligada'}
+      </span>
+    </button>
   )
 }
 
