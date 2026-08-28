@@ -74,6 +74,10 @@ impl Persona {
 /// Ollama não segura dois, e a primeira chamada depois de uma troca levou 67 segundos.
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5vl:3b";
 
+/// Região padrão da Tuya. `us` porque conta brasileira do Smart Life quase sempre é
+/// registrada no data center da América Ocidental — é o palpite que acerta mais.
+pub const DEFAULT_TUYA_REGIAO: &str = "us";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
@@ -121,6 +125,21 @@ pub struct AppSettings {
     /// não tem caminho sem credencial, e isso foi medido.
     pub spotify_client_id: String,
     pub spotify_client_secret: String,
+    /// Credenciais do projeto Cloud da Tuya (`iot.tuya.com`). VAZIAS deixam a Casa em
+    /// modo só-leitura: a varredura continua achando os aparelhos na rede, mas sem a
+    /// `local_key` de cada um não existe comando — a porta 6668 não aceita.
+    ///
+    /// Servem UMA VEZ, no botão de importar do painel. A chave que sai de lá é do
+    /// APARELHO, não da nuvem, e continua valendo depois que o projeto trial expira.
+    pub tuya_client_id: String,
+    pub tuya_client_secret: String,
+    /// O *data center* do projeto: `us`, `eu`, `cn` ou `in`.
+    ///
+    /// É o campo que mais dá trabalho e o que menos parece dar: escolhido errado, a
+    /// Tuya responde **sucesso com uma lista vazia** em vez de recusar, e não há nada
+    /// na resposta que diga que a região é o problema. Conta brasileira do Smart Life
+    /// quase sempre mora no `us`, que é o padrão daqui.
+    pub tuya_regiao: String,
     /// Resolução pedida à webcam. `0` em qualquer um dos dois = **automático**, que é
     /// a política antiga: o formato mais perto de 640×480, dimensionado para a janela.
     ///
@@ -165,6 +184,9 @@ impl Default for AppSettings {
             brave_api_key: String::new(),
             spotify_client_id: String::new(),
             spotify_client_secret: String::new(),
+            tuya_client_id: String::new(),
+            tuya_client_secret: String::new(),
+            tuya_regiao: DEFAULT_TUYA_REGIAO.to_owned(),
             webcam_width: 0,
             webcam_height: 0,
             webcam_mirror: false,
@@ -192,6 +214,22 @@ impl AppSettings {
             Persona::Jarvis => &self.tts_voice_jarvis,
             Persona::Ultron => &self.tts_voice_ultron,
         }
+    }
+
+    /// O par de credenciais da Tuya, ou `None` se falta alguma.
+    ///
+    /// Um lado só não serve para nada — mesma decisão do [`Self::webcam_target`]: meio
+    /// pedido é pedido quebrado, e é melhor dizer "não configurado" do que tentar a
+    /// rede e voltar com um 401 que ninguém sabe interpretar.
+    pub fn tuya(&self) -> Option<(&str, &str)> {
+        let id = self.tuya_client_id.trim();
+        let segredo = self.tuya_client_secret.trim();
+
+        if id.is_empty() || segredo.is_empty() {
+            return None;
+        }
+
+        Some((id, segredo))
     }
 }
 

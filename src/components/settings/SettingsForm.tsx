@@ -41,6 +41,9 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [braveKey, setBraveKey] = useState(initial.braveApiKey)
   const [spotifyId, setSpotifyId] = useState(initial.spotifyClientId)
   const [spotifySecret, setSpotifySecret] = useState(initial.spotifyClientSecret)
+  const [tuyaId, setTuyaId] = useState(initial.tuyaClientId)
+  const [tuyaSecret, setTuyaSecret] = useState(initial.tuyaClientSecret)
+  const [tuyaRegiao, setTuyaRegiao] = useState(initial.tuyaRegiao)
   const [webcamResolucao, setWebcamResolucao] = useState(
     chave(initial.webcamWidth, initial.webcamHeight),
   )
@@ -126,6 +129,54 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setSpotifySecret(event.target.value)}
         placeholder="…"
       />
+
+      <fieldset className="border-border-soft flex flex-col gap-3 rounded-lg border p-3">
+        <legend className="text-muted px-1 text-xs font-medium">Casa inteligente (Tuya)</legend>
+
+        <p className="text-muted text-[11px] leading-relaxed">
+          Encontrar os aparelhos na rede não precisa de nada disto. Estas credenciais servem para
+          buscar, <strong className="text-content font-normal">uma vez</strong>, o nome de cada um e
+          a chave que permite mandar comando. Depois disso o controle é local, sem internet — e
+          continua funcionando quando o projeto trial da Tuya expirar, porque a chave é do aparelho.
+        </p>
+
+        <Input
+          label="Tuya — Access ID"
+          value={tuyaId}
+          onChange={(event) => setTuyaId(event.target.value)}
+          placeholder="sem isto, a Casa só enxerga"
+          hint="Crie um projeto Cloud em iot.tuya.com (Smart Home, grátis) e ligue a conta do app em Devices > Link App Account, lendo o QR code pelo Smart Life."
+        />
+
+        <Input
+          label="Tuya — Access Secret"
+          type="password"
+          value={tuyaSecret}
+          onChange={(event) => setTuyaSecret(event.target.value)}
+          placeholder="…"
+        />
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-muted text-xs font-medium">Tuya — Data center</span>
+          <select
+            value={tuyaRegiao}
+            onChange={(event) => setTuyaRegiao(event.target.value)}
+            className="border-border-soft bg-base text-content focus:border-accent rounded-md border px-2.5 py-2 text-xs outline-none"
+          >
+            <option value="us">América Ocidental (us)</option>
+            <option value="eu">Europa Central (eu)</option>
+            <option value="in">Índia (in)</option>
+            <option value="cn">China (cn)</option>
+          </select>
+          {/* O campo que mais engana: errado, a Tuya responde SUCESSO com uma lista
+              vazia em vez de recusar, e nada na resposta aponta para cá. */}
+          <span className="text-muted text-[11px] leading-relaxed">
+            Precisa ser o mesmo do projeto em iot.tuya.com. Se a importação disser que a conta não
+            tem aparelho nenhum, é quase sempre isto — conta brasileira do Smart Life costuma ficar
+            na América Ocidental.
+          </span>
+        </label>
+      </fieldset>
 
       <fieldset className="border-border-soft flex flex-col gap-3 rounded-lg border p-3">
         <legend className="text-muted px-1 text-xs font-medium">Webcam</legend>
@@ -254,6 +305,9 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               braveApiKey: braveKey.trim(),
               spotifyClientId: spotifyId.trim(),
               spotifyClientSecret: spotifySecret.trim(),
+              tuyaClientId: tuyaId.trim(),
+              tuyaClientSecret: tuyaSecret.trim(),
+              tuyaRegiao,
               ...parseResolucao(webcamResolucao),
               webcamMirror,
               logDetalhado,

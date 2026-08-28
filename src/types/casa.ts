@@ -23,6 +23,73 @@ export interface Aparelho {
    * quadro. O aparelho aparece na lista de qualquer jeito.
    */
   suportado: boolean
+  /**
+   * O nome que você deu no app ("Luz Cozinha"), vindo do chaveiro.
+   *
+   * `null` = a nuvem ainda não foi consultada. O anúncio da rede nunca traz nome.
+   */
+  nome: string | null
+  /**
+   * Se a `local_key` dele já foi importada.
+   *
+   * Independente de `suportado`: sem chave não há comando por mais conhecido que o
+   * protocolo seja, e sobra chave para aparelho que ainda não sabemos comandar.
+   */
+  temChave: boolean
+  /**
+   * Se a rede o anunciou **nesta** varredura.
+   *
+   * A lista mistura de propósito quem está aqui agora com quem já esteve: um aparelho
+   * desligado da tomada não deve sumir da tela, senão o app parece ter esquecido dele.
+   * Mas os dois não podem parecer a mesma coisa — o que está fora do ar não obedece.
+   */
+  presente: boolean
+  /** Quando a rede o anunciou pela última vez, em ms. `0` = nunca. */
+  vistoEm: number
+  /**
+   * A categoria da Tuya: "dj" (lâmpada), "cz" (tomada), "wg2" (gateway)…
+   *
+   * Vazia até a importação acontecer — o anúncio da rede não diz que tipo de coisa ele
+   * é. Vira o ícone do cartão.
+   */
+  categoria: string
+  /**
+   * Se este TIPO de aparelho tem um liga-desliga que faça sentido oferecer.
+   *
+   * Independente de `suportado` e `temChave`: uma central ZigBee responde a tudo e não
+   * tem o que ligar. Sem essa separação o botão apareceria nela e alternaria um data
+   * point booleano que ninguém sabe o que faz.
+   */
+  comutavel: boolean
+}
+
+/**
+ * O que uma importação da nuvem trouxe. Espelha `Importado` de
+ * `src-tauri/src/commands/casa.rs`.
+ *
+ * Sem a chave de controle de propósito: ela fica no Rust. A UI não tem o que fazer com
+ * ela, e trazê-la só aumentaria o número de lugares por onde um segredo pode vazar.
+ */
+export interface Importado {
+  id: string
+  nome: string
+  temChave: boolean
+}
+
+/**
+ * O que o aparelho confirmou depois de um comando. Espelha `Estado` de
+ * `src-tauri/src/core/casa/controle.rs`.
+ */
+export interface EstadoAparelho {
+  ligado: boolean
+  /**
+   * Qual data point acabou sendo o liga-desliga deste modelo.
+   *
+   * Aparelho Tuya não tem comando "ligar" — tem DPs numerados, e qual deles é o
+   * interruptor muda por modelo. Quando um aparelho não obedece, saber se ele foi
+   * comandado pelo `1` ou pelo `20` é a primeira coisa que se quer olhar.
+   */
+  interruptor: string
 }
 
 export interface Varredura {
@@ -35,4 +102,57 @@ export interface Varredura {
    * soluções são opostas, e sem esse número as duas parecem defeito de rede.
    */
   ignorados: number
+}
+
+/**
+ * O estado de uma lâmpada, já traduzido do catálogo de data points da Tuya. Espelha
+ * `Luz` de `src-tauri/src/core/casa/controle.rs`.
+ */
+export interface Luz {
+  /** "white", "colour", "scene" ou "music". */
+  modo: string
+  /** 10 a 1000. */
+  brilho: number
+  /** 0 (branco quente) a 1000 (branco frio). */
+  temperatura: number
+  /** 0 a 360. */
+  matiz: number
+  /** 0 a 1000. */
+  saturacao: number
+  /**
+   * Quais ajustes ESTE aparelho aceita.
+   *
+   * Sai dos data points que ele expõe, e não da categoria: a categoria diz o que a nuvem
+   * acha que ele é, os DPs dizem o que ele realmente faz. Uma lâmpada só de branco não
+   * tem o DP da cor, e um seletor que não faz nada é pior que a ausência dele.
+   */
+  temCor: boolean
+  temBrilho: boolean
+  temBranco: boolean
+}
+
+/** O retrato completo de um aparelho. Espelha `Detalhe` do mesmo módulo. */
+export interface DetalheAparelho {
+  ligado: boolean
+  /** Qual data point acabou sendo o liga-desliga deste modelo. */
+  interruptor: string
+  /** `null` quando os data points não revelam uma lâmpada. */
+  luz: Luz | null
+  /**
+   * Os data points crus, do jeito que o aparelho respondeu.
+   *
+   * É o que permite descobrir um aparelho que faz algo que este app ainda não modela —
+   * e é a primeira coisa a olhar quando um comando não pega.
+   */
+  dps: Record<string, unknown>
+}
+
+/** O que mudar numa lâmpada. Campo ausente fica como está. */
+export interface AjusteLuz {
+  ligado?: boolean
+  brilho?: number
+  temperatura?: number
+  /** Matiz e saturação andam juntos: a Tuya guarda os dois no mesmo data point. */
+  matiz?: number
+  saturacao?: number
 }

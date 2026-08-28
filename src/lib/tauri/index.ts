@@ -1,5 +1,12 @@
 export { call, isTauriRuntime, TauriCommandError } from './client'
-export { discoverDevices } from './casa'
+export {
+  deviceState,
+  discoverDevices,
+  importTuyaDevices,
+  knownDevices,
+  setDevicePower,
+  setLight,
+} from './casa'
 export { clearHistory, getHistory, sendMessage } from './chat'
 export { getSettings, saveSettings } from './settings'
 export {

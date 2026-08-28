@@ -18,9 +18,15 @@
 //! custaria mais que as ~40 linhas de decodificação daqui. Quando a fase de CONTROLE
 //! chegar, aí sim vale reavaliar: aquela parte do protocolo é bem menos trivial que esta.
 
+pub mod chaveiro;
+pub mod controle;
+pub mod nuvem;
+
 use std::collections::BTreeMap;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
+
+use crate::core::casa::chaveiro::{Chaveiro, Conhecido};
 
 use aes::cipher::{BlockDecrypt, KeyInit};
 use aes::Aes128;
@@ -124,6 +130,39 @@ pub struct Aparelho {
     /// suporte" em vez de escondê-lo — um aparelho que some da lista vira meia hora
     /// procurando defeito no Wi-Fi.
     pub suportado: bool,
+    /// O nome que você deu no app ("Luz Cozinha"), vindo do chaveiro.
+    ///
+    /// `None` significa "a nuvem ainda não foi consultada", e é o que faz a tela poder
+    /// convidar a importar em vez de mostrar um id de 22 caracteres e deixar por isso
+    /// mesmo. O anúncio da rede nunca traz nome nenhum.
+    pub nome: Option<String>,
+    /// Se temos a `local_key` dele guardada.
+    ///
+    /// Independente do `suportado`: sem chave não existe comando por mais conhecido que
+    /// o protocolo seja, e sobra chave para aparelho que ainda não sabemos comandar.
+    /// Juntar os dois num campo só esconderia qual das duas coisas está faltando.
+    pub tem_chave: bool,
+    /// Se a rede o anunciou **nesta** varredura.
+    ///
+    /// A lista mistura de propósito quem está aqui agora com quem já esteve: um aparelho
+    /// que você desligou da tomada não deve sumir da tela, senão o app parece ter
+    /// esquecido dele. Mas os dois não podem parecer a mesma coisa — o que está fora do
+    /// ar não obedece a botão nenhum.
+    pub presente: bool,
+    /// Quando a rede o anunciou pela última vez, em ms. `0` = nunca.
+    pub visto_em: i64,
+    /// A categoria da Tuya: "dj" (lâmpada), "cz" (tomada), "wg2" (gateway)… Vazia até a
+    /// importação acontecer — o anúncio da rede não diz que tipo de coisa ele é.
+    ///
+    /// A tela usa isto para o ícone; o backend, para saber se faz sentido oferecer um
+    /// liga-desliga.
+    pub categoria: String,
+    /// Se este tipo de aparelho tem um liga-desliga que faça sentido oferecer.
+    ///
+    /// Independente do `suportado` e do `tem_chave`: um gateway responde a tudo e não
+    /// tem o que ligar. Sem esta separação, o botão apareceria nele e alternaria um DP
+    /// booleano que ninguém sabe o que faz.
+    pub comutavel: bool,
 }
 
 /// O JSON que vem dentro do anúncio. Nomes crus da Tuya, e todos opcionais porque cada
@@ -190,6 +229,68 @@ pub fn descobrir() -> Result<Varredura, CasaError> {
         aparelhos: achados.into_values().collect(),
         ignorados,
     })
+}
+
+/// A varredura da rede cruzada com o que o chaveiro já sabe.
+///
+/// É o que a tela consome: o anúncio diz quem está ligado AGORA e em que IP; o chaveiro
+/// diz como cada um se chama e se temos a chave dele. Nenhum dos dois sozinho dá uma
+/// lista útil.
+///
+/// Aparelho que está no chaveiro e não anunciou **não** é inventado aqui. Um item na
+/// lista que não responde a comando nenhum seria pior que a ausência dele — e a
+/// varredura, agora que lê os três protocolos, não costuma perder ninguém.
+pub fn descobrir_com(chaveiro: &Chaveiro) -> Result<Varredura, CasaError> {
+    let mut varredura = descobrir()?;
+
+    // Onde cada um estava e que protocolo fala, para o comando por voz não ter que
+    // procurar de novo antes de apagar uma luz.
+    chaveiro.vistos(
+        &varredura
+            .aparelhos
+            .iter()
+            .map(|aparelho| {
+                (
+                    aparelho.id.as_str(),
+                    aparelho.ip.as_str(),
+                    aparelho.versao.as_str(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let mut vistos_agora = std::collections::BTreeSet::new();
+    for aparelho in &mut varredura.aparelhos {
+        vistos_agora.insert(aparelho.id.clone());
+
+        let Some(conhecido) = chaveiro.de(&aparelho.id) else {
+            continue;
+        };
+
+        // Nome em branco na nuvem acontece (aparelho nunca renomeado no app), e um
+        // `Some("")` viraria um cartão sem título na tela.
+        let nome = conhecido.nome.trim();
+        if !nome.is_empty() {
+            aparelho.nome = Some(nome.to_owned());
+        }
+        aparelho.tem_chave = !conhecido.local_key.trim().is_empty();
+        aparelho.visto_em = conhecido.visto_em;
+        aparelho.comutavel = controle::tem_liga_desliga(&conhecido.categoria);
+        aparelho.categoria = conhecido.categoria;
+    }
+
+    // E quem já foi visto um dia, mas ficou calado desta vez. Entra marcado como ausente
+    // em vez de sumir: uma lista que encolhe sozinha faz procurar defeito no Wi-Fi, e o
+    // aparelho pode estar simplesmente fora da tomada.
+    varredura.aparelhos.extend(
+        chaveiro
+            .todos()
+            .into_iter()
+            .filter(|ficha| !vistos_agora.contains(&ficha.id))
+            .map(do_chaveiro),
+    );
+
+    Ok(varredura)
 }
 
 fn abrir_portas() -> Result<Vec<UdpSocket>, CasaError> {
@@ -264,6 +365,12 @@ fn so_o_endereco(origem: &str) -> Aparelho {
         ativo: true,
         decifrado: false,
         suportado: false,
+        nome: None,
+        tem_chave: false,
+        presente: true,
+        visto_em: 0,
+        categoria: String::new(),
+        comutavel: false,
     }
 }
 
@@ -280,10 +387,10 @@ fn montar(json: &[u8], origem: &str, versao_padrao: &str, decifrado: bool) -> Op
     Some(Aparelho {
         id,
         ip: anuncio.ip.unwrap_or_else(|| origem.to_owned()),
-        // Ler o anúncio do 3.5 não é o mesmo que saber mandar comando nele: o controle
-        // usa o quadro GCM com a `local_key`, que é a fase seguinte. Enquanto isso o
-        // aparelho aparece identificado e marcado como fora de alcance.
-        suportado: !versao.starts_with("3.5"),
+        // Ler o anúncio não é o mesmo que saber mandar comando: o 3.4 e o 3.5 negociam
+        // uma chave de sessão antes de aceitar qualquer coisa. Quem sabe a lista é o
+        // `controle`, e ele é a única fonte dela.
+        suportado: controle::da_para_controlar(&versao),
         versao,
         produto: anuncio.product_key,
         // Sem o campo, assume pareado: é o caso comum, e marcar de menos aqui só
@@ -294,7 +401,47 @@ fn montar(json: &[u8], origem: &str, versao_padrao: &str, decifrado: bool) -> Op
             None => true,
         },
         decifrado,
+        // A varredura não conhece o chaveiro: ela lê a rede e nada mais. Quem cruza as
+        // duas coisas é o `descobrir_com`, e essa separação é o que mantém o parser de
+        // quadros testável sem disco nenhum.
+        nome: None,
+        tem_chave: false,
+        presente: true,
+        visto_em: 0,
+        categoria: String::new(),
+        comutavel: false,
     })
+}
+
+/// A ficha de um aparelho conhecido, no formato que a tela consome.
+///
+/// `decifrado` sai `true` mesmo sem ter havido anúncio nenhum agora: o campo conta se o
+/// que sabemos dele foi lido de verdade, e o que está no chaveiro foi.
+fn do_chaveiro(ficha: Conhecido) -> Aparelho {
+    Aparelho {
+        suportado: controle::da_para_controlar(&ficha.versao),
+        tem_chave: !ficha.local_key.trim().is_empty(),
+        comutavel: controle::tem_liga_desliga(&ficha.categoria),
+        nome: Some(ficha.nome).filter(|nome| !nome.trim().is_empty()),
+        produto: Some(ficha.produto).filter(|produto| !produto.is_empty()),
+        id: ficha.id,
+        ip: ficha.ultimo_ip,
+        versao: ficha.versao,
+        categoria: ficha.categoria,
+        ativo: true,
+        decifrado: true,
+        presente: false,
+        visto_em: ficha.visto_em,
+    }
+}
+
+/// Tudo o que já se conhece, sem encostar na rede.
+///
+/// É o que o painel mostra no instante em que abre. Sem isto, toda abertura começava com
+/// dez segundos de tela vazia — e um app que esquece o que sabia a cada reinício não
+/// parece estar guardando nada.
+pub fn conhecidos(chaveiro: &Chaveiro) -> Vec<Aparelho> {
+    chaveiro.todos().into_iter().map(do_chaveiro).collect()
 }
 
 /// O miolo do quadro clássico: 16 bytes de cabeçalho na frente, 8 de CRC e sufixo atrás.
@@ -456,7 +603,10 @@ mod tests {
         assert_eq!(aparelho.ip, "192.168.0.50");
         assert_eq!(aparelho.versao, "3.1");
         assert!(!aparelho.decifrado);
-        assert!(aparelho.suportado);
+        // Ler o anúncio dele é fácil — é texto puro. MANDAR comando não: o 3.1 assina o
+        // quadro com MD5 e manda o payload em base64, que é outro protocolo do 3.3 para
+        // cima. Enquanto isso não existir, o cartão dele aparece sem botão.
+        assert!(!aparelho.suportado);
     }
 
     #[test]
@@ -517,10 +667,10 @@ mod tests {
         assert_eq!(aparelho.versao, "3.5");
         assert_eq!(aparelho.produto.as_deref(), Some("novo"));
         assert!(aparelho.decifrado);
-        assert!(
-            !aparelho.suportado,
-            "ler o anúncio não é saber mandar comando"
-        );
+        // Quem mantém a lista de quem dá para comandar é o `controle`, e o 3.5 entrou
+        // nela quando a derivação da chave de sessão dele foi corrigida — ela é AES-GCM,
+        // e não o AES-ECB do 3.4.
+        assert!(aparelho.suportado);
     }
 
     /// Parte dos firmwares põe um código de retorno na frente do JSON e enche o fim com

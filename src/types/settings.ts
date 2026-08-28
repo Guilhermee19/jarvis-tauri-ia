@@ -44,6 +44,22 @@ export interface AppSettings {
   spotifyClientId: string
   spotifyClientSecret: string
   /**
+   * Credenciais do projeto Cloud da Tuya (`iot.tuya.com`). Vazias deixam a Casa em modo
+   * só-leitura: a varredura acha os aparelhos, mas sem a chave de cada um não há comando.
+   *
+   * Servem uma vez, no botão de importar. A chave que sai de lá é do APARELHO e continua
+   * valendo depois que o projeto trial expira.
+   */
+  tuyaClientId: string
+  tuyaClientSecret: string
+  /**
+   * O *data center* do projeto: `us`, `eu`, `cn` ou `in`.
+   *
+   * Errado, a Tuya responde sucesso com uma lista VAZIA em vez de recusar — não há nada
+   * na resposta que aponte para cá. Conta brasileira do Smart Life quase sempre é `us`.
+   */
+  tuyaRegiao: string
+  /**
    * Resolução pedida à webcam. `0` em qualquer um dos dois = automático (o formato
    * mais perto de 640×480). É um pedido: a câmera decide o que consegue entregar.
    */
@@ -74,6 +90,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   braveApiKey: '',
   spotifyClientId: '',
   spotifyClientSecret: '',
+  tuyaClientId: '',
+  tuyaClientSecret: '',
+  tuyaRegiao: 'us',
   webcamWidth: 0,
   webcamHeight: 0,
   webcamMirror: false,

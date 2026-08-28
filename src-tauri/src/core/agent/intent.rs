@@ -91,6 +91,17 @@ pub enum Intent {
         nickname: String,
         target: String,
     },
+    /// "apaga a luz da cozinha". `aparelho` é o NOME que ele deu no app da casa
+    /// inteligente, do jeito que ele falou — quem casa "luz da cozinha" com "Luz
+    /// Cozinha" é o chaveiro, que conhece os nomes de verdade e este prompt não.
+    ///
+    /// Campo próprio em vez de reaproveitar o `target` do [`Intent::Alias`]: os dois
+    /// significam coisas diferentes, e um nome de campo que quer dizer duas coisas é
+    /// exatamente o tipo de ambiguidade que um modelo de 3B resolve errado.
+    SmartHome {
+        aparelho: String,
+        ligar: bool,
+    },
     /// Nada a executar: conversa fiada OU pedido que não bate com nenhuma capacidade.
     /// Quem responde isso é `converse`, com histórico e memória — não este prompt.
     Reply {},
@@ -109,7 +120,8 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 18] = [
+const ACOES: [&str; 19] = [
+    "smart_home",
     "play_music",
     "webcam_on",
     "webcam_off",
@@ -149,7 +161,9 @@ pub fn schema() -> serde_json::Value {
             "about":    { "type": "string" },
             "nickname": { "type": "string" },
             "target":   { "type": "string" },
+            "aparelho": { "type": "string" },
             "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
+            "ligar":    { "type": "boolean" },
             "steps":    { "type": "integer" },
             "level":    { "type": "integer" }
         },
@@ -272,9 +286,11 @@ fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
 /// ele degrada sozinho: cada feature nova (música, webcam, visão) chega com exemplos de
 /// COMANDO e nenhum de CONVERSA, e a razão sobe sem ninguém decidir isso. A 6:1 ele
 /// pausou a música de um usuário no meio de um desabafo. Ao mexer aqui, **conte os dois
-/// lados antes de reescrever regra nenhuma** — hoje são 20 comandos, 4 perguntas sobre
-/// o mundo e 13 conversas (~1,5:1), e as conversas incluem de propósito frases que
-/// CITAM tela e objeto sem pedir para olhar, que são os falsos amigos do `look`.
+/// lados antes de reescrever regra nenhuma** — hoje são 22 comandos, 4 perguntas sobre
+/// o mundo e 15 conversas (~1,5:1), e as conversas incluem de propósito frases que
+/// CITAM tela e objeto sem pedir para olhar, que são os falsos amigos do `look` — e
+/// agora também frases que CITAM uma luz sem mandar mexer nela, que são os do
+/// `smart_home`. Reclamar de lâmpada queimada é o caso mais provável de todos.
 fn system_prompt(assistant_name: &str, apelidos: &BTreeMap<String, String>) -> String {
     let mut prompt = format!(
         "Você é o roteador de comandos do {assistant_name}, um assistente de desktop Windows.
@@ -300,6 +316,9 @@ look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
+smart_home        LIGAR ou DESLIGAR um aparelho da casa (luz, lâmpada, tomada, interruptor).
+                  `aparelho` = o nome dele como ele falou, sem \"a\", \"o\" nem \"da\".
+                  `ligar` = true para acender/ligar, false para apagar/desligar.
 alias             ele ensinou um apelido. `nickname` = o apelido, `target` = o programa ou site.
 reply             conversa, papo, desabafo, e perguntas sobre ELE. Sem argumento nenhum.
 
@@ -323,8 +342,8 @@ memória e não na internet.
 Nunca invente uma ação, e nunca invente termos que o usuário não disse.
 
 VOCÊ NÃO FAZ TUDO. Não existe ação para curtir, favoritar ou salvar música, mexer em
-playlist, ver o que está tocando, mandar mensagem, controlar luz ou tomada, nem mexer em
-arquivo. Pedido desses é reply — quem responde explica que não sabe fazer. Escolher a
+playlist, ver o que está tocando, mandar mensagem, nem mexer em arquivo. Pedido desses
+é reply — quem responde explica que não sabe fazer. Escolher a
 ação PARECIDA é o pior erro possível: \"salva essa música\" não é play_music, e
 \"qual está tocando agora\" não é media_play_pause.
 
@@ -352,6 +371,8 @@ Exemplos de COMANDO:
 \"lembra que eu acordo 6h30\"         -> {{\"action\":\"remember\",\"fact\":\"Acorda 6h30.\"}}
 \"esquece a academia\"                -> {{\"action\":\"forget\",\"about\":\"academia\"}}
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
+\"apaga a luz da cozinha\"            -> {{\"action\":\"smart_home\",\"aparelho\":\"luz cozinha\",\"ligar\":false}}
+\"acende a lâmpada do quarto\"        -> {{\"action\":\"smart_home\",\"aparelho\":\"lâmpada quarto\",\"ligar\":true}}
 
 Exemplos de PERGUNTA SOBRE O MUNDO — vão para web_search:
 \"pesquisa no google quem foi tesla\" -> {{\"action\":\"web_search\",\"query\":\"nikola tesla\"}}
@@ -373,6 +394,8 @@ Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objet
 \"esse mouse aqui já era, tá com o clique falhando\"      -> {{\"action\":\"reply\"}}
 \"não tô vendo a hora de acabar esse projeto\"            -> {{\"action\":\"reply\"}}
 \"minha tela tá pequena demais pra trabalhar\"            -> {{\"action\":\"reply\"}}
+\"a luz da cozinha tá queimada de novo\"                  -> {{\"action\":\"reply\"}}
+\"esqueci a luz da sala acesa a noite toda\"              -> {{\"action\":\"reply\"}}
 \"que horas eu acordo mesmo?\"                            -> {{\"action\":\"reply\"}}
 \"bom dia\"                                               -> {{\"action\":\"reply\"}}
 \"e aí, tudo certo?\"                                     -> {{\"action\":\"reply\"}}"
@@ -472,6 +495,13 @@ mod tests {
                 Intent::Alias {
                     nickname: "meu jogo".to_owned(),
                     target: "steam".to_owned(),
+                },
+            ),
+            (
+                r#"{"action":"smart_home","aparelho":"luz cozinha","ligar":false}"#,
+                Intent::SmartHome {
+                    aparelho: "luz cozinha".to_owned(),
+                    ligar: false,
                 },
             ),
             (r#"{"action":"webcam_on"}"#, Intent::WebcamOn {}),

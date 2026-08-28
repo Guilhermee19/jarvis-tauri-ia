@@ -27,6 +27,8 @@ use intent::Intent;
 
 use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
+use crate::core::casa::chaveiro::{Busca, Chaveiro};
+use crate::core::casa::controle::{self, Alvo};
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
 use crate::core::search;
@@ -113,6 +115,7 @@ pub async fn handle(
     settings: &AppSettings,
     memoria: &Memoria,
     automation: &AutomationState,
+    chaveiro: &Chaveiro,
     dito: &str,
 ) -> Result<Outcome, AgentError> {
     // Modelo vazio desliga o intérprete e volta ao mock. É a saída de emergência sem
@@ -309,6 +312,30 @@ pub async fn handle(
                 format!("Combinado: \"{nickname}\" é o {target}.")
             } else {
                 "Isso eu já sabia.".to_owned()
+            }
+        }
+
+        // ---- a casa inteligente -------------------------------------------
+        Intent::SmartHome { aparelho, ligar } => {
+            log.acao(&acao);
+            let relogio = Instant::now();
+            let resultado = casa(chaveiro, aparelho, *ligar);
+            log.desfecho(
+                resultado.as_ref().err().cloned(),
+                relogio.elapsed().as_millis(),
+            );
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: resultado.is_ok(),
+            });
+            memoria.atualizar_rotinas();
+
+            match resultado {
+                Ok(frase) => frase,
+                Err(erro) => erro,
             }
         }
 
@@ -656,8 +683,80 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::Look { .. }
         | Intent::Remember { .. }
         | Intent::Forget { .. }
-        | Intent::Alias { .. } => String::new(),
+        | Intent::Alias { .. }
+        | Intent::SmartHome { .. } => String::new(),
     })
+}
+
+/// Acha o aparelho pelo nome dito e manda o comando.
+///
+/// **Todo erro daqui vira frase**, e nunca um `Err` de IPC: "não achei nenhuma luz com
+/// esse nome" é uma resposta de conversa, não o backend caindo. É a mesma decisão que o
+/// braço dos comandos do PC já toma logo acima.
+///
+/// Bloqueia por alguns segundos dentro de uma função `async` — a mesma licença que o
+/// `execute` toma para as teclas de mídia. O teto é o timeout de 5 s do `controle`, e é
+/// uma conversa dentro da própria rede.
+fn casa(chaveiro: &Chaveiro, dito: &str, ligar: bool) -> Result<String, String> {
+    let aparelho = match chaveiro.achar_por_nome(dito) {
+        Busca::Um(achado) => *achado,
+
+        // Os três "não achei" pedem respostas diferentes, e é por isso que a busca não
+        // devolve um `Option`: mandar procurar por nome quem nunca importou nada seria
+        // um conselho inútil.
+        Busca::Nenhum if chaveiro.vazio() => {
+            return Err(
+                "ainda não sei quais aparelhos você tem. Abre o painel Casa, procura os                  aparelhos e importa os nomes da nuvem — aí eu passo a saber."
+                    .to_owned(),
+            )
+        }
+        Busca::Nenhum => {
+            let conhecidos: Vec<String> = chaveiro
+                .todos()
+                .into_iter()
+                .filter(|aparelho| !aparelho.nome.trim().is_empty())
+                .map(|aparelho| aparelho.nome)
+                .collect();
+
+            return Err(format!(
+                "não achei nenhum aparelho chamado \"{dito}\". Os que eu conheço: {}.",
+                conhecidos.join(", ")
+            ));
+        }
+        Busca::Varios(nomes) => {
+            return Err(format!(
+                "isso serve para mais de um aparelho: {}. Qual deles?",
+                nomes.join(", ")
+            ))
+        }
+    };
+
+    // Nome sem endereço é aparelho importado da nuvem que a rede nunca anunciou — ou
+    // que só anunciou antes deste chaveiro existir.
+    if aparelho.ultimo_ip.trim().is_empty() {
+        return Err(format!(
+            "sei quem é {}, mas não sei onde está na rede. Procura os aparelhos no              painel Casa uma vez e eu passo a alcançar.",
+            aparelho.nome
+        ));
+    }
+
+    controle::ligar(
+        &Alvo {
+            id: &aparelho.id,
+            ip: &aparelho.ultimo_ip,
+            versao: &aparelho.versao,
+            local_key: &aparelho.local_key,
+        },
+        ligar,
+    )
+    .map(|_| {
+        format!(
+            "{} {}.",
+            if ligar { "Liguei" } else { "Desliguei" },
+            aparelho.nome
+        )
+    })
+    .map_err(|erro| erro.to_string())
 }
 
 /// Teto em 5 passos: o modelo às vezes inventa um número grande, e ninguém precisa de
@@ -785,6 +884,55 @@ fn campos(acao: &Intent) -> serde_json::Map<String, serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chaveiro_de_teste(nome: &str) -> Chaveiro {
+        let dir = std::env::temp_dir().join(format!("jarvis-agente-casa-{nome}"));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        Chaveiro::new(&dir)
+    }
+
+    /// **Nada aqui pode virar `Err`.** Uma luz que não foi encontrada é assunto de
+    /// conversa; se virasse erro de IPC, a tela mostraria "Comando falhou" no lugar de
+    /// uma frase que ensina o que fazer.
+    #[test]
+    fn a_casa_responde_com_frase_mesmo_quando_nao_da_para_agir() {
+        // Sem nada importado, o conselho é importar — e não "não achei esse aparelho",
+        // que mandaria procurar um nome numa lista vazia.
+        let vazio = chaveiro_de_teste("vazio");
+        let resposta = casa(&vazio, "luz da cozinha", false).expect_err("não tem o que ligar");
+        assert!(
+            resposta.contains("painel Casa"),
+            "a resposta tem que dizer onde resolver: {resposta}"
+        );
+
+        // Com aparelho conhecido mas nome que não bate, o conselho é outro: a lista do
+        // que ele conhece.
+        let cheio = chaveiro_de_teste("cheio");
+        cheio
+            .guardar(vec![crate::core::casa::chaveiro::Conhecido {
+                id: "abc".to_owned(),
+                nome: "Luz Cozinha".to_owned(),
+                local_key: "0123456789abcdef".to_owned(),
+                categoria: "dj".to_owned(),
+                online: true,
+                ..Default::default()
+            }])
+            .expect("grava");
+
+        let resposta = casa(&cheio, "ventilador do quarto", true).expect_err("não conhece");
+        assert!(
+            resposta.contains("Luz Cozinha"),
+            "tem que listar o que ele conhece: {resposta}"
+        );
+
+        // Nome certo, mas nunca visto na rede: o que falta é uma varredura, não a nuvem.
+        let resposta = casa(&cheio, "apaga a luz cozinha", false).expect_err("sem endereço");
+        assert!(
+            resposta.contains("onde está na rede"),
+            "tem que separar 'não conheço' de 'não sei onde está': {resposta}"
+        );
+    }
 
     /// O log tem que dizer o que foi feito COM QUE ALVO — é a única informação que
     /// permite descobrir por que o comando errado disparou.

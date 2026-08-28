@@ -39,6 +39,10 @@ aes = "0.8"
 # O anúncio do protocolo 3.5 vem em AES-128-GCM, com a mesma chave pública do 3.3. Sem
 # `getrandom`: aqui só se decifra, nunca se gera nonce.
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+# Assinatura das chamadas à nuvem da Tuya (HMAC-SHA256 em hex) e, depois, a negociação
+# de sessão dos protocolos 3.4 e 3.5. Uma dupla, dois usos bem distantes.
+hmac = "0.12"
+sha2 = "0.10"
 # Só o `sleep` do polling de serviço. Já vem no lock (reqwest, tauri) — declarar não
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
 tokio = { version = "1", features = ["time"] }

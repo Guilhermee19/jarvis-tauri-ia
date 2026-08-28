@@ -17,6 +17,7 @@ use tauri::Manager;
 
 use crate::config::AppSettings;
 use crate::core::automation::AutomationState;
+use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::memory::Memoria;
 use crate::core::services::Services;
 use crate::core::voice::VoiceState;
@@ -66,6 +67,11 @@ pub fn run() {
             // Dono dos processos externos (whisper-server, ollama). Nada sobe aqui:
             // a subida é preguiçosa, na primeira vez que a voz é usada.
             app.manage(Services::new());
+            // As chaves dos aparelhos da casa. Fica ao lado do `AppState` e não dentro
+            // dele porque é DADO buscado, não configuração escolhida — e porque o botão
+            // de importar reescreve o arquivo inteiro, o que ninguém quer que aconteça
+            // com o `settings.json`.
+            app.manage(Chaveiro::new(&config_dir));
 
             tray::build(app.handle())?;
             Ok(())
@@ -95,6 +101,11 @@ pub fn run() {
             commands::voice::stop_speaking,
             commands::voice::transcribe,
             commands::casa::discover_devices,
+            commands::casa::known_devices,
+            commands::casa::import_tuya_devices,
+            commands::casa::set_device_power,
+            commands::casa::device_state,
+            commands::casa::set_light,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,

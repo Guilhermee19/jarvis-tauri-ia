@@ -1,4 +1,11 @@
-import type { Varredura } from '@/types'
+import type {
+  AjusteLuz,
+  Aparelho,
+  DetalheAparelho,
+  EstadoAparelho,
+  Importado,
+  Varredura,
+} from '@/types'
 import { call } from './client'
 
 /** Wrappers de `src-tauri/src/commands/casa.rs`. */
@@ -12,4 +19,62 @@ import { call } from './client'
  */
 export function discoverDevices(): Promise<Varredura> {
   return call<Varredura>('discover_devices')
+}
+
+/**
+ * O que já se conhece, sem encostar na rede — responde na hora.
+ *
+ * É o que o painel mostra no instante em que abre, em vez de dez segundos de tela vazia
+ * até a primeira varredura terminar.
+ */
+export function knownDevices(): Promise<Aparelho[]> {
+  return call<Aparelho[]>('known_devices')
+}
+
+/**
+ * Busca nome e chave de controle na nuvem da Tuya e guarda em disco. Devolve quantos.
+ *
+ * `semente` é o id de um aparelho que a varredura já viu: a Tuya lista os aparelhos de um
+ * USUÁRIO, e o usuário se descobre perguntando por um aparelho conhecido. É o que evita
+ * pedir para alguém digitar um id de 22 caracteres.
+ */
+export function importTuyaDevices(semente: string): Promise<Importado[]> {
+  return call<Importado[]>('import_tuya_devices', { semente })
+}
+
+/**
+ * Liga ou desliga um aparelho, direto na rede local — sem nuvem e sem internet.
+ *
+ * `ip` e `versao` vão daqui porque a varredura mais recente vive na tela: o backend não
+ * guarda o retrato da rede, e um IP guardado envelhece calado quando o roteador
+ * redistribui os endereços. A chave é a única coisa que ele guarda.
+ */
+export function setDevicePower(
+  id: string,
+  ip: string,
+  versao: string,
+  ligado: boolean,
+): Promise<EstadoAparelho> {
+  return call<EstadoAparelho>('set_device_power', { id, ip, versao, ligado })
+}
+
+/**
+ * Tudo o que o aparelho sabe dizer sobre si: estado, o que ele aceita de ajuste, e os
+ * data points crus.
+ *
+ * Custa uma conexão TCP e um aperto de mão, então só é chamado quando alguém abre os
+ * detalhes — não a cada varredura.
+ */
+export function deviceState(id: string, ip: string, versao: string): Promise<DetalheAparelho> {
+  return call<DetalheAparelho>('device_state', { id, ip, versao })
+}
+
+/** Muda cor, brilho ou temperatura de uma lâmpada, e devolve como ela ficou. */
+export function setLight(
+  id: string,
+  ip: string,
+  versao: string,
+  ajuste: AjusteLuz,
+): Promise<DetalheAparelho> {
+  return call<DetalheAparelho>('set_light', { id, ip, versao, ajuste })
 }

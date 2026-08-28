@@ -1,4 +1,12 @@
-export type { Aparelho, Varredura } from './casa'
+export type {
+  AjusteLuz,
+  Aparelho,
+  DetalheAparelho,
+  EstadoAparelho,
+  Importado,
+  Luz,
+  Varredura,
+} from './casa'
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'
 export type { AppSettings, Persona } from './settings'
 export { DEFAULT_SETTINGS, NOME_DA_PERSONA } from './settings'

@@ -203,13 +203,25 @@ Não estava no roadmap; entrou por pedido. O painel **Casa** já lista os aparel
 (Positivo, EKAZA e as outras rebrands) ouvindo a rede local, sem conta nem chave.
 
 - ✅ Descoberta por broadcast UDP, com id, IP, modelo e **versão do protocolo**
-- ✅ O 3.5 aparece marcado como sem suporte, em vez de sumir da lista
-- ⬜ **Fase 2** — `local_key` + o nome de cada aparelho, da Cloud API da Tuya (trial
-  gratuito e renovável; a chave continua válida depois que ele expira, porque é do
-  aparelho e não da nuvem). Passo manual e uma vez só
-- ⬜ **Fase 3** — controlar: TCP 6668 com AES, verbo `smart_home` no roteador, botões no
-  painel. ⚠️ O teste `os_exemplos_de_comando_nao_afogam_os_de_conversa` vai quebrar aqui,
-  e é para quebrar — "a luz da cozinha tá queimada" não pode apagar nada
+- ✅ O 3.5 é decifrado (AES-GCM, mesma chave pública do 3.3); o que não abre ainda
+  aparece na lista com o endereço, em vez de sumir
+- ✅ O código de retorno de 4 bytes do quadro clássico, que fazia dois aparelhos desta
+  casa serem contados como "pacote ignorado" e nunca aparecerem
+- ✅ **Fase 2** — `local_key` + nome, da Cloud API da Tuya, guardados num `casa.json`.
+  Trial gratuito e renovável; a chave continua válida depois que ele expira, porque é do
+  aparelho e não da nuvem
+- ✅ **Fase 3** — controlar. Os **três** protocolos, cada um verificado contra um
+  aparelho real pelo teste `controle_real`: 3.3 (AES-ECB, CRC-32), 3.4 (sessão negociada,
+  HMAC-SHA256) e 3.5 (sessão, quadro GCM). Duas armadilhas custaram caro e estão anotadas
+  no código: o último passo do aperto de mão **não é respondido** (esperar por ele consome
+  o timeout inteiro e parece recusa), e a chave de sessão do **3.5 é derivada em AES-GCM**,
+  não no AES-ECB do 3.4 — a conta errada dá uma chave válida e errada, e o aparelho recusa
+  o primeiro comando sem dizer nada.
+  Junto: cor, brilho e temperatura de lâmpada (data points 20–24), ícone por categoria,
+  cartão enxuto com os detalhes técnicos atrás do "i", e o verbo `smart_home` no roteador.
+  Uma trava por CATEGORIA impede que aparelho sem liga-desliga ganhe botão — sem ela um
+  gateway ZigBee, que expõe um booleano não documentado no DP 4, receberia comando às
+  cegas.
 - ⬜ **Fase 4** — outras marcas. Um segundo backend em `core/casa.rs`, no molde do `if` da
   chave que a visão já usa. O **Home Assistant** é o candidato: "todas as marcas" é
   literalmente o problema que ele resolve, e falar com ele é menos código que a Tuya nativa
