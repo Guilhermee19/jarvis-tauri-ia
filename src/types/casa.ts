@@ -14,8 +14,14 @@ export interface Aparelho {
   produto: string | null
   /** `false` costuma ser aparelho novo, ainda esperando configuração no app. */
   ativo: boolean
+  /** `false` quando o anúncio veio em texto puro (3.1) ou quando não abriu. */
   decifrado: boolean
-  /** `false` no protocolo 3.5, que ainda não sabemos falar — mas que aparece na lista. */
+  /**
+   * Se dá para MANDAR COMANDO nele pelo caminho que o Jarvis fala.
+   *
+   * `false` no 3.5: o anúncio dele é lido (id, modelo, versão), mas o controle usa outro
+   * quadro. O aparelho aparece na lista de qualquer jeito.
+   */
   suportado: boolean
 }
 

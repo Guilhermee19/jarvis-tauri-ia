@@ -36,6 +36,9 @@ url = "2"
 # projeto declara 1.77.2 — subir o piso do repo inteiro por uma crate 0.2.1 sairia mais
 # caro que as ~40 linhas de decodificação em `core/casa.rs`.
 aes = "0.8"
+# O anúncio do protocolo 3.5 vem em AES-128-GCM, com a mesma chave pública do 3.3. Sem
+# `getrandom`: aqui só se decifra, nunca se gera nonce.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 # Só o `sleep` do polling de serviço. Já vem no lock (reqwest, tauri) — declarar não
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
 tokio = { version = "1", features = ["time"] }

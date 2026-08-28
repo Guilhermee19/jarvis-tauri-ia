@@ -123,14 +123,20 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
         <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-4">
           {aparelho.produto ? <Etiqueta>{aparelho.produto}</Etiqueta> : null}
           {!aparelho.ativo ? <Etiqueta>sem pareamento</Etiqueta> : null}
-          {!aparelho.suportado ? <Etiqueta alerta>protocolo não lido</Etiqueta> : null}
+          {!aparelho.suportado ? (
+            <Etiqueta alerta>{aparelho.decifrado ? 'sem controle' : 'anúncio não lido'}</Etiqueta>
+          ) : null}
         </div>
       ) : null}
 
+      {/* Duas situações que a etiqueta sozinha não separa, e que pedem coisas diferentes
+          de você: um aparelho identificado que ainda não dá para comandar, e um que nem
+          se apresentou direito. */}
       {!aparelho.suportado ? (
         <p className="text-muted mt-2 pl-4 text-[10px] leading-relaxed">
-          Fala o protocolo 3.5, que o Jarvis ainda não lê. Aparece aqui para você saber que ele
-          existe, em vez de sumir e parecer problema de rede.
+          {aparelho.decifrado
+            ? 'Fala o protocolo 3.5. O Jarvis lê o anúncio dele — é daí que vêm o id e o modelo acima —, mas mandar comando usa outro caminho, que depende da chave do aparelho.'
+            : 'Anunciou no protocolo 3.5 e o anúncio não abriu. Fica na lista com o endereço para você saber que ele existe, em vez de sumir e parecer problema de rede.'}
         </p>
       ) : null}
     </li>
@@ -140,7 +146,7 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
 /** Um ponto, três significados. Cor é o canal, mas o `title` é o que garante a leitura. */
 function Status({ ativo, suportado }: { ativo: boolean; suportado: boolean }) {
   const [cor, texto] = !suportado
-    ? ['bg-muted/40', 'Encontrado, mas o protocolo dele ainda não é lido']
+    ? ['bg-muted/40', 'Encontrado, mas o controle dele ainda não está pronto']
     : ativo
       ? ['bg-accent', 'Pareado e respondendo']
       : ['bg-muted/60', 'Ainda não pareado com nenhum app']
