@@ -28,7 +28,7 @@ use intent::Intent;
 use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
 use crate::core::casa::chaveiro::{Busca, Chaveiro};
-use crate::core::casa::controle;
+use crate::core::casa::controle::{self, Ajuste};
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
 use crate::core::search;
@@ -316,10 +316,10 @@ pub async fn handle(
         }
 
         // ---- a casa inteligente -------------------------------------------
-        Intent::SmartHome { aparelho, ligar } => {
+        Intent::SmartHome { .. } | Intent::SmartColor { .. } | Intent::SmartBright { .. } => {
             log.acao(&acao);
             let relogio = Instant::now();
-            let resultado = casa(chaveiro, aparelho, *ligar);
+            let resultado = casa(chaveiro, &acao);
             log.desfecho(
                 resultado.as_ref().err().cloned(),
                 relogio.elapsed().as_millis(),
@@ -684,7 +684,9 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. }
-        | Intent::SmartHome { .. } => String::new(),
+        | Intent::SmartHome { .. }
+        | Intent::SmartColor { .. }
+        | Intent::SmartBright { .. } => String::new(),
     })
 }
 
@@ -697,7 +699,14 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
 /// Bloqueia por alguns segundos dentro de uma função `async` — a mesma licença que o
 /// `execute` toma para as teclas de mídia. O teto é o timeout de 5 s do `controle`, e é
 /// uma conversa dentro da própria rede.
-fn casa(chaveiro: &Chaveiro, dito: &str, ligar: bool) -> Result<String, String> {
+fn casa(chaveiro: &Chaveiro, acao: &Intent) -> Result<String, String> {
+    let dito = match acao {
+        Intent::SmartHome { aparelho, .. }
+        | Intent::SmartColor { aparelho, .. }
+        | Intent::SmartBright { aparelho, .. } => aparelho.as_str(),
+        _ => return Err("isso nao e um pedido para a casa".to_owned()),
+    };
+
     let aparelho = match chaveiro.achar_por_nome(dito) {
         Busca::Um(achado) => *achado,
 
@@ -750,15 +759,102 @@ fn casa(chaveiro: &Chaveiro, dito: &str, ligar: bool) -> Result<String, String> 
     )
     .ok_or_else(|| controle::ControleError::SemChave.to_string())?;
 
-    controle::ligar(&endereco.alvo(), ligar)
-    .map(|_| {
-        format!(
-            "{} {}.",
-            if ligar { "Liguei" } else { "Desliguei" },
-            aparelho.nome
-        )
+    executar(&endereco, acao, &aparelho.nome)
+}
+
+/// A escala da Tuya para brilho, saturação e temperatura vai até 1000; a fala vai até
+/// 100. A conversão mora aqui e não no `controle` porque é uma questão de LINGUAGEM —
+/// quem diz "trinta por cento" é gente, e quem entende de 0 a 1000 é o aparelho.
+const CHEIO: u16 = 1000;
+
+fn executar(
+    endereco: &crate::core::casa::Endereco,
+    acao: &Intent,
+    nome: &str,
+) -> Result<String, String> {
+    let alvo = endereco.alvo();
+
+    let (ajuste, frase) = match acao {
+        Intent::SmartHome { ligar, .. } => {
+            return controle::ligar(&alvo, *ligar)
+                .map(|_| format!("{} {nome}.", if *ligar { "Liguei" } else { "Desliguei" }))
+                .map_err(|erro| erro.to_string())
+        }
+        Intent::SmartColor { cor, .. } => {
+            let Some(ajuste) = tinta_de(cor) else {
+                // Recusar e melhor que pintar de uma cor qualquer: quem pediu "turquesa"
+                // e recebeu azul nao descobre que a palavra nao foi entendida.
+                return Err(format!(
+                    "nao sei que cor e {cor:?}. Tente vermelho, laranja, amarelo, verde, ciano, \
+                     azul, roxo, rosa, branco, ou \"mais quente\" e \"mais frio\"."
+                ));
+            };
+
+            (ajuste, format!("Deixei {nome} {cor}."))
+        }
+        Intent::SmartBright { nivel, .. } => (
+            // A fala vai de 0 a 100 e a Tuya de 0 a 1000. A conversao mora aqui e nao no
+            // `controle` porque e questao de LINGUAGEM: quem diz "trinta por cento" e
+            // gente, e quem entende de 0 a 1000 e o aparelho.
+            Ajuste {
+                brilho: Some(u16::from((*nivel).min(100)) * CHEIO / 100),
+                ..Ajuste::default()
+            },
+            format!("Brilho de {nome} em {nivel}%."),
+        ),
+        _ => return Err("isso nao e um pedido para a casa".to_owned()),
+    };
+
+    controle::ajustar(&alvo, &ajuste)
+        .map(|_| frase)
+        .map_err(|erro| erro.to_string())
+}
+
+/// De nome de cor para o ajuste que a lampada entende.
+///
+/// Uma tabela e nao um conversor de CSS: o que chega aqui e fala transcrita, e "azul
+/// claro" ou "azulzinho" nao existem em tabela de cor nenhuma. Cobrir as basicas com o
+/// nome que as pessoas usam vale mais que aceitar `#0000FF`.
+///
+/// **Branco nao e uma cor aqui, e um modo.** "Mais quente" e "mais frio" viram
+/// temperatura, e nao matiz — pedir branco quente e receber um amarelo saturado e
+/// exatamente o erro que sairia se o pedido fosse pelo caminho da cor.
+fn tinta_de(cor: &str) -> Option<Ajuste> {
+    let nome = crate::core::memory::normalizar(cor);
+    let branco = |temperatura: u16| Ajuste {
+        temperatura: Some(temperatura),
+        ..Ajuste::default()
+    };
+
+    // "mais quente" e "branco frio" chegam com duas palavras, e a que decide pode ser
+    // qualquer uma delas.
+    if nome.split(' ').any(|palavra| palavra == "quente") {
+        return Some(branco(0));
+    }
+    if nome.split(' ').any(|palavra| palavra == "frio" || palavra == "fria") {
+        return Some(branco(CHEIO));
+    }
+
+    let matiz = match nome.split(' ').next()? {
+        "vermelho" | "vermelha" => 0,
+        "laranja" => 25,
+        "amarelo" | "amarela" => 55,
+        "verde" => 120,
+        "ciano" | "turquesa" => 180,
+        "azul" => 220,
+        "roxo" | "roxa" | "lilas" | "violeta" => 280,
+        "rosa" | "magenta" | "pink" => 320,
+        // Branco puro e o meio da escala de temperatura, e nao um matiz sem saturacao:
+        // e assim que a lampada o representa.
+        "branco" | "branca" => return Some(branco(CHEIO / 2)),
+        _ => return None,
+    };
+
+    Some(Ajuste {
+        matiz: Some(matiz),
+        saturacao: Some(CHEIO),
+        ..Ajuste::default()
     })
-    .map_err(|erro| erro.to_string())
 }
 
 /// Teto em 5 passos: o modelo às vezes inventa um número grande, e ninguém precisa de
@@ -902,7 +998,12 @@ mod tests {
         // Sem nada importado, o conselho é importar — e não "não achei esse aparelho",
         // que mandaria procurar um nome numa lista vazia.
         let vazio = chaveiro_de_teste("vazio");
-        let resposta = casa(&vazio, "luz da cozinha", false).expect_err("não tem o que ligar");
+        let apagar = |nome: &str| Intent::SmartHome {
+            aparelho: nome.to_owned(),
+            ligar: false,
+        };
+
+        let resposta = casa(&vazio, &apagar("luz da cozinha")).expect_err("nao tem o que ligar");
         assert!(
             resposta.contains("painel Casa"),
             "a resposta tem que dizer onde resolver: {resposta}"
@@ -922,18 +1023,54 @@ mod tests {
             }])
             .expect("grava");
 
-        let resposta = casa(&cheio, "ventilador do quarto", true).expect_err("não conhece");
+        let resposta = casa(&cheio, &apagar("ventilador do quarto")).expect_err("nao conhece");
         assert!(
             resposta.contains("Luz Cozinha"),
             "tem que listar o que ele conhece: {resposta}"
         );
 
         // Nome certo, mas nunca visto na rede: o que falta é uma varredura, não a nuvem.
-        let resposta = casa(&cheio, "apaga a luz cozinha", false).expect_err("sem endereço");
+        let resposta = casa(&cheio, &apagar("apaga a luz cozinha")).expect_err("sem endereco");
         assert!(
             resposta.contains("onde está na rede"),
             "tem que separar 'não conheço' de 'não sei onde está': {resposta}"
         );
+    }
+
+    /// Manda o comando na casa de verdade, com o chaveiro real. Fora do `cargo test`
+    /// comum porque depende dos aparelhos ligados.
+    ///
+    /// `JARVIS_FRASE="lâmpada mesa" JARVIS_COR=azul cargo test --lib -- --ignored     ///   --nocapture comanda_a_casa_de_verdade`
+    #[test]
+    #[ignore]
+    fn comanda_a_casa_de_verdade() {
+        let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+            .join("com.jarvis.app");
+        let chaveiro = Chaveiro::new(&dir);
+
+        let alvo = std::env::var("JARVIS_FRASE").unwrap_or_default();
+        let cor = std::env::var("JARVIS_COR").unwrap_or_default();
+
+        for acao in [
+            Intent::SmartColor {
+                aparelho: alvo.clone(),
+                cor: cor.clone(),
+            },
+            Intent::SmartBright {
+                aparelho: alvo.clone(),
+                nivel: 40,
+            },
+            Intent::SmartColor {
+                aparelho: alvo.clone(),
+                cor: "branco".to_owned(),
+            },
+        ] {
+            match casa(&chaveiro, &acao) {
+                Ok(frase) => println!("ok: {frase}"),
+                Err(erro) => println!("erro: {erro}"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
     }
 
     /// O log tem que dizer o que foi feito COM QUE ALVO — é a única informação que

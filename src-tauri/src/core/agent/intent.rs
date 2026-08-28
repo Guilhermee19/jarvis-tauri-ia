@@ -91,16 +91,42 @@ pub enum Intent {
         nickname: String,
         target: String,
     },
-    /// "apaga a luz da cozinha". `aparelho` é o NOME que ele deu no app da casa
-    /// inteligente, do jeito que ele falou — quem casa "luz da cozinha" com "Luz
-    /// Cozinha" é o chaveiro, que conhece os nomes de verdade e este prompt não.
+    /// "apaga a luz da cozinha", "deixa a lâmpada da mesa azul", "põe a luz em 30%".
+    ///
+    /// `aparelho` é o NOME que ele deu no app da casa inteligente, do jeito que ele
+    /// falou — quem casa "luz da cozinha" com "Luz Cozinha" é o chaveiro, que conhece os
+    /// nomes de verdade e este prompt não.
     ///
     /// Campo próprio em vez de reaproveitar o `target` do [`Intent::Alias`]: os dois
     /// significam coisas diferentes, e um nome de campo que quer dizer duas coisas é
     /// exatamente o tipo de ambiguidade que um modelo de 3B resolve errado.
+    ///
+    /// **Um verbo por gesto, e não um verbo com um campo de modo.**
+    ///
+    /// A primeira versão disto era `smart_home` com um campo `acao` valendo "ligar",
+    /// "cor" ou "brilho". Medido contra o modelo de 3B, ele **nunca preencheu esse
+    /// campo**: devolvia `{"action":"smart_home","aparelho":"lâmpada mesa","cor":"azul"}`
+    /// e o parse morria em todas as frases. Pior, em "apaga a lâmpada" ele inventava
+    /// `cor: "branco"` — inferir a intenção pelos campos presentes teria acendido a luz
+    /// de branco no lugar de apagá-la.
+    ///
+    /// Três verbos resolvem porque o verbo é a única coisa que o schema OBRIGA. É o mesmo
+    /// desenho de `volume_up`/`volume_down`/`volume_set`, que existem separados pela
+    /// mesma razão e não por acaso.
     SmartHome {
         aparelho: String,
         ligar: bool,
+    },
+    /// "deixa a lâmpada da mesa azul". `cor` aceita nome de cor e também "quente" e
+    /// "frio", que num branco são a temperatura em vez do matiz.
+    SmartColor {
+        aparelho: String,
+        cor: String,
+    },
+    /// "põe a luz em 30 por cento". `nivel` de 0 a 100.
+    SmartBright {
+        aparelho: String,
+        nivel: u8,
     },
     /// Nada a executar: conversa fiada OU pedido que não bate com nenhuma capacidade.
     /// Quem responde isso é `converse`, com histórico e memória — não este prompt.
@@ -120,8 +146,10 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 19] = [
+const ACOES: [&str; 21] = [
     "smart_home",
+    "smart_color",
+    "smart_bright",
     "play_music",
     "webcam_on",
     "webcam_off",
@@ -162,8 +190,10 @@ pub fn schema() -> serde_json::Value {
             "nickname": { "type": "string" },
             "target":   { "type": "string" },
             "aparelho": { "type": "string" },
-            "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
+            "cor":      { "type": "string" },
+            "nivel":    { "type": "integer" },
             "ligar":    { "type": "boolean" },
+            "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
             "steps":    { "type": "integer" },
             "level":    { "type": "integer" }
         },
@@ -286,8 +316,8 @@ fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
 /// ele degrada sozinho: cada feature nova (música, webcam, visão) chega com exemplos de
 /// COMANDO e nenhum de CONVERSA, e a razão sobe sem ninguém decidir isso. A 6:1 ele
 /// pausou a música de um usuário no meio de um desabafo. Ao mexer aqui, **conte os dois
-/// lados antes de reescrever regra nenhuma** — hoje são 22 comandos, 4 perguntas sobre
-/// o mundo e 15 conversas (~1,5:1), e as conversas incluem de propósito frases que
+/// lados antes de reescrever regra nenhuma** — hoje são 25 comandos, 4 perguntas sobre
+/// o mundo e 17 conversas (~1,5:1), e as conversas incluem de propósito frases que
 /// CITAM tela e objeto sem pedir para olhar, que são os falsos amigos do `look` — e
 /// agora também frases que CITAM uma luz sem mandar mexer nela, que são os do
 /// `smart_home`. Reclamar de lâmpada queimada é o caso mais provável de todos.
@@ -316,9 +346,12 @@ look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
-smart_home        LIGAR ou DESLIGAR um aparelho da casa (luz, lâmpada, tomada, interruptor).
+smart_home        LIGAR ou DESLIGAR um aparelho da casa (luz, lâmpada, tomada).
                   `aparelho` = o nome dele como ele falou, sem \"a\", \"o\" nem \"da\".
                   `ligar` = true para acender/ligar, false para apagar/desligar.
+smart_color       trocar a COR de uma lâmpada. `cor` = o nome da cor que ele disse.
+                  Também vale para \"mais quente\" e \"mais frio\", que são tons de branco.
+smart_bright      trocar o BRILHO de uma lâmpada. `nivel` = 0 a 100.
 alias             ele ensinou um apelido. `nickname` = o apelido, `target` = o programa ou site.
 reply             conversa, papo, desabafo, e perguntas sobre ELE. Sem argumento nenhum.
 
@@ -373,6 +406,9 @@ Exemplos de COMANDO:
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
 \"apaga a luz da cozinha\"            -> {{\"action\":\"smart_home\",\"aparelho\":\"luz cozinha\",\"ligar\":false}}
 \"acende a lâmpada do quarto\"        -> {{\"action\":\"smart_home\",\"aparelho\":\"lâmpada quarto\",\"ligar\":true}}
+\"muda a lâmpada mesa para azul\"     -> {{\"action\":\"smart_color\",\"aparelho\":\"lâmpada mesa\",\"cor\":\"azul\"}}
+\"deixa a luz da sala vermelha\"      -> {{\"action\":\"smart_color\",\"aparelho\":\"luz sala\",\"cor\":\"vermelho\"}}
+\"põe a lâmpada mesa em 30 por cento\" -> {{\"action\":\"smart_bright\",\"aparelho\":\"lâmpada mesa\",\"nivel\":30}}
 
 Exemplos de PERGUNTA SOBRE O MUNDO — vão para web_search:
 \"pesquisa no google quem foi tesla\" -> {{\"action\":\"web_search\",\"query\":\"nikola tesla\"}}
@@ -396,6 +432,8 @@ Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objet
 \"minha tela tá pequena demais pra trabalhar\"            -> {{\"action\":\"reply\"}}
 \"a luz da cozinha tá queimada de novo\"                  -> {{\"action\":\"reply\"}}
 \"esqueci a luz da sala acesa a noite toda\"              -> {{\"action\":\"reply\"}}
+\"azul é a minha cor favorita\"                           -> {{\"action\":\"reply\"}}
+\"a luz dessa sala é muito fraca pra ler\"                -> {{\"action\":\"reply\"}}
 \"que horas eu acordo mesmo?\"                            -> {{\"action\":\"reply\"}}
 \"bom dia\"                                               -> {{\"action\":\"reply\"}}
 \"e aí, tudo certo?\"                                     -> {{\"action\":\"reply\"}}"
@@ -504,6 +542,20 @@ mod tests {
                     ligar: false,
                 },
             ),
+            (
+                r#"{"action":"smart_color","aparelho":"lâmpada mesa","cor":"azul"}"#,
+                Intent::SmartColor {
+                    aparelho: "lâmpada mesa".to_owned(),
+                    cor: "azul".to_owned(),
+                },
+            ),
+            (
+                r#"{"action":"smart_bright","aparelho":"luz sala","nivel":30}"#,
+                Intent::SmartBright {
+                    aparelho: "luz sala".to_owned(),
+                    nivel: 30,
+                },
+            ),
             (r#"{"action":"webcam_on"}"#, Intent::WebcamOn {}),
             (r#"{"action":"webcam_off"}"#, Intent::WebcamOff {}),
             // Sem `fonte`: é o que o 3B emite metade das vezes, e o default tem que
@@ -602,6 +654,52 @@ mod tests {
             .take_while(|linha| !linha.trim().is_empty())
             .filter(|linha| linha.contains("->"))
             .count()
+    }
+
+    /// Pergunta ao modelo de verdade e imprime o que ele decidiu.
+    ///
+    /// Fora do `cargo test` comum porque depende do Ollama de pé. É a única forma de
+    /// saber se um verbo novo é APRENDÍVEL — o teste de mesa prova que o schema e o enum
+    /// concordam, e não que um modelo de 3B consegue preencher os campos.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture interpreta_de_verdade`
+    #[test]
+    #[ignore]
+    fn interpreta_de_verdade() {
+        let frases = [
+            "mude a Lâmpada Mesa para a cor azul",
+            "deixa a lâmpada mesa vermelha",
+            "apaga a lâmpada mesa",
+            "acende a lâmpada mesa",
+            "põe a lâmpada mesa em 20 por cento",
+            "deixa a luz mais quente",
+            "a luz dessa sala é muito fraca pra ler",
+            "azul é a minha cor favorita",
+        ];
+
+        let http = client();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                for frase in frases {
+                    let saida = interpret(
+                        &http,
+                        "http://localhost:11434",
+                        "qwen2.5vl:3b",
+                        "Jarvis",
+                        &BTreeMap::new(),
+                        frase,
+                    )
+                    .await;
+
+                    match saida {
+                        Ok(acao) => println!("{frase:<42} -> {acao:?}"),
+                        Err(erro) => println!("{frase:<42} -> ERRO {erro}"),
+                    }
+                }
+            });
     }
 
     /// O laço de aprendizado: sem os apelidos no prompt, o roteador não tem como saber
