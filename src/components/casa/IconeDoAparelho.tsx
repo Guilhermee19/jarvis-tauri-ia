@@ -99,10 +99,22 @@ const NOME: Record<Familia, string> = {
   generico: 'Tipo ainda desconhecido',
 }
 
+/**
+ * A família de um aparelho, pela categoria da Tuya.
+ *
+ * Exportada porque não serve só para escolher o desenho: quem decide se o cartão ganha
+ * botão de ajustes precisa saber se aquilo é uma lâmpada, e ler a mesma tabela é o que
+ * impede as duas respostas de divergirem.
+ *
+ * Categorias com sufixo (`infrared_ac`) e variações de caixa aparecem no catálogo da
+ * Tuya; normalizar aqui evita uma entrada por variante na tabela.
+ */
+export function familiaDoAparelho(categoria: string): Familia {
+  return POR_CATEGORIA[categoria.trim().toLowerCase()] ?? 'generico'
+}
+
 export function IconeDoAparelho({ categoria, className }: Props) {
-  // Categorias com sufixo (`infrared_ac`) e variações de caixa aparecem no catálogo da
-  // Tuya; normalizar aqui evita uma entrada por variante na tabela.
-  const familia = POR_CATEGORIA[categoria.trim().toLowerCase()] ?? 'generico'
+  const familia = familiaDoAparelho(categoria)
 
   return (
     <span title={NOME[familia]} aria-label={NOME[familia]} role="img" className={className}>

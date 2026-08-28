@@ -2,9 +2,17 @@
 
 import { useEffect, useState } from 'react'
 
-import { DetalhesDoAparelho } from './DetalhesDoAparelho'
-import { IconeDoAparelho } from './IconeDoAparelho'
-import { EyeIcon, EyeOffIcon, HouseIcon, PowerIcon, SyncIcon } from '@/components/ui/icons'
+import { ControlesDoAparelho } from './ControlesDoAparelho'
+import { DetalhesDoAparelho, ehControleRemoto } from './DetalhesDoAparelho'
+import { familiaDoAparelho, IconeDoAparelho } from './IconeDoAparelho'
+import {
+  EyeIcon,
+  EyeOffIcon,
+  HouseIcon,
+  PowerIcon,
+  SettingsIcon,
+  SyncIcon,
+} from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useCasaStore } from '@/stores'
 import type { Aparelho } from '@/types'
@@ -166,7 +174,9 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
   const estado = useCasaStore((state) => state.estados[aparelho.id])
   const comandando = useCasaStore((state) => state.comandando === aparelho.id)
   const alternar = useCasaStore((state) => state.alternar)
-  const [aberto, setAberto] = useState(false)
+  // Um painel por vez: abrir os ajustes fecha a ficha técnica. Os dois juntos
+  // transformariam um cartão de uma linha numa tela inteira.
+  const [painel, setPainel] = useState<'ajustes' | 'ficha' | null>(null)
 
   // Três condições independentes, e as três precisam valer: saber falar o protocolo
   // dele, ter a chave dele, e ele ser o tipo de coisa que liga e desliga. Faltando
@@ -179,7 +189,17 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
   // existe, e por isso ele sai de toda a conversa sobre presença.
   // A categoria basta, e é o que salva antes de a importação ligar o controle ao
   // emissor: sem isso a TV apareceria como um aparelho de rede que sumiu.
-  const porInfravermelho = aparelho.emissor !== '' || aparelho.categoria.startsWith('infrared')
+  const porInfravermelho = ehControleRemoto(aparelho)
+
+  // O botão de ajustes só aparece quando esperamos que haja o que ajustar, e a aposta é
+  // feita SEM perguntar ao aparelho: descobrir de verdade custa uma conexão por cartão, e
+  // dez conexões para decidir se um ícone aparece seria caro demais.
+  //
+  // Controle de infravermelho tem teclas; lâmpada tem brilho e, quase sempre, cor. O
+  // resto — tomada, interruptor, sensor — não tem nada além do liga-desliga que já está
+  // no cartão.
+  const temAjustes =
+    porInfravermelho || (aparelho.temChave && familiaDoAparelho(aparelho.categoria) === 'lampada')
 
   // O que o cartão fechado precisa gritar, e nada além. O resto — id, endereço, modelo,
   // data points — mora atrás do "i", porque só interessa quando algo não funciona.
@@ -237,27 +257,48 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
           />
         ) : null}
 
+        {temAjustes ? (
+          <button
+            type="button"
+            onClick={() => setPainel(painel === 'ajustes' ? null : 'ajustes')}
+            aria-expanded={painel === 'ajustes'}
+            aria-label={painel === 'ajustes' ? 'Fechar os ajustes' : 'Ajustar este aparelho'}
+            title="Ajustes"
+            className={cn(
+              'border-border-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+              painel === 'ajustes'
+                ? 'border-accent/40 bg-accent/15 text-accent'
+                : 'text-muted hover:text-content',
+            )}
+          >
+            <SettingsIcon className="h-3 w-3" />
+          </button>
+        ) : null}
+
         <button
           type="button"
-          onClick={() => setAberto(!aberto)}
-          aria-expanded={aberto}
-          aria-label={aberto ? 'Fechar detalhes' : 'Ver detalhes'}
-          title={aberto ? 'Fechar detalhes' : 'Ver detalhes'}
+          onClick={() => setPainel(painel === 'ficha' ? null : 'ficha')}
+          aria-expanded={painel === 'ficha'}
+          aria-label={painel === 'ficha' ? 'Fechar a ficha técnica' : 'Ver a ficha técnica'}
+          title="Ficha técnica"
           className={cn(
-            'border-border-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-serif italic',
-            aberto ? 'border-accent/40 bg-accent/15 text-accent' : 'text-muted hover:text-content',
+            'border-border-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full border font-serif text-[10px] italic',
+            painel === 'ficha'
+              ? 'border-accent/40 bg-accent/15 text-accent'
+              : 'text-muted hover:text-content',
           )}
         >
           i
         </button>
       </div>
 
-      {aberto ? <DetalhesDoAparelho aparelho={aparelho} /> : null}
+      {painel === 'ajustes' ? <ControlesDoAparelho aparelho={aparelho} /> : null}
+      {painel === 'ficha' ? <DetalhesDoAparelho aparelho={aparelho} /> : null}
 
       {/* Fora do painel de detalhes de propósito: é o que explica por que NÃO há botão,
           e uma explicação escondida atrás de um clique não seria encontrada por quem
           está justamente procurando o botão que falta. */}
-      {aberto && !dachaComandar && !porInfravermelho ? (
+      {painel === 'ficha' && !dachaComandar && !porInfravermelho ? (
         <p className="text-muted mt-2 pl-4 text-[10px] leading-relaxed">
           {!aparelho.decifrado
             ? 'Anunciou num protocolo que não abriu. Fica na lista com o endereço para você saber que ele existe, em vez de sumir e parecer problema de rede.'
