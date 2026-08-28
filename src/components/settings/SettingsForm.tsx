@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { listWebcamResolutions } from '@/lib/tauri'
+import { listInputDevices, listWebcamResolutions } from '@/lib/tauri'
 import {
   DEFAULT_SETTINGS,
   NOME_DA_PERSONA,
@@ -48,10 +48,12 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
     chave(initial.webcamWidth, initial.webcamHeight),
   )
   const [webcamMirror, setWebcamMirror] = useState(initial.webcamMirror)
+  const [micDeviceName, setMicDeviceName] = useState(initial.micDeviceName)
   const [logDetalhado, setLogDetalhado] = useState(initial.logDetalhado)
   const [persona, setPersona] = useState(initial.persona)
 
   const { resolucoes, erro: erroResolucoes } = useWebcamResolutions()
+  const { dispositivos, erro: erroDispositivos } = useInputDevices()
 
   /**
    * O nome ainda é o do tema (ou está vazio), então ele acompanha a troca.
@@ -129,6 +131,42 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setSpotifySecret(event.target.value)}
         placeholder="…"
       />
+
+      <fieldset className="border-border-soft flex flex-col gap-3 rounded-lg border p-3">
+        <legend className="text-muted px-1 text-xs font-medium">Áudio</legend>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-muted text-xs font-medium">Microfone</span>
+          <select
+            value={micDeviceName}
+            onChange={(event) => setMicDeviceName(event.target.value)}
+            className="border-border-soft bg-base text-content focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+          >
+            <option value="">Padrão do sistema</option>
+            {dispositivos.map((device) => (
+              <option key={device} value={device}>
+                {device}
+              </option>
+            ))}
+          </select>
+          <p className="text-muted text-[11px] leading-snug">
+            {erroDispositivos
+              ? `Não consegui listar os microfones (${erroDispositivos}). O padrão do sistema continua valendo.`
+              : 'Vazio segue o padrão do Windows — que muda sozinho quando você pluga um fone ou liga a webcam, e é a razão mais comum de ele gravar do microfone errado. Escolher aqui trava num dispositivo, e a escolha vale só para o Jarvis.'}
+          </p>
+          {/* O nome é a única chave que temos para reencontrar o dispositivo, e ele some
+              da lista quando você desconecta o fone. Sem este aviso, o `select` cairia em
+              branco e a gravação falharia sem ninguém ligar uma coisa à outra. */}
+          {micDeviceName !== '' &&
+          dispositivos.length > 0 &&
+          !dispositivos.includes(micDeviceName) ? (
+            <p className="text-danger text-[11px] leading-snug">
+              O microfone salvo (“{micDeviceName}”) não está conectado agora. A gravação vai falhar
+              até ele voltar, ou até você escolher outro aqui.
+            </p>
+          ) : null}
+        </label>
+      </fieldset>
 
       <fieldset className="border-border-soft flex flex-col gap-3 rounded-lg border p-3">
         <legend className="text-muted px-1 text-xs font-medium">Casa inteligente (Tuya)</legend>
@@ -310,6 +348,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               tuyaRegiao,
               ...parseResolucao(webcamResolucao),
               webcamMirror,
+              micDeviceName,
               logDetalhado,
             })
           }
@@ -362,4 +401,25 @@ function useWebcamResolutions() {
   }, [])
 
   return { resolucoes, erro }
+}
+
+function useInputDevices() {
+  const [dispositivos, setDispositivos] = useState<string[]>([])
+  const [erro, setErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    listInputDevices()
+      .then((lista) => {
+        if (vivo) setDispositivos(lista)
+      })
+      .catch((causa: unknown) => {
+        if (vivo) setErro(causa instanceof Error ? causa.message : String(causa))
+      })
+    return () => {
+      vivo = false
+    }
+  }, [])
+
+  return { dispositivos, erro }
 }

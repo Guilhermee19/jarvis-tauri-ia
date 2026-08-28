@@ -7,14 +7,13 @@ import { create } from 'zustand'
  *
  * - **Janelinhas** (conversa, casa, música) flutuam sobre o HUD, se movem e **convivem**.
  *   Ter a lista da casa aberta num canto enquanto se conversa é uso normal, não conflito.
- * - **Gavetas** (diagnóstico, configurações) ocupam a mesma faixa da borda direita. Duas
- *   abertas ao mesmo tempo se desenhariam uma por cima da outra, então só há uma.
+ * - **Gavetas** (configurações) ocupam a faixa da borda direita.
  *
  * Antes disto o store guardava UM painel ativo para os dois casos, e abrir a casa fechava
  * a conversa — que é o comportamento certo para gaveta e errado para janela.
  */
 export type JanelaId = 'chat' | 'casa' | 'musica'
-export type GavetaId = 'diagnostics' | 'settings'
+export type GavetaId = 'settings'
 
 /**
  * z-index da janela mais ao fundo.

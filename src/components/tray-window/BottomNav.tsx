@@ -1,23 +1,8 @@
 'use client'
 
-import {
-  CameraIcon,
-  ChatIcon,
-  HouseIcon,
-  MicIcon,
-  PowerIcon,
-  PulseIcon,
-  SettingsIcon,
-} from '@/components/ui/icons'
-import { quitApp } from '@/lib/tauri'
+import { CameraIcon, ChatIcon, HouseIcon, MicIcon, SettingsIcon } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
-import {
-  useChatStore,
-  useJanelaStore,
-  useSensorStore,
-  type GavetaId,
-  type JanelaId,
-} from '@/stores'
+import { useChatStore, useJanelaStore, useSensorStore, type JanelaId } from '@/stores'
 
 interface NavItem<Id> {
   id: Id
@@ -30,7 +15,7 @@ interface NavItem<Id> {
  *
  * - Sensores (webcam, microfone): interruptores de algo que continua ligado depois
  *   do clique, independente da tela aberta.
- * - Gavetas (conversa, diagnóstico, configurações): barra de tarefas — clicar abre,
+ * - Gavetas (configurações): barra de tarefas — clicar abre,
  *   clicar de novo fecha, e é assim que se volta para o núcleo.
  */
 /**
@@ -43,8 +28,7 @@ const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
 ]
 
 /** Gavetas: uma por vez, então o botão aceso quer dizer "é esta que está aberta". */
-const GAVETAS: NavItem<GavetaId>[] = [
-  { id: 'diagnostics', label: 'Diagnóstico', Icon: PulseIcon },
+const GAVETAS: NavItem<'settings'>[] = [
   { id: 'settings', label: 'Configurações', Icon: SettingsIcon },
 ]
 
@@ -56,7 +40,7 @@ export function BottomNav() {
   const hasMessages = useChatStore((state) => state.messages.length > 0)
 
   return (
-    <nav className="no-select border-border-soft bg-surface/80 flex shrink-0 items-center justify-center gap-1 border-t px-3 py-2 backdrop-blur-sm">
+    <nav className="no-select flex shrink-0 items-center justify-center gap-1 px-3 py-2">
       <WebcamButton />
       <MicButton />
 
@@ -84,17 +68,6 @@ export function BottomNav() {
           icon={<Icon className="h-4.5 w-4.5" />}
         />
       ))}
-
-      <span className="bg-border-soft mx-1 h-4 w-px" />
-
-      {/* Encerrar de verdade: o X da barra de título só esconde na bandeja. */}
-      <NavButton
-        label="Sair do Jarvis"
-        isActive={false}
-        isDanger
-        onClick={() => void quitApp()}
-        icon={<PowerIcon className="h-4.5 w-4.5" />}
-      />
     </nav>
   )
 }
@@ -139,23 +112,13 @@ interface NavButtonProps {
   label: string
   isActive: boolean
   hasDot?: boolean
-  isDanger?: boolean
   isBusy?: boolean
   ring?: number | null
   onClick: () => void
   icon: React.ReactNode
 }
 
-function NavButton({
-  label,
-  isActive,
-  hasDot,
-  isDanger,
-  isBusy,
-  ring,
-  onClick,
-  icon,
-}: NavButtonProps) {
+function NavButton({ label, isActive, hasDot, isBusy, ring, onClick, icon }: NavButtonProps) {
   return (
     <button
       type="button"
@@ -165,10 +128,10 @@ function NavButton({
       aria-label={label}
       aria-pressed={isActive}
       className={cn(
-        'relative flex h-8 w-9 items-center justify-center rounded transition-colors',
+        'border-border-soft bg-surface/80 relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border backdrop-blur-sm transition-colors',
         'disabled:cursor-not-allowed disabled:opacity-60',
         isActive && 'hud-glow bg-accent/10 text-accent',
-        !isActive && (isDanger ? 'text-muted hover:text-danger' : 'text-muted hover:text-content'),
+        !isActive && 'text-muted hover:text-content',
       )}
     >
       {ring != null ? (

@@ -156,6 +156,8 @@ pub struct AppSettings {
     /// MJPEG que é a maior economia do preview. Os bytes continuam na orientação
     /// real — que é o que um modelo tem que receber quando a v0.2 chegar.
     pub webcam_mirror: bool,
+    /// Nome do dispositivo de entrada de áudio. Vazio usa o padrão do sistema.
+    pub mic_device_name: String,
     /// Mostrar o bloco de log em TODA mensagem, inclusive conversa que não mexeu em nada.
     ///
     /// Desligado, o log só aparece quando houve ação ou mudança de memória — uma caixa
@@ -190,6 +192,7 @@ impl Default for AppSettings {
             webcam_width: 0,
             webcam_height: 0,
             webcam_mirror: false,
+            mic_device_name: String::new(),
             log_detalhado: false,
         }
     }

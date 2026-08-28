@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub use mic::{Recorder, Recording};
+pub use mic::{list_input_devices, Recorder, Recording};
 pub use stt::transcribe;
 pub use tts::{play, ElevenLabs, TtsEngine, Voice};
 
@@ -103,7 +103,7 @@ impl VoiceState {
         self.http.clone()
     }
 
-    pub fn start_recording<F>(&self, on_level: F) -> Result<(), VoiceError>
+    pub fn start_recording<F>(&self, device_name: &str, on_level: F) -> Result<(), VoiceError>
     where
         F: Fn(f32) + Send + 'static,
     {
@@ -112,7 +112,7 @@ impl VoiceState {
             return Err(VoiceError::AlreadyRecording);
         }
 
-        *slot = Some(Recorder::start(on_level)?);
+        *slot = Some(Recorder::start(device_name, on_level)?);
         Ok(())
     }
 

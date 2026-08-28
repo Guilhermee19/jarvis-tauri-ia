@@ -11,6 +11,10 @@ export function startRecording(): Promise<void> {
   return call<void>('start_recording')
 }
 
+export function listInputDevices(): Promise<string[]> {
+  return call<string[]>('list_input_devices')
+}
+
 /** Fecha o microfone e devolve o WAV gravado em disco. */
 export function stopRecording(): Promise<Recording> {
   return call<Recording>('stop_recording')

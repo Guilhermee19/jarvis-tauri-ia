@@ -43,7 +43,7 @@ impl Recorder {
     /// `on_level` é chamado a cada [`LEVEL_INTERVAL`] com o pico do intervalo
     /// (0.0–1.0). Recebe um callback em vez de emitir evento do Tauri porque
     /// `core` não conhece o Tauri — quem traduz isso em evento é `commands`.
-    pub fn start<F>(on_level: F) -> Result<Self, VoiceError>
+    pub fn start<F>(device_name: &str, on_level: F) -> Result<Self, VoiceError>
     where
         F: Fn(f32) + Send + 'static,
     {
@@ -51,6 +51,10 @@ impl Recorder {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let peak = Arc::new(AtomicU32::new(0));
         let (ready_tx, ready_rx) = mpsc::channel();
+
+        // Cópia do nome, e não o empréstimo: a thread de captura vive mais que esta
+        // chamada, e o compilador exige `'static` de tudo que entra nela.
+        let device_name = device_name.trim().to_owned();
 
         let worker = thread::spawn({
             let stop = Arc::clone(&stop);
@@ -60,7 +64,7 @@ impl Recorder {
             move || {
                 // O stream fica vivo dentro deste escopo e morre junto com a
                 // thread — é o `drop` dele que solta o dispositivo.
-                let stream = match open_stream(samples, Arc::clone(&peak)) {
+                let stream = match open_stream(&device_name, samples, Arc::clone(&peak)) {
                     Ok(opened) => {
                         let _ = ready_tx.send(Ok(opened.sample_rate));
                         opened.stream
@@ -117,12 +121,19 @@ struct OpenStream {
 }
 
 fn open_stream(
+    device_name: &str,
     samples: Arc<Mutex<Vec<f32>>>,
     peak: Arc<AtomicU32>,
 ) -> Result<OpenStream, VoiceError> {
-    let device = cpal::default_host()
-        .default_input_device()
-        .ok_or(VoiceError::NoInputDevice)?;
+    let host = cpal::default_host();
+    let device = if device_name.trim().is_empty() {
+        host.default_input_device()
+    } else {
+        host.input_devices()
+            .map_err(classify)?
+            .find(|candidate| candidate.name().ok().as_deref() == Some(device_name))
+    }
+    .ok_or(VoiceError::NoInputDevice)?;
 
     let supported = device.default_input_config().map_err(classify)?;
     let sample_rate = supported.sample_rate();
@@ -147,6 +158,21 @@ fn open_stream(
         stream,
         sample_rate,
     })
+}
+
+/// Os microfones que o sistema oferece, pelo nome com que o `open_stream` os procura.
+///
+/// **É a mesma lista que a configuração mostra**, e é isso que garante que o nome salvo
+/// lá vá casar aqui — um seletor alimentado por outra fonte casaria por acaso.
+///
+/// Dispositivo sem nome legível é descartado em vez de virar uma linha em branco: ele não
+/// teria como ser reencontrado depois, já que o nome é a única chave que temos.
+pub fn list_input_devices() -> Result<Vec<String>, VoiceError> {
+    Ok(cpal::default_host()
+        .input_devices()
+        .map_err(classify)?
+        .filter_map(|device| device.name().ok())
+        .collect())
 }
 
 fn build_stream<T>(

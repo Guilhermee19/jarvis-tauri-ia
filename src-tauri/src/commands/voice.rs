@@ -17,12 +17,30 @@ const RECORDING_FILE: &str = "ultima-gravacao.wav";
 /// `(async)` porque abrir o dispositivo de entrada bloqueia por centenas de
 /// milissegundos, e comando síncrono roda na thread principal do Tauri.
 #[tauri::command(async)]
-pub fn start_recording(app: AppHandle, voice: State<'_, VoiceState>) -> Result<(), String> {
+pub fn start_recording(
+    app: AppHandle,
+    voice: State<'_, VoiceState>,
+    settings: State<'_, AppState>,
+) -> Result<(), String> {
+    let device_name = settings.settings().mic_device_name;
     voice
-        .start_recording(move |level| {
+        .start_recording(&device_name, move |level| {
             let _ = app.emit(MIC_LEVEL_EVENT, level);
         })
         .map_err(stringify)
+}
+
+/// Os microfones disponíveis, para a configuração poder oferecer uma escolha.
+///
+/// `(async)` porque enumerar dispositivos de áudio conversa com o driver e bloqueia por
+/// dezenas de milissegundos — mesma razão do `start_recording`.
+///
+/// O caminho vem qualificado de propósito: um `use` traria o nome do núcleo para este
+/// escopo, onde já existe uma função com o mesmo nome, e a chamada viraria recursão
+/// infinita em vez de erro de compilação.
+#[tauri::command(async)]
+pub fn list_input_devices() -> Result<Vec<String>, String> {
+    crate::core::voice::list_input_devices().map_err(stringify)
 }
 
 /// Devolve o WAV em disco em vez do áudio em si: é o formato que o Whisper quer, e

@@ -67,6 +67,8 @@ export interface AppSettings {
   webcamHeight: number
   /** Espelhar a imagem na tela (visão de selfie). Só exibição — não muda os bytes. */
   webcamMirror: boolean
+  /** Nome do dispositivo de entrada de áudio. Vazio = padrão do sistema. */
+  micDeviceName: string
   /**
    * Mostrar o bloco de log em TODA mensagem, inclusive conversa que não mexeu em nada.
    *
@@ -96,5 +98,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webcamWidth: 0,
   webcamHeight: 0,
   webcamMirror: false,
+  micDeviceName: '',
   logDetalhado: false,
 }

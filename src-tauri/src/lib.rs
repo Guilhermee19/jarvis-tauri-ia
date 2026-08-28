@@ -97,6 +97,7 @@ pub fn run() {
             commands::voice::stop_recording,
             commands::voice::is_recording,
             commands::voice::list_voices,
+            commands::voice::list_input_devices,
             commands::voice::speak_text,
             commands::voice::stop_speaking,
             commands::voice::transcribe,

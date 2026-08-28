@@ -5,7 +5,6 @@ import { HomeScreen } from '@/components/home/HomeScreen'
 import { NowPlayingWidget } from '@/components/music/NowPlayingWidget'
 import { WebcamStage } from '@/components/home/WebcamStage'
 import { CasaWindow } from '@/components/casa/CasaWindow'
-import { DiagnosticsSheet } from '@/components/sheets/DiagnosticsSheet'
 import { SettingsSheet } from '@/components/sheets/SettingsSheet'
 import { BottomNav } from '@/components/tray-window/BottomNav'
 import { HudFrame } from '@/components/tray-window/HudFrame'
@@ -43,7 +42,6 @@ export default function HomePage() {
         <HomeScreen />
         <ChatWindow />
         <CasaWindow />
-        <DiagnosticsSheet />
         <SettingsSheet />
         <NowPlayingWidget />
       </div>

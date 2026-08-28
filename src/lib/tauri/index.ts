@@ -27,6 +27,7 @@ export {
 export { JarvisEvent, onJarvisEvent, type Faixa, type UiAction } from './events'
 export {
   isRecording,
+  listInputDevices,
   listVoices,
   speakText,
   startRecording,
