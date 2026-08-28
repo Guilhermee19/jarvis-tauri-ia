@@ -163,6 +163,9 @@ pub struct Aparelho {
     /// tem o que ligar. Sem esta separação, o botão apareceria nele e alternaria um DP
     /// booleano que ninguém sabe o que faz.
     pub comutavel: bool,
+    /// Tirado da lista principal por escolha sua. Continua sendo varrido e continua
+    /// obedecendo por voz — ocultar é sobre a tela, não sobre o aparelho.
+    pub oculto: bool,
 }
 
 /// O JSON que vem dentro do anúncio. Nomes crus da Tuya, e todos opcionais porque cada
@@ -277,6 +280,7 @@ pub fn descobrir_com(chaveiro: &Chaveiro) -> Result<Varredura, CasaError> {
         aparelho.visto_em = conhecido.visto_em;
         aparelho.comutavel = controle::tem_liga_desliga(&conhecido.categoria);
         aparelho.categoria = conhecido.categoria;
+        aparelho.oculto = conhecido.oculto;
     }
 
     // E quem já foi visto um dia, mas ficou calado desta vez. Entra marcado como ausente
@@ -371,6 +375,7 @@ fn so_o_endereco(origem: &str) -> Aparelho {
         visto_em: 0,
         categoria: String::new(),
         comutavel: false,
+        oculto: false,
     }
 }
 
@@ -410,6 +415,7 @@ fn montar(json: &[u8], origem: &str, versao_padrao: &str, decifrado: bool) -> Op
         visto_em: 0,
         categoria: String::new(),
         comutavel: false,
+        oculto: false,
     })
 }
 
@@ -432,6 +438,7 @@ fn do_chaveiro(ficha: Conhecido) -> Aparelho {
         decifrado: true,
         presente: false,
         visto_em: ficha.visto_em,
+        oculto: ficha.oculto,
     }
 }
 

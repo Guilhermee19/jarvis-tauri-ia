@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 
+import { EyeOffIcon } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useCasaStore } from '@/stores'
 import type { Aparelho, Luz } from '@/types'
@@ -24,6 +25,7 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
   const ocupado = useCasaStore((state) => state.detalhando === aparelho.id)
   const detalhar = useCasaStore((state) => state.detalhar)
   const ajustarLuz = useCasaStore((state) => state.ajustarLuz)
+  const ocultar = useCasaStore((state) => state.ocultar)
 
   // Busca uma vez ao abrir. Reabrir mostra o que já se sabe na hora e não repete a
   // conexão — quem atualiza de verdade é mexer num controle, que relê no fim.
@@ -45,6 +47,17 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
       ) : null}
 
       <Tecnico aparelho={aparelho} dps={detalhe?.dps} carregando={ocupado && !detalhe} />
+
+      {/* Aqui dentro e não no cartão: ocultar é uma decisão que se toma uma vez, e um
+          botão de sumir ao lado do de ligar seria clicado por engano. */}
+      <button
+        type="button"
+        onClick={() => void ocultar(aparelho, true)}
+        className="text-muted hover:text-content flex items-center gap-1.5 self-start text-[10px]"
+      >
+        <EyeOffIcon className="h-3.5 w-3.5" />
+        Ocultar da lista
+      </button>
     </div>
   )
 }

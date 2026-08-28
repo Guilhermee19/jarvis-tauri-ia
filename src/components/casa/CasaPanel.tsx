@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from 'react'
 
-import { Button } from '@/components/ui/Button'
 import { DetalhesDoAparelho } from './DetalhesDoAparelho'
 import { IconeDoAparelho } from './IconeDoAparelho'
-import { HouseIcon } from '@/components/ui/icons'
+import { EyeIcon, EyeOffIcon, HouseIcon, PowerIcon, SyncIcon } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useCasaStore } from '@/stores'
 import type { Aparelho } from '@/types'
@@ -14,9 +13,12 @@ import type { Aparelho } from '@/types'
  * O que existe na sua casa, descoberto ouvindo a rede.
  *
  * A rede diz quem está ligado agora e em que IP. Ela **nunca** diz o nome que você deu no
- * app nem a chave de controle — essas duas vêm da nuvem da Tuya, uma vez, pelo botão de
- * importar. O painel mostra os dois estados na cara, porque uma lista de ids sem botão
- * nenhum e sem explicação parece defeito.
+ * app nem a chave de controle — essas duas vêm da nuvem da Tuya, e a importação acontece
+ * sozinha junto com a varredura.
+ *
+ * A lista se atualiza a cada 30 s enquanto o painel está aberto, então o botão de
+ * sincronizar é um ATALHO, não a única forma de achar algo. Por isso ele é um ícone e não
+ * ocupa uma linha inteira de texto.
  */
 export function CasaPanel() {
   const aparelhos = useCasaStore((state) => state.aparelhos)
@@ -43,69 +45,56 @@ export function CasaPanel() {
   // parte de um id que a varredura viu.
   const podeImportar = aparelhos.some((aparelho) => !aparelho.id.startsWith('desconhecido@'))
   const semNome = aparelhos.filter((aparelho) => aparelho.nome === null).length
-  const presentes = aparelhos.filter((aparelho) => aparelho.presente).length
+
+  const visiveis = aparelhos.filter((aparelho) => !aparelho.oculto)
+  const ocultos = aparelhos.filter((aparelho) => aparelho.oculto)
+  const presentes = visiveis.filter((aparelho) => aparelho.presente).length
 
   return (
     <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
-      <Button
-        onClick={() => void procurar()}
-        disabled={procurando}
-        // `transition-transform` e não `transition-all`: aqui só a escala se move, e
-        // listar a propriedade evita o navegador vigiar tudo que pode mudar.
-        className="active:scale-[0.96] motion-safe:transition-transform"
-      >
-        {procurando ? (
-          <>
-            {/* O ponto pulsando é o segundo canal: quem tem `prefers-reduced-motion`
-                ligado ainda lê "Ouvindo a rede" e vê o botão desabilitado. */}
-            <span className="bg-accent h-1.5 w-1.5 shrink-0 rounded-full motion-safe:animate-pulse" />
-            Ouvindo a rede…
-          </>
-        ) : (
-          'Procurar aparelhos'
-        )}
-      </Button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void procurar()}
+          disabled={procurando}
+          aria-label="Procurar aparelhos agora"
+          title="Procurar aparelhos agora"
+          className={cn(
+            'border-border-soft text-muted hover:text-content flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+            'active:scale-[0.94] disabled:opacity-60 motion-safe:transition-transform',
+          )}
+        >
+          {/* Girar é o segundo canal do "estou trabalhando"; o primeiro é o botão
+              desabilitado, que quem tem `prefers-reduced-motion` continua enxergando. */}
+          <SyncIcon className={cn('h-4 w-4', procurando && 'motion-safe:animate-spin')} />
+        </button>
 
-      {procurando ? (
-        <Nota>
-          Leva alguns segundos. Eles se anunciam sozinhos de tempos em tempos, e não dá para pedir
-          que falem antes da hora.
-        </Nota>
-      ) : null}
+        <p className="text-muted min-w-0 flex-1 text-[11px] leading-snug">
+          {procurando
+            ? 'Ouvindo a rede… leva alguns segundos, porque eles se anunciam sozinhos e não dá para pedir que falem antes da hora.'
+            : buscouEm === null
+              ? 'Procurando pela primeira vez.'
+              : `${presentes} de ${visiveis.length} ${visiveis.length === 1 ? 'aparelho respondeu' : 'aparelhos responderam'}. Atualiza sozinho a cada 30 s.`}
+        </p>
+      </div>
 
-      {/* A importação acontece sozinha junto com a varredura. Este botão é para os dois
-          casos em que ela não acontece: quando ainda falhou por configuração da Tuya, e
-          quando você pareou um aparelho de novo — o que TROCA a chave dele. */}
-      {podeImportar && semNome > 0 ? (
-        <div className="flex flex-col gap-1.5">
-          <Button
-            onClick={() => void importar()}
-            disabled={importando}
-            className="active:scale-[0.96] motion-safe:transition-transform"
-          >
-            {importando ? (
-              <>
-                <span className="bg-accent h-1.5 w-1.5 shrink-0 rounded-full motion-safe:animate-pulse" />
-                Falando com a Tuya…
-              </>
-            ) : (
-              'Importar nomes e chaves da nuvem'
-            )}
-          </Button>
-          <Nota>
-            {semNome === 1 ? 'Um aparelho está' : `${semNome} aparelhos estão`} sem nome e sem chave
-            de controle. As duas coisas vivem na nuvem da Tuya e saem de lá uma vez só — depois
-            disso o controle é local, sem internet. Precisa das credenciais em Configurações.
-          </Nota>
-        </div>
-      ) : podeImportar ? (
+      {/* A importação acontece sozinha junto com a varredura, então isto é um atalho para
+          os dois casos em que ela NÃO acontece: quando falhou por alguma configuração da
+          Tuya (e aí ela para de tentar sozinha, para não repetir o mesmo erro a cada
+          30 s), e quando você pareia um aparelho de novo — o que TROCA a chave dele sem
+          que nada na tela mude. */}
+      {podeImportar ? (
         <button
           type="button"
           onClick={() => void importar()}
           disabled={importando}
           className="text-muted hover:text-content self-start text-[11px] underline underline-offset-2 disabled:opacity-50"
         >
-          {importando ? 'Falando com a Tuya…' : 'Reimportar nomes e chaves da nuvem'}
+          {importando
+            ? 'Falando com a Tuya…'
+            : semNome > 0
+              ? `Importar nome e chave de ${semNome === 1 ? 'um aparelho' : `${semNome} aparelhos`}`
+              : 'Reimportar nomes e chaves da nuvem'}
         </button>
       ) : null}
 
@@ -125,7 +114,7 @@ export function CasaPanel() {
         <Vazio titulo="Nada procurado ainda">
           A busca escuta a rede local por alguns segundos. Não precisa de conta, senha nem internet.
         </Vazio>
-      ) : aparelhos.length === 0 ? (
+      ) : visiveis.length === 0 && ocultos.length === 0 ? (
         <Vazio titulo="Ninguém se anunciou">
           Confira se os aparelhos estão ligados na tomada e se este PC está na{' '}
           <strong className="text-content font-normal">mesma rede Wi-Fi</strong> que eles — muitos
@@ -134,21 +123,13 @@ export function CasaPanel() {
         </Vazio>
       ) : (
         <ul className="flex flex-col gap-2">
-          {aparelhos.map((aparelho) => (
+          {visiveis.map((aparelho) => (
             <Card key={aparelho.id} aparelho={aparelho} />
           ))}
         </ul>
       )}
 
-      {/* Quantos dos que estão na lista responderam agora. Sem isto, "3 aparelhos" leria
-          como "3 aparelhos ligados", e dois deles podem estar fora da tomada. */}
-      {buscouEm !== null && aparelhos.length > 0 ? (
-        <Nota>
-          {presentes} de {aparelhos.length} {aparelhos.length === 1 ? 'aparelho' : 'aparelhos'}{' '}
-          {presentes === 1 ? 'respondeu' : 'responderam'} na última varredura. A lista se atualiza
-          sozinha a cada 30 segundos enquanto este painel estiver aberto.
-        </Nota>
-      ) : null}
+      {ocultos.length > 0 ? <Ocultos aparelhos={ocultos} /> : null}
 
       {/* Só depois de uma busca, e só quando houve o que ignorar. É a diferença entre
           "ninguém falou" e "falaram e eu não entendi" — duas telas idênticas com
@@ -265,12 +246,63 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
 }
 
 /**
- * Um interruptor de dois estados, e não dois botões.
+ * A gaveta do que você tirou da lista.
  *
- * Dois botões era o certo enquanto o estado só era conhecido depois de alguém mandar um
- * comando. Agora os detalhes perguntam ao aparelho, então há uma posição de partida de
- * verdade — e `undefined` (ninguém perguntou ainda) fica como um terceiro visual, neutro,
- * em vez de mentir que está desligado.
+ * Fechada por padrão e no fim da tela: o ponto de ocultar é não ver. Mas ela **existe** e
+ * diz quantos são — um aparelho que some sem deixar rastro vira meia hora procurando por
+ * que ele não aparece mais.
+ */
+function Ocultos({ aparelhos }: { aparelhos: Aparelho[] }) {
+  const [aberto, setAberto] = useState(false)
+  const ocultar = useCasaStore((state) => state.ocultar)
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setAberto(!aberto)}
+        aria-expanded={aberto}
+        className="text-muted hover:text-content flex items-center gap-1.5 self-start text-[11px]"
+      >
+        <EyeOffIcon className="h-3.5 w-3.5" />
+        {aparelhos.length} {aparelhos.length === 1 ? 'aparelho oculto' : 'aparelhos ocultos'}
+      </button>
+
+      {aberto ? (
+        <ul className="flex flex-col gap-1">
+          {aparelhos.map((aparelho) => (
+            <li
+              key={aparelho.id}
+              className="border-border-soft flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 opacity-70"
+            >
+              <IconeDoAparelho categoria={aparelho.categoria} className="text-muted shrink-0" />
+              <span className="text-muted min-w-0 flex-1 truncate text-[11px]">
+                {aparelho.nome || aparelho.ip || aparelho.id}
+              </span>
+              <button
+                type="button"
+                onClick={() => void ocultar(aparelho, false)}
+                title="Trazer de volta para a lista"
+                aria-label={`Trazer ${aparelho.nome || aparelho.ip} de volta para a lista`}
+                className="text-muted hover:text-content shrink-0"
+              >
+                <EyeIcon className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Um botão de energia, e não um interruptor deslizante.
+ *
+ * O símbolo já diz o que ele faz sem rótulo, e é o mesmo desenho de qualquer aparelho —
+ * ninguém precisa aprender esta tela. A COR é o estado: aceso quando ligado, apagado
+ * quando desligado, e neutro quando ninguém perguntou ao aparelho ainda, que é a verdade
+ * até alguém abrir os detalhes.
  */
 function Interruptor({
   ligado,
@@ -289,19 +321,16 @@ function Interruptor({
       disabled={ocupado}
       onClick={() => onAlternar(!ligado)}
       title={ligado === undefined ? 'Estado ainda não consultado' : ligado ? 'Ligado' : 'Desligado'}
+      aria-label={ligado ? 'Desligar' : 'Ligar'}
       className={cn(
-        'relative h-4 w-7 shrink-0 rounded-full transition-colors disabled:opacity-50',
-        ligado ? 'bg-accent' : 'bg-surface-hover',
+        'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border',
+        'active:scale-[0.92] disabled:opacity-50 motion-safe:transition-transform',
+        ligado
+          ? 'border-accent/50 bg-accent/15 text-accent hud-glow'
+          : 'border-border-soft text-muted hover:text-content',
       )}
     >
-      <span
-        className={cn(
-          'absolute top-0.5 h-3 w-3 rounded-full transition-all',
-          ligado ? 'left-3.5 bg-base' : 'bg-muted left-0.5',
-          // Ninguém perguntou ainda: o botão fica no meio, que é a verdade.
-          ligado === undefined && 'left-2 opacity-60',
-        )}
-      />
+      <PowerIcon className="h-3.5 w-3.5" />
     </button>
   )
 }

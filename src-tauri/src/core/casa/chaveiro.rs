@@ -60,6 +60,12 @@ pub struct Conhecido {
     pub versao: String,
     /// Quando a rede o anunciou pela última vez, em ms. `0` = nunca.
     pub visto_em: i64,
+    /// Tirado da lista principal por escolha sua.
+    ///
+    /// **Ocultar é sobre a tela, não sobre o aparelho.** Ele continua sendo varrido,
+    /// continua com a chave guardada e continua obedecendo a "apaga a luz da cozinha" —
+    /// o que muda é ele não disputar espaço com o que você usa todo dia.
+    pub oculto: bool,
 }
 
 const ARQUIVO: &str = "casa.json";
@@ -186,6 +192,21 @@ impl Chaveiro {
         if let Err(erro) = gravar(&self.path, &mapa) {
             eprintln!("[jarvis] não consegui anotar a varredura no {ARQUIVO}: {erro}");
         }
+    }
+
+    /// Tira da lista principal, ou devolve para ela.
+    pub fn ocultar(&self, id: &str, oculto: bool) -> Result<(), StorageError> {
+        let mut mapa = lock(&self.aparelhos);
+
+        // Cria a ficha se ela não existir: dá para ocultar um aparelho que a rede
+        // anunciou e a nuvem nunca viu, e ele é justamente o mais provável de incomodar.
+        let ficha = mapa.entry(id.to_owned()).or_insert_with(|| Conhecido {
+            id: id.to_owned(),
+            ..Conhecido::default()
+        });
+        ficha.oculto = oculto;
+
+        gravar(&self.path, &mapa)
     }
 
     /// Procura um aparelho pelo nome dito em voz alta.

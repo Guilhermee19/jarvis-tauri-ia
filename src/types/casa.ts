@@ -61,6 +61,14 @@ export interface Aparelho {
    * point booleano que ninguém sabe o que faz.
    */
   comutavel: boolean
+  /**
+   * Tirado da lista principal por escolha sua.
+   *
+   * **Ocultar é sobre a tela, não sobre o aparelho.** Ele continua sendo varrido,
+   * continua com a chave guardada e continua obedecendo por voz — o que muda é ele não
+   * disputar espaço com o que você usa todo dia.
+   */
+  oculto: boolean
 }
 
 /**

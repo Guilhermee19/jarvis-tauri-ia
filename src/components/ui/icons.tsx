@@ -1,8 +1,11 @@
 /**
  * Ícones inline em SVG.
  *
- * Sem biblioteca de ícones: são poucos, e `currentColor` já resolve o tema.
- * Se a contagem passar de ~15, trocar por `lucide-react` de uma vez.
+ * Sem biblioteca de ícones: `currentColor` já resolve o tema.
+ *
+ * **A conta passou de 15**, que era o limite combinado para trocar por `lucide-react` de
+ * uma vez. Fica como dívida real: o próximo ícone que entrar aqui é o gatilho, e não mais
+ * um "quando der".
  */
 
 interface IconProps {
@@ -165,6 +168,37 @@ export function PowerIcon(props: IconProps) {
     <Svg {...props}>
       <path d="M12 3.5v7.5" />
       <path d="M6.9 6.6a7 7 0 1 0 10.2 0" />
+    </Svg>
+  )
+}
+
+export function SyncIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20 11.5a8 8 0 0 0-13.7-5.2L3.5 9" />
+      <path d="M4 12.5a8 8 0 0 0 13.7 5.2l2.8-2.7" />
+      <path d="M3.5 4.5V9H8" />
+      <path d="M20.5 19.5V15H16" />
+    </Svg>
+  )
+}
+
+export function EyeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </Svg>
+  )
+}
+
+export function EyeOffIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9.9 5.8A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.6" />
+      <path d="M6.2 7.4A17 17 0 0 0 2.5 12S6 18.5 12 18.5c1.5 0 2.8-.4 4-1" />
+      <path d="M10.1 10.1a2.8 2.8 0 0 0 3.8 3.8" />
+      <path d="M3.5 3.5l17 17" />
     </Svg>
   )
 }

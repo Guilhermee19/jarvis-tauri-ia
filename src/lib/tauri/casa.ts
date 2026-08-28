@@ -78,3 +78,8 @@ export function setLight(
 ): Promise<DetalheAparelho> {
   return call<DetalheAparelho>('set_light', { id, ip, versao, ajuste })
 }
+
+/** Tira um aparelho da lista principal, ou devolve para ela. Só a tela muda. */
+export function setDeviceHidden(id: string, oculto: boolean): Promise<void> {
+  return call<void>('set_device_hidden', { id, oculto })
+}

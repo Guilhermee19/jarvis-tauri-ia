@@ -183,3 +183,16 @@ pub fn set_light(
 
     controle::ajustar(&pedido.alvo(), &ajuste).map_err(|erro| erro.to_string())
 }
+
+/// Tira um aparelho da lista principal, ou devolve para ela.
+///
+/// Só a tela muda: ele continua sendo varrido, continua com a chave guardada e continua
+/// obedecendo por voz. É sobre não disputar espaço com o que você usa todo dia.
+#[tauri::command]
+pub fn set_device_hidden(
+    id: String,
+    oculto: bool,
+    chaveiro: State<'_, Chaveiro>,
+) -> Result<(), String> {
+    chaveiro.ocultar(&id, oculto).map_err(|erro| erro.to_string())
+}

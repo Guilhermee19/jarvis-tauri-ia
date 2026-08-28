@@ -4,6 +4,7 @@ export {
   discoverDevices,
   importTuyaDevices,
   knownDevices,
+  setDeviceHidden,
   setDevicePower,
   setLight,
 } from './casa'

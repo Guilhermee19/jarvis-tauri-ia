@@ -4,6 +4,7 @@ import {
   discoverDevices,
   importTuyaDevices,
   knownDevices,
+  setDeviceHidden,
   setDevicePower,
   setLight,
 } from '@/lib/tauri'
@@ -78,6 +79,8 @@ interface CasaState {
   detalhando: string | null
   detalhar: (aparelho: Aparelho) => Promise<void>
   ajustarLuz: (aparelho: Aparelho, ajuste: AjusteLuz) => Promise<void>
+  /** Tira da lista principal, ou devolve para ela. Só a tela muda. */
+  ocultar: (aparelho: Aparelho, oculto: boolean) => Promise<void>
   /** Mostra na hora o que já se conhece, sem esperar os 10 s da varredura. */
   carregar: () => Promise<void>
   /**
@@ -124,6 +127,22 @@ export const useCasaStore = create<CasaState>((set, get) => ({
   comandando: null,
   detalhes: {},
   detalhando: null,
+
+  ocultar: async (aparelho, oculto) => {
+    // A lista muda ANTES do disco: esconder um cartão é um gesto de interface, e esperar
+    // uma gravação para ele sumir faria o clique parecer que não pegou.
+    set({
+      aparelhos: get().aparelhos.map((atual) =>
+        atual.id === aparelho.id ? { ...atual, oculto } : atual,
+      ),
+    })
+
+    try {
+      await setDeviceHidden(aparelho.id, oculto)
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+    }
+  },
 
   detalhar: async (aparelho) => {
     if (get().detalhando !== null) return

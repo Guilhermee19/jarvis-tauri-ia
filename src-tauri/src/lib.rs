@@ -106,6 +106,7 @@ pub fn run() {
             commands::casa::set_device_power,
             commands::casa::device_state,
             commands::casa::set_light,
+            commands::casa::set_device_hidden,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,
