@@ -3,12 +3,14 @@ import {
   deviceState,
   discoverDevices,
   importTuyaDevices,
+  irKeys,
   knownDevices,
+  sendIrKey,
   setDeviceHidden,
   setDevicePower,
   setLight,
 } from '@/lib/tauri'
-import type { AjusteLuz, Aparelho, DetalheAparelho } from '@/types'
+import type { AjusteLuz, Aparelho, Controle, DetalheAparelho, Tecla } from '@/types'
 import { useSettingsStore } from './settingsStore'
 
 /** De quanto em quanto tempo a ronda repete, enquanto o painel estiver aberto. */
@@ -81,6 +83,15 @@ interface CasaState {
   ajustarLuz: (aparelho: Aparelho, ajuste: AjusteLuz) => Promise<void>
   /** Tira da lista principal, ou devolve para ela. Só a tela muda. */
   ocultar: (aparelho: Aparelho, oculto: boolean) => Promise<void>
+  /**
+   * As teclas de cada controle de infravermelho, por id.
+   *
+   * Buscadas na nuvem ao abrir os detalhes e guardadas depois disso: elas não mudam
+   * sozinhas, e uma ida à internet por abertura de cartão seria desperdício.
+   */
+  controles: Record<string, Controle>
+  carregarTeclas: (aparelho: Aparelho) => Promise<void>
+  apertarTecla: (aparelho: Aparelho, tecla: Tecla) => Promise<void>
   /** Mostra na hora o que já se conhece, sem esperar os 10 s da varredura. */
   carregar: () => Promise<void>
   /**
@@ -127,6 +138,38 @@ export const useCasaStore = create<CasaState>((set, get) => ({
   comandando: null,
   detalhes: {},
   detalhando: null,
+  controles: {},
+
+  carregarTeclas: async (aparelho) => {
+    if (get().controles[aparelho.id] !== undefined) return
+    set({ detalhando: aparelho.id, erro: null })
+
+    try {
+      const controle = await irKeys(aparelho.emissor, aparelho.id)
+      set({ controles: { ...get().controles, [aparelho.id]: controle } })
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+    } finally {
+      set({ detalhando: null })
+    }
+  },
+
+  apertarTecla: async (aparelho, tecla) => {
+    const controle = get().controles[aparelho.id]
+    if (controle === undefined || get().detalhando !== null) return
+
+    set({ detalhando: aparelho.id, erro: null })
+
+    try {
+      await sendIrKey(aparelho.emissor, aparelho.id, controle.categoria, tecla)
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+    } finally {
+      // Sem releitura: o emissor não sabe se a TV obedeceu — ele pisca um LED e pronto.
+      // Fingir uma confirmação aqui seria inventar informação que não existe.
+      set({ detalhando: null })
+    }
+  },
 
   ocultar: async (aparelho, oculto) => {
     // A lista muda ANTES do disco: esconder um cartão é um gesto de interface, e esperar

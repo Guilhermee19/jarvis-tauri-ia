@@ -69,6 +69,36 @@ export interface Aparelho {
    * disputar espaço com o que você usa todo dia.
    */
   oculto: boolean
+  /**
+   * O emissor de infravermelho que emite por este controle, quando ele é um.
+   *
+   * Vazio em aparelho de rede. Preenchido, quer dizer que este cartão é uma TV ou um
+   * ar-condicionado: **sem IP, sem protocolo e sem estado**, comandado por teclas em vez
+   * de botão. Eles nunca aparecem na varredura porque não têm Wi-Fi — existem como uma
+   * lista de códigos dentro do emissor.
+   */
+  emissor: string
+}
+
+/** Uma tecla de controle remoto. Espelha `Tecla` de `core/casa/nuvem.rs`. */
+export interface Tecla {
+  /** O código que vai no comando ("Power", "Channel+"). */
+  key: string
+  keyId: number
+  /** O rótulo legível ("Channel Up"). Costuma ser melhor que o código. */
+  keyName: string
+}
+
+/** Um controle e o que dá para apertar nele. */
+export interface Controle {
+  /**
+   * A categoria do controle na biblioteca da Tuya.
+   *
+   * Anda junto das teclas porque o envio **exige as duas**: sem ela a Tuya recusa com um
+   * `categoryId` seco, que não diz que ela faltou.
+   */
+  categoria: number
+  teclas: Tecla[]
 }
 
 /**

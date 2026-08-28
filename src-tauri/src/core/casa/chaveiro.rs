@@ -60,6 +60,13 @@ pub struct Conhecido {
     pub versao: String,
     /// Quando a rede o anunciou pela última vez, em ms. `0` = nunca.
     pub visto_em: i64,
+    /// O emissor de infravermelho que emite por este controle.
+    ///
+    /// Vazio em tudo que é aparelho de rede. A TV e o ar-condicionado não têm Wi-Fi: eles
+    /// existem como uma lista de códigos dentro de um emissor, e sem saber QUAL emissor
+    /// não há para quem mandar o comando.
+    #[serde(default)]
+    pub emissor: String,
     /// Tirado da lista principal por escolha sua.
     ///
     /// **Ocultar é sobre a tela, não sobre o aparelho.** Ele continua sendo varrido,
@@ -130,11 +137,15 @@ impl Chaveiro {
                 ..Conhecido::default()
             });
 
+            // Campo novo aqui é campo esquecido: quem acrescentar um em `Conhecido` que
+            // venha da nuvem precisa copiá-lo NESTA lista, senão ele é calculado na
+            // importação e descartado na gravação — sem erro nenhum, só sem efeito.
             ficha.nome = novo.nome;
             ficha.local_key = novo.local_key;
             ficha.produto = novo.produto;
             ficha.categoria = novo.categoria;
             ficha.online = novo.online;
+            ficha.emissor = novo.emissor;
         }
 
         gravar(&self.path, &mapa)?;
@@ -378,6 +389,35 @@ mod tests {
         assert_eq!(ficha.ultimo_ip, "192.168.3.12", "e não encosta no endereço");
         assert_eq!(ficha.versao, "3.3");
         assert!(ficha.visto_em > 0);
+    }
+
+    /// Cada campo que vem da nuvem precisa ser copiado à mão no `guardar`, e esquecer um
+    /// não dá erro: ele é calculado na importação e sumido na gravação. Foi o que
+    /// aconteceu com o `emissor`, e este teste é para não acontecer de novo.
+    #[test]
+    fn guardar_copia_todos_os_campos_da_nuvem() {
+        let chaveiro = Chaveiro::new(&pasta("campos"));
+
+        chaveiro
+            .guardar(vec![Conhecido {
+                id: "tv".to_owned(),
+                nome: "TV".to_owned(),
+                local_key: "chave".to_owned(),
+                produto: "modelo".to_owned(),
+                categoria: "infrared_tv".to_owned(),
+                online: true,
+                emissor: "emissor-pai".to_owned(),
+                ..Conhecido::default()
+            }])
+            .expect("grava");
+
+        let ficha = chaveiro.de("tv").expect("achou");
+        assert_eq!(ficha.nome, "TV");
+        assert_eq!(ficha.local_key, "chave");
+        assert_eq!(ficha.produto, "modelo");
+        assert_eq!(ficha.categoria, "infrared_tv");
+        assert!(ficha.online);
+        assert_eq!(ficha.emissor, "emissor-pai", "o elo com o emissor tem que sobreviver");
     }
 
     /// Aparelho que a rede anuncia mas que a nuvem nunca viu tem ficha do mesmo jeito —

@@ -5,7 +5,7 @@ import { useEffect } from 'react'
 import { EyeOffIcon } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useCasaStore } from '@/stores'
-import type { Aparelho, Luz } from '@/types'
+import type { Aparelho, Luz, Tecla } from '@/types'
 
 /**
  * O que fica ESCONDIDO atrás do ícone de informação, num cartão que por fora só mostra
@@ -26,11 +26,20 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
   const detalhar = useCasaStore((state) => state.detalhar)
   const ajustarLuz = useCasaStore((state) => state.ajustarLuz)
   const ocultar = useCasaStore((state) => state.ocultar)
+  const controle = useCasaStore((state) => state.controles[aparelho.id])
+  const carregarTeclas = useCasaStore((state) => state.carregarTeclas)
+  const apertarTecla = useCasaStore((state) => state.apertarTecla)
 
   // Busca uma vez ao abrir. Reabrir mostra o que já se sabe na hora e não repete a
   // conexão — quem atualiza de verdade é mexer num controle, que relê no fim.
+  //
+  // **Só quem tem protocolo é perguntado.** Sem versão, o aparelho nunca se anunciou na
+  // rede, e conectar nele daria o erro "não sei falar o protocolo ''" — que culpa o
+  // protocolo por uma coisa que é a ausência de rede. Controle de infravermelho é o caso
+  // normal disso: quem responde por ele é a nuvem, que sabe quais teclas ele tem.
   useEffect(() => {
-    if (detalhe === undefined) void detalhar(aparelho)
+    if (aparelho.emissor) void carregarTeclas(aparelho)
+    else if (detalhe === undefined && aparelho.versao) void detalhar(aparelho)
     // O aparelho muda de identidade só pelo id; as outras propriedades dele mudam a cada
     // varredura e reexecutariam isto sem necessidade.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,6 +47,35 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
 
   return (
     <div className="border-border-soft mt-2.5 flex flex-col gap-3 border-t pt-2.5 pl-4">
+      {aparelho.emissor ? (
+        <Teclado
+          teclas={controle?.teclas}
+          ocupado={ocupado}
+          onApertar={(tecla) => void apertarTecla(aparelho, tecla)}
+        />
+      ) : null}
+
+      {/* Controle sem emissor: a nuvem sabe as teclas dele, mas ninguém perguntou de
+          QUEM ele sai — e essa ligação só é feita na importação. */}
+      {!aparelho.emissor && ehControleRemoto(aparelho) ? (
+        <p className="text-muted text-[10px] leading-relaxed">
+          As teclas deste controle existem, mas falta saber por qual emissor ele sai — e essa
+          ligação é feita na importação. Clique em{' '}
+          <strong className="text-content font-normal">Reimportar nomes e chaves da nuvem</strong>,
+          no topo do painel, e ele ganha os botões.
+        </p>
+      ) : null}
+
+      {/* O emissor em si não controla nada: quem tem tecla são os controles que moram
+          dentro dele, e cada um deles é um cartão próprio nesta mesma lista. */}
+      {ehEmissor(aparelho) ? (
+        <p className="text-muted text-[10px] leading-relaxed">
+          Este é o emissor: ele aponta o infravermelho, e não tem botão próprio. Quem tem as teclas
+          são os controles configurados nele — <strong className="text-content font-normal">TV</strong>{' '}
+          e afins aparecem como cartões próprios nesta lista, cada um com os botões dele.
+        </p>
+      ) : null}
+
       {detalhe?.luz && aparelho.temChave ? (
         <ControlesDaLuz
           luz={detalhe.luz}
@@ -60,6 +98,74 @@ export function DetalhesDoAparelho({ aparelho }: { aparelho: Aparelho }) {
       </button>
     </div>
   )
+}
+
+/**
+ * As teclas de um controle de infravermelho.
+ *
+ * **Sem estado, e é assim mesmo.** O emissor pisca um LED e não tem como saber se a TV
+ * obedeceu — não há retorno, não há confirmação, e desenhar um "ligado" aqui seria
+ * inventar informação. É o mesmo contrato do controle de plástico na mesa.
+ *
+ * A ordem é a que a Tuya devolve, que é a do controle original: `Power` na frente, e
+ * depois volume, canal e navegação. Reordenar por conta própria só faria procurar.
+ */
+function Teclado({
+  teclas,
+  ocupado,
+  onApertar,
+}: {
+  teclas: Tecla[] | undefined
+  ocupado: boolean
+  onApertar: (tecla: Tecla) => void
+}) {
+  if (teclas === undefined) {
+    return <p className="text-muted text-[10px]">perguntando à nuvem quais teclas ele tem…</p>
+  }
+
+  if (teclas.length === 0) {
+    return (
+      <p className="text-muted text-[10px] leading-relaxed">
+        Este controle não tem tecla nenhuma cadastrada. Configure-o no app Smart Life e importe de
+        novo.
+      </p>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {teclas.map((tecla) => (
+        <button
+          key={`${tecla.keyId}-${tecla.key}`}
+          type="button"
+          disabled={ocupado}
+          onClick={() => onApertar(tecla)}
+          title={tecla.key}
+          className={cn(
+            'border-border-soft bg-surface text-muted hover:text-content rounded border px-2 py-1 text-[10px]',
+            'active:scale-[0.94] disabled:opacity-50 motion-safe:transition-transform',
+          )}
+        >
+          {tecla.keyName || tecla.key}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Um controle remoto virtual: TV, ar-condicionado, ventilador de teto.
+ *
+ * A categoria basta, e é o que salva quando a ligação com o emissor ainda não foi feita:
+ * sem isso o cartão tentaria conectar na rede num aparelho que não tem endereço.
+ */
+function ehControleRemoto(aparelho: Aparelho): boolean {
+  return aparelho.categoria.startsWith('infrared')
+}
+
+/** O aparelho de Wi-Fi que emite o infravermelho — `qt` é o universal, `wnykq` o de ar. */
+function ehEmissor(aparelho: Aparelho): boolean {
+  return aparelho.categoria === 'qt' || aparelho.categoria === 'wnykq'
 }
 
 function ControlesDaLuz({
@@ -193,8 +299,16 @@ function Tecnico({
 }) {
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
-      <Linha rotulo="Endereço">{aparelho.ip || '—'}</Linha>
-      <Linha rotulo="Protocolo">v{aparelho.versao}</Linha>
+      {/* Controle de infravermelho não tem endereço nem protocolo: ele não está na
+          rede. Mostrar "—" em dois campos seria pior que mostrar de quem ele sai. */}
+      {aparelho.emissor || ehControleRemoto(aparelho) ? (
+        <Linha rotulo="Emite por">{aparelho.emissor || 'ainda não ligado a um emissor'}</Linha>
+      ) : (
+        <>
+          <Linha rotulo="Endereço">{aparelho.ip || '—'}</Linha>
+          <Linha rotulo="Protocolo">v{aparelho.versao}</Linha>
+        </>
+      )}
       <Linha rotulo="Identificador">{aparelho.id}</Linha>
       {aparelho.categoria ? <Linha rotulo="Categoria">{aparelho.categoria}</Linha> : null}
       {aparelho.produto ? <Linha rotulo="Modelo">{aparelho.produto}</Linha> : null}
@@ -208,9 +322,11 @@ function Tecnico({
       </Linha>
       {/* Os data points crus: é o que revela um aparelho que faz algo que este app ainda
           não modela, e a primeira coisa a olhar quando um comando não pega. */}
-      <Linha rotulo="Data points">
-        {carregando ? 'perguntando ao aparelho…' : dps ? JSON.stringify(dps) : '—'}
-      </Linha>
+      {aparelho.emissor || ehControleRemoto(aparelho) ? null : (
+        <Linha rotulo="Data points">
+          {carregando ? 'perguntando ao aparelho…' : dps ? JSON.stringify(dps) : '—'}
+        </Linha>
+      )}
     </dl>
   )
 }

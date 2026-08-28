@@ -3,6 +3,7 @@ use tauri::State;
 
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::casa::controle::{self, Ajuste, Alvo, Detalhe, Estado};
+use crate::core::casa::nuvem::{Controle, Tecla};
 use crate::core::casa::{conhecidos, descobrir_com, nuvem, Aparelho, CasaError, Varredura};
 use crate::state::AppState;
 
@@ -195,4 +196,63 @@ pub fn set_device_hidden(
     chaveiro: State<'_, Chaveiro>,
 ) -> Result<(), String> {
     chaveiro.ocultar(&id, oculto).map_err(|erro| erro.to_string())
+}
+
+/// As teclas de um controle de infravermelho — as da TV, as do ar-condicionado.
+///
+/// Vem da nuvem porque é lá que elas moram: o emissor guarda zero códigos, ele só emite o
+/// que mandarem. É a mesma razão de a TV não aparecer na varredura da rede.
+#[tauri::command]
+pub async fn ir_keys(
+    emissor: String,
+    remoto: String,
+    state: State<'_, AppState>,
+) -> Result<Controle, String> {
+    let settings = state.settings();
+    let (client_id, client_secret) = settings
+        .tuya()
+        .ok_or_else(|| nuvem::NuvemError::SemCredencial.to_string())?;
+
+    nuvem::teclas(
+        &state.http(),
+        client_id,
+        client_secret,
+        &settings.tuya_regiao,
+        &emissor,
+        &remoto,
+    )
+    .await
+    .map_err(|erro| erro.to_string())
+}
+
+/// Aperta uma tecla do controle.
+///
+/// **É o único comando do app que precisa de internet.** O código infravermelho de
+/// "ligar a TV" mora na biblioteca da Tuya, não no emissor — ele não tem o que mandar até
+/// alguém contar qual é o código.
+#[tauri::command]
+pub async fn send_ir_key(
+    emissor: String,
+    remoto: String,
+    categoria: i64,
+    tecla: Tecla,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let settings = state.settings();
+    let (client_id, client_secret) = settings
+        .tuya()
+        .ok_or_else(|| nuvem::NuvemError::SemCredencial.to_string())?;
+
+    nuvem::apertar(
+        &state.http(),
+        client_id,
+        client_secret,
+        &settings.tuya_regiao,
+        &emissor,
+        &remoto,
+        categoria,
+        &tecla,
+    )
+    .await
+    .map_err(|erro| erro.to_string())
 }

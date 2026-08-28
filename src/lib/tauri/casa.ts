@@ -1,9 +1,11 @@
 import type {
   AjusteLuz,
   Aparelho,
+  Controle,
   DetalheAparelho,
   EstadoAparelho,
   Importado,
+  Tecla,
   Varredura,
 } from '@/types'
 import { call } from './client'
@@ -82,4 +84,30 @@ export function setLight(
 /** Tira um aparelho da lista principal, ou devolve para ela. Só a tela muda. */
 export function setDeviceHidden(id: string, oculto: boolean): Promise<void> {
   return call<void>('set_device_hidden', { id, oculto })
+}
+
+/**
+ * As teclas de um controle de infravermelho — as da TV, as do ar-condicionado.
+ *
+ * Vem da nuvem porque é lá que elas moram: o emissor guarda zero códigos, ele só emite o
+ * que mandarem. É a mesma razão de a TV não aparecer na varredura da rede.
+ */
+export function irKeys(emissor: string, remoto: string): Promise<Controle> {
+  return call<Controle>('ir_keys', { emissor, remoto })
+}
+
+/**
+ * Aperta uma tecla do controle.
+ *
+ * **É o único comando do app que precisa de internet.** O código infravermelho de "ligar
+ * a TV" mora na biblioteca da Tuya, não no emissor — ele não tem o que mandar até alguém
+ * contar qual é o código.
+ */
+export function sendIrKey(
+  emissor: string,
+  remoto: string,
+  categoria: number,
+  tecla: Tecla,
+): Promise<void> {
+  return call<void>('send_ir_key', { emissor, remoto, categoria, tecla })
 }

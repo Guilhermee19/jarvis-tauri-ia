@@ -1,10 +1,12 @@
 export type {
   AjusteLuz,
   Aparelho,
+  Controle,
   DetalheAparelho,
   EstadoAparelho,
   Importado,
   Luz,
+  Tecla,
   Varredura,
 } from './casa'
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'

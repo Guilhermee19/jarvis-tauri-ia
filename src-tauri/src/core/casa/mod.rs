@@ -166,6 +166,11 @@ pub struct Aparelho {
     /// Tirado da lista principal por escolha sua. Continua sendo varrido e continua
     /// obedecendo por voz — ocultar é sobre a tela, não sobre o aparelho.
     pub oculto: bool,
+    /// O emissor de infravermelho que emite por este controle, quando ele é um.
+    ///
+    /// Vazio em aparelho de rede. Preenchido, quer dizer que este cartão é uma TV ou um
+    /// ar-condicionado: sem IP, sem protocolo, e comandado por teclas em vez de botão.
+    pub emissor: String,
 }
 
 /// O JSON que vem dentro do anúncio. Nomes crus da Tuya, e todos opcionais porque cada
@@ -281,6 +286,7 @@ pub fn descobrir_com(chaveiro: &Chaveiro) -> Result<Varredura, CasaError> {
         aparelho.comutavel = controle::tem_liga_desliga(&conhecido.categoria);
         aparelho.categoria = conhecido.categoria;
         aparelho.oculto = conhecido.oculto;
+        aparelho.emissor = conhecido.emissor;
     }
 
     // E quem já foi visto um dia, mas ficou calado desta vez. Entra marcado como ausente
@@ -376,6 +382,7 @@ fn so_o_endereco(origem: &str) -> Aparelho {
         categoria: String::new(),
         comutavel: false,
         oculto: false,
+        emissor: String::new(),
     }
 }
 
@@ -416,6 +423,7 @@ fn montar(json: &[u8], origem: &str, versao_padrao: &str, decifrado: bool) -> Op
         categoria: String::new(),
         comutavel: false,
         oculto: false,
+        emissor: String::new(),
     })
 }
 
@@ -439,6 +447,7 @@ fn do_chaveiro(ficha: Conhecido) -> Aparelho {
         presente: false,
         visto_em: ficha.visto_em,
         oculto: ficha.oculto,
+        emissor: ficha.emissor,
     }
 }
 

@@ -20,8 +20,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
-use sha2::Sha256;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::core::casa::chaveiro::Conhecido;
 
@@ -134,8 +134,9 @@ pub async fn importar(
 
     let associados = match associados {
         Ok(lista) if lista.is_empty() => return Err(NuvemError::ListaVazia),
+        // Veio com chave: é a lista final, e o caminho da semente nem precisa rodar.
         Ok(lista) if lista.iter().any(|cru| !cru.local_key.trim().is_empty()) => {
-            return Ok(lista.into_iter().map(conhecido).collect())
+            return terminar(http, client_id, client_secret, regiao, lista).await
         }
         Ok(lista) => lista,
         Err(erro) => {
@@ -179,7 +180,63 @@ pub async fn importar(
         return Err(NuvemError::ListaVazia);
     }
 
-    Ok(crus.into_iter().map(conhecido).collect())
+    terminar(http, client_id, client_secret, regiao, crus).await
+}
+
+/// O fim comum dos dois caminhos do [`importar`].
+///
+/// Existe porque **cada saída da função é uma chance de esquecer um passo**: a ligação
+/// com os emissores morava só no caminho da semente, e o caminho bom — o que funciona na
+/// maioria dos projetos — devolvia antes de chegar nela. A TV ficava sem emissor sem
+/// erro nenhum, e o sintoma era um cartão sem botões.
+async fn terminar(
+    http: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    regiao: &str,
+    crus: Vec<Cru>,
+) -> Result<Vec<Conhecido>, NuvemError> {
+    let mut aparelhos: Vec<Conhecido> = crus.into_iter().map(conhecido).collect();
+    ligar_aos_emissores(http, client_id, client_secret, regiao, &mut aparelhos).await;
+
+    Ok(aparelhos)
+}
+
+/// As categorias de emissor de infravermelho.
+///
+/// `qt` é o controle universal e `wnykq` o de ar-condicionado. É por eles que se pergunta
+/// quais controles existem — a lista de aparelhos não diz de quem cada TV é filha.
+const EMISSORES: [&str; 2] = ["qt", "wnykq"];
+
+/// Anota, em cada controle, de qual emissor ele sai.
+///
+/// Best-effort: se a consulta falhar, o controle fica sem emissor e o painel mostra ele
+/// sem botões, o que é melhor que a importação inteira falhar por causa de uma TV.
+async fn ligar_aos_emissores(
+    http: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    regiao: &str,
+    aparelhos: &mut [Conhecido],
+) {
+    let emissores: Vec<String> = aparelhos
+        .iter()
+        .filter(|aparelho| EMISSORES.contains(&aparelho.categoria.as_str()))
+        .map(|aparelho| aparelho.id.clone())
+        .collect();
+
+    for emissor in emissores {
+        let Ok(lista) = remotos(http, client_id, client_secret, regiao, &emissor).await else {
+            eprintln!("[jarvis] não consegui listar os controles do emissor {emissor}");
+            continue;
+        };
+
+        for remoto in lista {
+            if let Some(alvo) = aparelhos.iter_mut().find(|atual| atual.id == remoto.id) {
+                alvo.emissor = emissor.clone();
+            }
+        }
+    }
 }
 
 /// Um aparelho como a Tuya o descreve. Nomes crus dela, e todos com `default` porque o
@@ -253,6 +310,174 @@ async fn listar(
     })
 }
 
+/// Um controle remoto configurado dentro de um emissor de infravermelho.
+///
+/// **Não é um aparelho de rede.** A TV e o ar-condicionado não têm Wi-Fi nem endereço:
+/// eles existem como uma lista de códigos na biblioteca da Tuya, e quem os emite é o
+/// emissor. É por isso que eles nunca aparecem na varredura.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Remoto {
+    #[serde(rename = "remote_id")]
+    pub id: String,
+    #[serde(rename = "remote_name")]
+    pub nome: String,
+    #[serde(rename = "brand_name", default)]
+    pub marca: String,
+    #[serde(rename = "category_id", default)]
+    pub categoria: i64,
+}
+
+/// Uma tecla daquele controle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tecla {
+    /// O código que vai no comando ("Power", "Channel+").
+    pub key: String,
+    #[serde(default)]
+    pub key_id: i64,
+    /// O rótulo para a tela ("Channel Up"). Costuma ser mais legível que o código.
+    #[serde(default)]
+    pub key_name: String,
+}
+
+/// Os controles configurados dentro de um emissor.
+pub async fn remotos(
+    http: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    regiao: &str,
+    emissor: &str,
+) -> Result<Vec<Remoto>, NuvemError> {
+    let base = base(regiao);
+    let token = autenticar(http, &base, client_id, client_secret).await?;
+
+    chamar(
+        http,
+        &base,
+        client_id,
+        client_secret,
+        Some(&token),
+        &format!("/v2.0/infrareds/{emissor}/remotes"),
+    )
+    .await
+}
+
+/// Um controle e o que dá para apertar nele.
+///
+/// A `categoria` anda junto das teclas porque o comando de envio **exige as duas**: sem
+/// ela a Tuya recusa com um `categoryId` seco, e descobri-la exigiria uma consulta a mais
+/// que esta mesma resposta já traz de graça.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Controle {
+    pub categoria: i64,
+    pub teclas: Vec<Tecla>,
+}
+
+/// As teclas de um controle.
+pub async fn teclas(
+    http: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    regiao: &str,
+    emissor: &str,
+    remoto: &str,
+) -> Result<Controle, NuvemError> {
+    #[derive(Deserialize)]
+    struct Lista {
+        #[serde(default)]
+        category_id: i64,
+        #[serde(default)]
+        key_list: Vec<Tecla>,
+    }
+
+    let base = base(regiao);
+    let token = autenticar(http, &base, client_id, client_secret).await?;
+
+    let lista: Lista = chamar(
+        http,
+        &base,
+        client_id,
+        client_secret,
+        Some(&token),
+        &format!("/v2.0/infrareds/{emissor}/remotes/{remoto}/keys"),
+    )
+    .await?;
+
+    Ok(Controle {
+        categoria: lista.category_id,
+        teclas: lista.key_list,
+    })
+}
+
+/// Aperta uma tecla.
+///
+/// **Este é o único comando do app que precisa de internet**, e não por preguiça: o
+/// código infravermelho de "ligar a TV" mora na biblioteca da Tuya, não no emissor. Ele
+/// não tem o que mandar até alguém contar qual é o código — e quem sabe é a nuvem.
+#[allow(clippy::too_many_arguments)]
+pub async fn apertar(
+    http: &reqwest::Client,
+    client_id: &str,
+    client_secret: &str,
+    regiao: &str,
+    emissor: &str,
+    remoto: &str,
+    categoria: i64,
+    tecla: &Tecla,
+) -> Result<(), NuvemError> {
+    let base = base(regiao);
+    let token = autenticar(http, &base, client_id, client_secret).await?;
+
+    // Os três campos são obrigatórios. Faltando a categoria, a resposta é um
+    // `categoryId` seco — que não diz que ela FALTOU, e sim que há algo errado com ela.
+    let corpo = serde_json::json!({
+        "category_id": categoria,
+        "key": tecla.key,
+        "key_id": tecla.key_id,
+    })
+    .to_string();
+
+    // A resposta é um booleano solto; o que interessa é o envelope não ter recusado.
+    let _: serde_json::Value = chamar_com(
+        http,
+        &base,
+        client_id,
+        client_secret,
+        Some(&token),
+        &format!("/v2.0/infrareds/{emissor}/remotes/{remoto}/command"),
+        Some(&corpo),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// O token de acesso, que toda chamada de negócio precisa.
+async fn autenticar(
+    http: &reqwest::Client,
+    base: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<String, NuvemError> {
+    #[derive(Deserialize)]
+    struct Token {
+        access_token: String,
+    }
+
+    let token: Token = chamar(
+        http,
+        base,
+        client_id,
+        client_secret,
+        None,
+        "/v1.0/token?grant_type=1",
+    )
+    .await?;
+
+    Ok(token.access_token)
+}
+
 /// O endereço do *data center* onde o projeto vive.
 ///
 /// Região desconhecida cai no `us` em vez de recusar: o palpite mais provável é melhor
@@ -282,6 +507,25 @@ async fn chamar<T: DeserializeOwned>(
     token: Option<&str>,
     caminho: &str,
 ) -> Result<T, NuvemError> {
+    chamar_com(http, base, client_id, client_secret, token, caminho, None).await
+}
+
+/// O mesmo, com corpo — o que transforma a chamada num POST.
+///
+/// O corpo entra na ASSINATURA pelo hash, e não pelo texto: mandar um JSON com as chaves
+/// em outra ordem daria uma assinatura diferente da que a Tuya calcula, e o erro seria um
+/// "sign invalid" idêntico ao de credencial errada. Por isso o texto é serializado uma
+/// vez só e o mesmo `String` vai para o hash e para o corpo.
+#[allow(clippy::too_many_arguments)]
+async fn chamar_com<T: DeserializeOwned>(
+    http: &reqwest::Client,
+    base: &str,
+    client_id: &str,
+    client_secret: &str,
+    token: Option<&str>,
+    caminho: &str,
+    corpo: Option<&str>,
+) -> Result<T, NuvemError> {
     #[derive(Deserialize)]
     struct Envelope<T> {
         #[serde(default)]
@@ -294,17 +538,28 @@ async fn chamar<T: DeserializeOwned>(
     }
 
     let t = agora_ms().to_string();
+    let metodo = if corpo.is_some() { "POST" } else { "GET" };
+    let hash = match corpo {
+        Some(corpo) => sha256_hex(corpo),
+        None => CORPO_VAZIO.to_owned(),
+    };
     let sign = assinar(
         client_secret,
         &format!(
-            "{client_id}{}{t}GET\n{CORPO_VAZIO}\n\n{caminho}",
+            "{client_id}{}{t}{metodo}\n{hash}\n\n{caminho}",
             token.unwrap_or_default()
         ),
     );
 
-    let mut pedido = http
-        .get(format!("{base}{caminho}"))
-        .timeout(TIMEOUT)
+    let url = format!("{base}{caminho}");
+    let mut pedido = match corpo {
+        Some(corpo) => http
+            .post(url)
+            .header("Content-Type", "application/json")
+            .body(corpo.to_owned()),
+        None => http.get(url),
+    }
+    .timeout(TIMEOUT)
         .header("client_id", client_id)
         .header("sign", sign)
         .header("t", &t)
@@ -384,6 +639,13 @@ fn dica(codigo: i64, caminho: &str) -> String {
     .to_owned()
 }
 
+fn sha256_hex(texto: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(texto.as_bytes());
+
+    hex(&hasher.finalize())
+}
+
 fn agora_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -413,7 +675,6 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::Digest;
 
     /// Vetor fixo: se a montagem da mensagem assinada mudar de forma, isto quebra. É o
     /// único jeito de testar a assinatura sem uma conta da Tuya — e errar aqui não dá
@@ -461,6 +722,48 @@ mod tests {
         hasher.update(b"");
 
         assert_eq!(hex(&hasher.finalize()), CORPO_VAZIO);
+    }
+
+    /// Roda a importação contra uma conta de verdade e mostra o que ela produziu.
+    ///
+    /// Fora do `cargo test` comum porque depende de credencial e de internet. É a
+    /// ferramenta de quando o painel mostra algo que os testes de mesa não explicam —
+    /// foi ela que revelou que a ligação com os emissores estava sendo pulada por um
+    /// `return` no meio da função.
+    ///
+    /// ```text
+    /// TUYA_ID=… TUYA_SEGREDO=… TUYA_REGIAO=us TUYA_SEMENTE=<id de um aparelho>     ///   cargo test --lib -- --ignored --nocapture importacao_real
+    /// ```
+    #[test]
+    #[ignore]
+    fn importacao_real() {
+        let ler = |chave: &str| std::env::var(chave).unwrap_or_default();
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        bloco.block_on(async {
+            match importar(
+                &reqwest::Client::new(),
+                &ler("TUYA_ID"),
+                &ler("TUYA_SEGREDO"),
+                &ler("TUYA_REGIAO"),
+                &ler("TUYA_SEMENTE"),
+            )
+            .await
+            {
+                Ok(lista) => {
+                    for aparelho in lista {
+                        println!(
+                            "{:<14} emissor={:<24} {}",
+                            aparelho.categoria, aparelho.emissor, aparelho.nome
+                        );
+                    }
+                }
+                Err(erro) => println!("falhou: {erro}"),
+            }
+        });
     }
 
     #[test]

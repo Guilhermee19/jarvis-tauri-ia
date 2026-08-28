@@ -28,6 +28,7 @@ export function CasaPanel() {
   const erro = useCasaStore((state) => state.erro)
   const procurar = useCasaStore((state) => state.procurar)
   const importando = useCasaStore((state) => state.importando)
+  const importados = useCasaStore((state) => state.importados)
   const importar = useCasaStore((state) => state.importar)
   const iniciarRonda = useCasaStore((state) => state.iniciarRonda)
   const pararRonda = useCasaStore((state) => state.pararRonda)
@@ -44,7 +45,12 @@ export function CasaPanel() {
   // Só faz sentido oferecer a importação quando há a quem dar nome: a busca na nuvem
   // parte de um id que a varredura viu.
   const podeImportar = aparelhos.some((aparelho) => !aparelho.id.startsWith('desconhecido@'))
-  const semNome = aparelhos.filter((aparelho) => aparelho.nome === null).length
+  // Dois motivos diferentes para não ter nome, e só um deles a importação resolve. O
+  // `desconhecido@` é um aparelho cujo anúncio não abriu: ele não tem id de Tuya, então a
+  // nuvem nunca vai saber quem é. Os outros existem lá e podem estar sem nome LÁ também.
+  const semNome = aparelhos.filter(
+    (aparelho) => aparelho.nome === null && !aparelho.id.startsWith('desconhecido@'),
+  ).length
 
   const visiveis = aparelhos.filter((aparelho) => !aparelho.oculto)
   const ocultos = aparelhos.filter((aparelho) => aparelho.oculto)
@@ -96,6 +102,17 @@ export function CasaPanel() {
               ? `Importar nome e chave de ${semNome === 1 ? 'um aparelho' : `${semNome} aparelhos`}`
               : 'Reimportar nomes e chaves da nuvem'}
         </button>
+      ) : null}
+
+      {/* Sem isto, importar não dá sinal nenhum quando não há nome novo para trazer — e
+          um botão que parece não fazer nada é indistinguível de um botão quebrado. */}
+      {importados !== null && !importando ? (
+        <Nota>
+          {importados} {importados === 1 ? 'aparelho lido' : 'aparelhos lidos'} da nuvem.
+          {semNome > 0
+            ? ` ${semNome === 1 ? 'Um continua' : `${semNome} continuam`} sem nome porque também não ${semNome === 1 ? 'tem' : 'têm'} nome na Tuya — renomeie no app Smart Life e importe de novo.`
+            : ' Nomes e chaves em dia.'}
+        </Nota>
       ) : null}
 
       {erro ? (
@@ -157,9 +174,18 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
   // a ausência dele.
   const dachaComandar = aparelho.suportado && aparelho.temChave && aparelho.comutavel
 
+  // Controle de infravermelho não está na rede POR PROJETO — ele é uma lista de códigos
+  // dentro do emissor. Chamá-lo de "fora do ar" mandaria procurar um problema que não
+  // existe, e por isso ele sai de toda a conversa sobre presença.
+  // A categoria basta, e é o que salva antes de a importação ligar o controle ao
+  // emissor: sem isso a TV apareceria como um aparelho de rede que sumiu.
+  const porInfravermelho = aparelho.emissor !== '' || aparelho.categoria.startsWith('infrared')
+
   // O que o cartão fechado precisa gritar, e nada além. O resto — id, endereço, modelo,
   // data points — mora atrás do "i", porque só interessa quando algo não funciona.
-  const alerta = !aparelho.presente
+  const alerta = porInfravermelho
+    ? null
+    : !aparelho.presente
     ? 'fora do ar'
     : !aparelho.decifrado
       ? 'anúncio não lido'
@@ -175,14 +201,15 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
     <li
       className={cn(
         'border-border-soft bg-base/40 rounded-md border px-3 py-2',
-        (!aparelho.suportado || !aparelho.presente) && 'opacity-70',
+        !porInfravermelho && (!aparelho.suportado || !aparelho.presente) && 'opacity-70',
       )}
     >
       <div className="flex items-center gap-2">
         <Status
           ativo={aparelho.ativo}
           suportado={aparelho.suportado}
-          presente={aparelho.presente}
+          presente={aparelho.presente || porInfravermelho}
+          porInfravermelho={porInfravermelho}
         />
 
         {/* O tipo antes do nome: numa lista de dez, o ícone é o que deixa achar a
@@ -230,7 +257,7 @@ function Card({ aparelho }: { aparelho: Aparelho }) {
       {/* Fora do painel de detalhes de propósito: é o que explica por que NÃO há botão,
           e uma explicação escondida atrás de um clique não seria encontrada por quem
           está justamente procurando o botão que falta. */}
-      {aberto && !dachaComandar ? (
+      {aberto && !dachaComandar && !porInfravermelho ? (
         <p className="text-muted mt-2 pl-4 text-[10px] leading-relaxed">
           {!aparelho.decifrado
             ? 'Anunciou num protocolo que não abriu. Fica na lista com o endereço para você saber que ele existe, em vez de sumir e parecer problema de rede.'
@@ -340,13 +367,17 @@ function Status({
   ativo,
   suportado,
   presente,
+  porInfravermelho,
 }: {
   ativo: boolean
   suportado: boolean
   presente: boolean
+  porInfravermelho?: boolean
 }) {
   // Ausente vem primeiro: não adianta dizer que ele é controlável se ele não está lá.
-  const [cor, texto] = !presente
+  const [cor, texto] = porInfravermelho
+    ? ['bg-accent/60', 'Comandado por infravermelho — não está na rede, e não precisa estar']
+    : !presente
     ? ['bg-muted/30', 'Já apareceu na rede, mas não respondeu na última varredura']
     : !suportado
       ? ['bg-muted/40', 'Encontrado, mas o controle dele ainda não está pronto']

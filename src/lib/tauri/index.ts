@@ -3,9 +3,11 @@ export {
   deviceState,
   discoverDevices,
   importTuyaDevices,
+  irKeys,
   knownDevices,
   setDeviceHidden,
   setDevicePower,
+  sendIrKey,
   setLight,
 } from './casa'
 export { clearHistory, getHistory, sendMessage } from './chat'

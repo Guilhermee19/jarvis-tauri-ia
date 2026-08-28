@@ -47,6 +47,11 @@ sha2 = "0.10"
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
 tokio = { version = "1", features = ["time"] }
 
+[dev-dependencies]
+# Só para as ferramentas `#[ignore]` que conversam com a nuvem: elas precisam de um
+# executor, e o do Tauri não existe dentro de um teste.
+tokio = { version = "1", features = ["rt", "macros"] }
+
 # Já vinha no Cargo.lock como dependência transitiva (cpal, nokhwa, tauri), então
 # declarar não acrescenta compilação — só destrava as features que a gente usa.
 [target.'cfg(windows)'.dependencies]

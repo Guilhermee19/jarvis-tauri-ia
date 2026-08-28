@@ -322,17 +322,28 @@ impl Dialeto {
 }
 
 /// Pergunta tudo o que o aparelho sabe dizer sobre si.
+///
+/// **Não exige que ele tenha um liga-desliga.** Um emissor de infravermelho e um sensor
+/// respondem uma lista de data points perfeitamente válida e não têm interruptor nenhum —
+/// e era justamente para ver o que ELES sabem fazer que esta tela existe. Recusar aqui
+/// transformava a única janela para o desconhecido num erro.
 pub fn detalhar(alvo: &Alvo) -> Result<Detalhe, ControleError> {
     let mut sessao = Sessao::abrir(alvo)?;
     let dps = sessao.consultar(alvo)?;
-    let estado = ler_interruptor(&dps)?;
 
-    Ok(Detalhe {
-        ligado: estado.ligado,
-        interruptor: estado.interruptor,
+    Ok(detalhe_de(dps))
+}
+
+fn detalhe_de(dps: BTreeMap<String, serde_json::Value>) -> Detalhe {
+    // `ok()` e não `?`: sem interruptor o cartão fica sem botão, e é só isso.
+    let estado = ler_interruptor(&dps).ok();
+
+    Detalhe {
+        ligado: estado.as_ref().is_some_and(|estado| estado.ligado),
+        interruptor: estado.map(|estado| estado.interruptor).unwrap_or_default(),
         luz: ler_luz(&dps),
         dps,
-    })
+    }
 }
 
 /// Aplica um ajuste de lâmpada e devolve o retrato depois dele.
@@ -383,6 +394,26 @@ pub fn ajustar(alvo: &Alvo, ajuste: &Ajuste) -> Result<Detalhe, ControleError> {
 
     // Relê em vez de presumir: a lâmpada arredonda valores e recusa combinações, e
     // devolver o que foi PEDIDO faria o controle mostrar uma coisa e a luz fazer outra.
+    detalhar(alvo)
+}
+
+/// Manda data points crus, do jeito que o aparelho os entende.
+///
+/// Existe para o que este módulo ainda não modela: um emissor de infravermelho manda o
+/// código da tecla num data point de texto, um termostato manda a temperatura num
+/// número. Modelar cada família daria uma função por tipo de aparelho; isto dá o
+/// mecanismo, e a tela decide o que faz sentido oferecer.
+pub fn enviar_dps(
+    alvo: &Alvo,
+    dps: BTreeMap<String, serde_json::Value>,
+) -> Result<Detalhe, ControleError> {
+    let mut sessao = Sessao::abrir(alvo)?;
+    sessao.aplicar(alvo, dps)?;
+    // Fecha antes de reler: depois de um comando o aparelho manda o aviso de mudança por
+    // conta própria, e uma consulta na mesma conexão leria esse aviso no lugar da
+    // resposta.
+    drop(sessao);
+
     detalhar(alvo)
 }
 
