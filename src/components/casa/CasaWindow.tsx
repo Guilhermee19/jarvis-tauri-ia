@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import { CasaPanel } from './CasaPanel'
-import { FloatingPanel, type PanelPosition, type PanelSize } from '@/components/ui/FloatingPanel'
+import { FloatingPanel } from '@/components/ui/FloatingPanel'
 import { useCasaStore, useJanelaStore, zDaJanela } from '@/stores'
 
 /**
@@ -17,11 +16,13 @@ export function CasaWindow() {
   const abrir = useJanelaStore((state) => state.abrir)
   const fechar = useJanelaStore((state) => state.fechar)
   const isOpen = abertas.includes('casa')
-  // Fora do `FloatingPanel` pelo mesmo motivo do chat: ele some do DOM ao fechar, e a
-  // janelinha precisa reabrir onde e do tamanho que você a deixou.
-  const [position, setPosition] = useState<PanelPosition | null>(null)
-  const [size, setSize] = useState<PanelSize | null>(null)
-  const [maximized, setMaximized] = useState(false)
+  // O arranjo mora no `janelaStore` porque agora ele sobrevive ao fechamento do APP,
+  // e não só ao da janelinha — e porque as três janelas guardavam o mesmo trio de
+  // estados, cada uma por conta própria.
+  const arranjo = useJanelaStore((state) => state.arranjos.casa)
+  const ajustar = useJanelaStore((state) => state.ajustar)
+  const fixadas = useJanelaStore((state) => state.fixadas)
+  const fixar = useJanelaStore((state) => state.fixar)
 
   return (
     <FloatingPanel
@@ -29,12 +30,14 @@ export function CasaWindow() {
       onClose={() => fechar('casa')}
       zIndex={zDaJanela(abertas, 'casa')}
       onFocus={() => abrir('casa')}
-      position={position}
-      onPositionChange={setPosition}
-      size={size}
-      onSizeChange={setSize}
-      maximized={maximized}
-      onMaximizedChange={setMaximized}
+      position={arranjo?.posicao ?? null}
+      onPositionChange={(posicao) => ajustar('casa', { posicao })}
+      size={arranjo?.tamanho ?? null}
+      onSizeChange={(tamanho) => ajustar('casa', { tamanho })}
+      maximized={arranjo?.maximizada ?? false}
+      onMaximizedChange={(maximizada) => ajustar('casa', { maximizada })}
+      fixada={fixadas.includes('casa')}
+      onFixadaChange={(fixada) => fixar('casa', fixada)}
       title="Casa"
       description="Aparelhos inteligentes encontrados na sua rede local."
       actions={<Contagem />}

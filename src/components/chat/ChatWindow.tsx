@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import { ChatPanel } from './ChatPanel'
-import { FloatingPanel, type PanelPosition, type PanelSize } from '@/components/ui/FloatingPanel'
+import { FloatingPanel } from '@/components/ui/FloatingPanel'
 import { useChatStore, useJanelaStore, zDaJanela } from '@/stores'
 
 export function ChatWindow() {
@@ -10,13 +9,14 @@ export function ChatWindow() {
   const abrir = useJanelaStore((state) => state.abrir)
   const fechar = useJanelaStore((state) => state.fechar)
   const isOpen = abertas.includes('chat')
-  // Posição e tamanho moram aqui, e não no `FloatingPanel`: ele some do DOM ao fechar,
-  // e a janelinha precisa reabrir onde e do jeito que o usuário a deixou.
-  const [position, setPosition] = useState<PanelPosition | null>(null)
-  const [size, setSize] = useState<PanelSize | null>(null)
-  // Maximizar não mexe em `position` nem em `size`: eles ficam guardados intactos, e
-  // restaurar é só voltar a desenhá-los. Sem estado extra para reconciliar.
-  const [maximized, setMaximized] = useState(false)
+  // O arranjo mora no `janelaStore`: o `FloatingPanel` some do DOM ao fechar, e agora
+  // ele também precisa sobreviver ao fechamento do APP para a janela fixada reabrir onde
+  // ficou. Maximizar continua sem mexer em posição nem tamanho — eles ficam guardados
+  // intactos, e restaurar é só voltar a desenhá-los.
+  const arranjo = useJanelaStore((state) => state.arranjos.chat)
+  const ajustar = useJanelaStore((state) => state.ajustar)
+  const fixadas = useJanelaStore((state) => state.fixadas)
+  const fixar = useJanelaStore((state) => state.fixar)
 
   return (
     <FloatingPanel
@@ -24,12 +24,14 @@ export function ChatWindow() {
       onClose={() => fechar('chat')}
       zIndex={zDaJanela(abertas, 'chat')}
       onFocus={() => abrir('chat')}
-      position={position}
-      onPositionChange={setPosition}
-      size={size}
-      onSizeChange={setSize}
-      maximized={maximized}
-      onMaximizedChange={setMaximized}
+      position={arranjo?.posicao ?? null}
+      onPositionChange={(posicao) => ajustar('chat', { posicao })}
+      size={arranjo?.tamanho ?? null}
+      onSizeChange={(tamanho) => ajustar('chat', { tamanho })}
+      maximized={arranjo?.maximizada ?? false}
+      onMaximizedChange={(maximizada) => ajustar('chat', { maximizada })}
+      fixada={fixadas.includes('chat')}
+      onFixadaChange={(fixada) => fixar('chat', fixada)}
       title="Conversa"
       description="Converse com o assistente por texto."
       actions={<ClearHistoryAction />}

@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import { DesempenhoPanel } from './DesempenhoPanel'
-import { FloatingPanel, type PanelPosition, type PanelSize } from '@/components/ui/FloatingPanel'
+import { FloatingPanel } from '@/components/ui/FloatingPanel'
 import { useDesempenhoStore, useJanelaStore, zDaJanela } from '@/stores'
 
 /**
@@ -17,11 +16,13 @@ export function DesempenhoWindow() {
   const abrir = useJanelaStore((state) => state.abrir)
   const fechar = useJanelaStore((state) => state.fechar)
   const isOpen = abertas.includes('desempenho')
-  // Fora do `FloatingPanel` porque ele some do DOM ao fechar, e a janelinha precisa
-  // reabrir onde e do tamanho que você a deixou.
-  const [position, setPosition] = useState<PanelPosition | null>(null)
-  const [size, setSize] = useState<PanelSize | null>(null)
-  const [maximized, setMaximized] = useState(false)
+  // O arranjo mora no `janelaStore` porque agora ele sobrevive ao fechamento do APP,
+  // e não só ao da janelinha — e porque as três janelas guardavam o mesmo trio de
+  // estados, cada uma por conta própria.
+  const arranjo = useJanelaStore((state) => state.arranjos.desempenho)
+  const ajustar = useJanelaStore((state) => state.ajustar)
+  const fixadas = useJanelaStore((state) => state.fixadas)
+  const fixar = useJanelaStore((state) => state.fixar)
 
   return (
     <FloatingPanel
@@ -29,12 +30,14 @@ export function DesempenhoWindow() {
       onClose={() => fechar('desempenho')}
       zIndex={zDaJanela(abertas, 'desempenho')}
       onFocus={() => abrir('desempenho')}
-      position={position}
-      onPositionChange={setPosition}
-      size={size}
-      onSizeChange={setSize}
-      maximized={maximized}
-      onMaximizedChange={setMaximized}
+      position={arranjo?.posicao ?? null}
+      onPositionChange={(posicao) => ajustar('desempenho', { posicao })}
+      size={arranjo?.tamanho ?? null}
+      onSizeChange={(tamanho) => ajustar('desempenho', { tamanho })}
+      maximized={arranjo?.maximizada ?? false}
+      onMaximizedChange={(maximizada) => ajustar('desempenho', { maximizada })}
+      fixada={fixadas.includes('desempenho')}
+      onFixadaChange={(fixada) => fixar('desempenho', fixada)}
       title="Desempenho"
       description="Processador, memória e placa de vídeo, com o último minuto de história."
       actions={<Resumo />}

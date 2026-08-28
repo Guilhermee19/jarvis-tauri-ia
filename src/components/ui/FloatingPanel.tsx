@@ -32,6 +32,14 @@ interface FloatingPanelProps {
   description: string
   /** Botões extras no cabeçalho, à esquerda do fechar. */
   actions?: React.ReactNode
+  /**
+   * Fixada reabre sozinha ao subir o app, onde e do tamanho que ficou.
+   *
+   * `undefined` esconde o botão: nem toda janelinha tem por que oferecer isso, e um
+   * botão que não faz nada é pior que a ausência dele.
+   */
+  fixada?: boolean
+  onFixadaChange?: (fixada: boolean) => void
   /** `null` enquanto ninguém arrastou: a janelinha nasce centralizada. */
   position: PanelPosition | null
   onPositionChange: (position: PanelPosition) => void
@@ -69,6 +77,8 @@ export function FloatingPanel({
   title,
   description,
   actions,
+  fixada,
+  onFixadaChange,
   position,
   onPositionChange,
   size,
@@ -307,6 +317,32 @@ export function FloatingPanel({
         </h2>
 
         {actions}
+
+        {/* Antes do maximizar porque é uma decisão de OUTRA natureza: maximizar e fechar
+            valem para agora, fixar vale para a próxima vez que o app abrir. */}
+        {onFixadaChange ? (
+          <button
+            type="button"
+            onClick={() => onFixadaChange(!fixada)}
+            aria-pressed={fixada}
+            aria-label={fixada ? 'Não abrir sozinha' : 'Abrir sozinha ao iniciar'}
+            title={
+              fixada
+                ? 'Fixada: reabre sozinha, onde e do tamanho que ficar'
+                : 'Fixar: reabrir sozinha ao iniciar o Jarvis'
+            }
+            className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] transition-colors',
+              fixada
+                ? 'text-accent bg-accent/15'
+                : 'text-muted hover:bg-surface-hover hover:text-content',
+            )}
+          >
+            {/* Cheio quando fixada, vazado quando não: a forma carrega o estado, e não
+                só a cor — que some para quem não a distingue. */}
+            {fixada ? '★' : '☆'}
+          </button>
+        ) : null}
 
         <button
           type="button"
