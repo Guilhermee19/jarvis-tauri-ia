@@ -282,8 +282,8 @@ export function FloatingPanel({
             }
       }
       className={cn(
-        'floating-panel border-accent/25 bg-surface/95 absolute flex flex-col',
-        'border shadow-2xl shadow-black/60 backdrop-blur-md focus:outline-none',
+        'floating-panel border-accent/25 bg-surface/20 absolute flex flex-col',
+        'border shadow-2xl shadow-black/60 backdrop-blur-xs focus:outline-none',
         // Maximizada encosta nas bordas: canto arredondado ali vira falha de pintura.
         maximized ? 'rounded-none' : 'rounded-lg',
         // Só valem enquanto ninguém redimensionou — depois disso o `style` manda.

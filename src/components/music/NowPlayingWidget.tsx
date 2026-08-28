@@ -104,8 +104,8 @@ export function NowPlayingWidget() {
         ...(posicao ? { left: posicao.x, top: posicao.y } : {}),
       }}
       className={cn(
-        'no-select border-accent/25 bg-surface/95 absolute flex w-[300px] cursor-grab',
-        'flex-col gap-2 rounded-xl border p-3 shadow-2xl shadow-black/60 backdrop-blur-md',
+        'no-select border-accent/25 bg-surface/20 absolute flex w-[300px] cursor-grab',
+        'flex-col gap-2 rounded-xl border p-3 shadow-2xl shadow-black/60 backdrop-blur-xs',
         'active:cursor-grabbing',
         // Enquanto ninguém arrastou, nasce no canto de baixo à direita — longe do
         // núcleo do HUD, que fica no meio.

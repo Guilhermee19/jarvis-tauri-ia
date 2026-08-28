@@ -88,8 +88,8 @@ export function DesempenhoPanel() {
 
       <p className="text-muted/70 mt-0.5 text-[10px] leading-relaxed">
         Uma leitura por segundo, e o gráfico guarda o último minuto. É o mesmo intervalo do
-        Gerenciador de Tarefas: os contadores medem a distância entre duas leituras, então ler
-        mais rápido não traz mais informação — traz a mesma com mais ruído.
+        Gerenciador de Tarefas: os contadores medem a distância entre duas leituras, então ler mais
+        rápido não traz mais informação — traz a mesma com mais ruído.
       </p>
     </div>
   )
@@ -115,7 +115,11 @@ function Medida({
             'text-sm tabular-nums',
             // O acento entra só quando a coisa está de fato carregada: pintar 8% de
             // laranja faria a cor perder o significado quando ela importasse.
-            valor !== null && valor >= 80 ? 'text-danger' : valor !== null && valor >= 50 ? 'text-accent' : 'text-muted',
+            valor !== null && valor >= 80
+              ? 'text-danger'
+              : valor !== null && valor >= 50
+                ? 'text-accent'
+                : 'text-muted',
           )}
         >
           {valor === null ? '—' : `${Math.round(valor)}%`}
@@ -151,7 +155,10 @@ function Grafico({ serie }: { serie: number[] }) {
 
   const passo = LARGURA / (serie.length - 1)
   const pontos = serie
-    .map((valor, indice) => `${(indice * passo).toFixed(2)},${(ALTURA - (valor / 100) * ALTURA).toFixed(2)}`)
+    .map(
+      (valor, indice) =>
+        `${(indice * passo).toFixed(2)},${(ALTURA - (valor / 100) * ALTURA).toFixed(2)}`,
+    )
     .join(' ')
 
   return (
@@ -163,10 +170,7 @@ function Grafico({ serie }: { serie: number[] }) {
     >
       {/* A área primeiro, a linha por cima: a linha sozinha some no fundo escuro do
           painel, e a área sozinha não mostra a variação fina. */}
-      <polygon
-        points={`0,${ALTURA} ${pontos} ${LARGURA},${ALTURA}`}
-        className="fill-accent/20"
-      />
+      <polygon points={`0,${ALTURA} ${pontos} ${LARGURA},${ALTURA}`} className="fill-accent/20" />
       <polyline
         points={pontos}
         fill="none"
