@@ -1,5 +1,5 @@
 export type { Aparelho, Varredura } from './casa'
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'
-export type { AppSettings } from './settings'
-export { DEFAULT_SETTINGS } from './settings'
+export type { AppSettings, Persona } from './settings'
+export { DEFAULT_SETTINGS, NOME_DA_PERSONA } from './settings'
 export type { CapturedImage, MonitorInfo, Recording, Voice, WebcamResolution } from './sensors'

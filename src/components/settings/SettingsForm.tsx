@@ -4,7 +4,13 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { listWebcamResolutions } from '@/lib/tauri'
-import { DEFAULT_SETTINGS, type AppSettings, type WebcamResolution } from '@/types'
+import {
+  DEFAULT_SETTINGS,
+  NOME_DA_PERSONA,
+  type AppSettings,
+  type Persona,
+  type WebcamResolution,
+} from '@/types'
 
 /** `0×0` é o "automático" — o mesmo par que o Rust lê como `None`. */
 const AUTOMATICO = '0x0'
@@ -40,8 +46,25 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   )
   const [webcamMirror, setWebcamMirror] = useState(initial.webcamMirror)
   const [logDetalhado, setLogDetalhado] = useState(initial.logDetalhado)
+  const [persona, setPersona] = useState(initial.persona)
 
   const { resolucoes, erro: erroResolucoes } = useWebcamResolutions()
+
+  /**
+   * O nome ainda é o do tema (ou está vazio), então ele acompanha a troca.
+   *
+   * Sem esta checagem, escolher Ultron renomearia um assistente que a pessoa batizou de
+   * "Sexta-feira" — e o gatilho de voz mudaria embaixo dela, sem aviso. Com ela, quem
+   * nunca mexeu no campo tem o comportamento óbvio (o nome segue o tema), e quem
+   * escolheu um nome fica com ele.
+   */
+  const nomeSegueOTema =
+    assistantName.trim() === '' || Object.values(NOME_DA_PERSONA).includes(assistantName.trim())
+
+  function trocarTema(proxima: Persona) {
+    setPersona(proxima)
+    if (nomeSegueOTema) setAssistantName(NOME_DA_PERSONA[proxima])
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -185,8 +208,26 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         value={assistantName}
         onChange={(event) => setAssistantName(event.target.value)}
         placeholder={DEFAULT_SETTINGS.assistantName}
-        hint="Vai para o system prompt quando o agente real entrar."
+        hint="É também o GATILHO de voz: dizer este nome antes da frase é o que a transforma em comando em vez de ditado."
       />
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-muted text-xs font-medium">Tema do sistema</span>
+        <select
+          value={persona}
+          onChange={(event) => trocarTema(event.target.value as Persona)}
+          className="border-border-soft bg-base text-content focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+        >
+          <option value="jarvis">Jarvis — azul, sóbrio e prestativo</option>
+          <option value="ultron">Ultron — âmbar, seco e irônico</option>
+        </select>
+        <p className="text-muted text-[11px] leading-snug">
+          Muda a cor do app, a voz e o jeito de falar. A cor troca na hora, sem reiniciar.
+          {nomeSegueOTema
+            ? ' O nome acima acompanha a troca — se você digitar um nome próprio, ele passa a mandar.'
+            : ` O nome continua “${assistantName || DEFAULT_SETTINGS.assistantName}”, porque você escolheu um: apague o campo para ele voltar a seguir o tema.`}
+        </p>
+      </label>
 
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="ghost" onClick={onCancel} disabled={isSaving}>
@@ -200,7 +241,10 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               ...initial,
               anthropicApiKey: apiKey.trim(),
               elevenLabsApiKey: elevenLabsKey.trim(),
-              assistantName: assistantName.trim() || DEFAULT_SETTINGS.assistantName,
+              // Nome vazio cai no nome do TEMA escolhido, não no "Jarvis" fixo — senão
+              // apagar o campo com o Ultron ativo devolveria o gatilho errado.
+              assistantName: assistantName.trim() || NOME_DA_PERSONA[persona],
+              persona,
               ollamaUrl: ollamaUrl.trim() || DEFAULT_SETTINGS.ollamaUrl,
               // Sem fallback aqui de propósito: vazio é uma escolha válida (desliga
               // o intérprete), diferente do nome e da URL.

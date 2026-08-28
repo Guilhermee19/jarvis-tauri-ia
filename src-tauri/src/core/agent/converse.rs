@@ -32,6 +32,7 @@ use serde::Deserialize;
 
 use super::intent::pedir;
 use super::AgentError;
+use crate::config::{AppSettings, Persona};
 use crate::core::chat::{ChatMessage, Role};
 
 /// Quantos turnos anteriores vão para o prompt. Vinte mensagens de conversa curta dão
@@ -40,18 +41,21 @@ pub const JANELA: usize = 20;
 
 /// Resposta ao usuário. Texto puro: não há nada para estruturar, e um schema aqui só
 /// serviria para o modelo gastar tokens escrevendo `{"resposta": ...}`.
+/// Recebe `settings` inteiro em vez de `url`, `model`, `nome` e `persona` soltos: eram
+/// oito parâmetros, e o clippy do repo reprova acima de sete. É o mesmo formato de
+/// `pesquisar_e_responder`, que já fazia assim.
 pub async fn responder(
     http: &reqwest::Client,
-    url: &str,
-    model: &str,
-    assistant_name: &str,
+    settings: &AppSettings,
     memoria: &str,
     historico: &[ChatMessage],
     frase: &str,
 ) -> Result<String, AgentError> {
+    let (url, model) = (&settings.ollama_url, &settings.ollama_model);
+
     let mut mensagens = vec![serde_json::json!({
         "role": "system",
-        "content": prompt_de_conversa(assistant_name, memoria),
+        "content": prompt_de_conversa(&settings.assistant_name, settings.persona, memoria),
     })];
 
     // O log de ações (`Role::System`) fica de fora: é registro para o usuário ler, e
@@ -339,7 +343,9 @@ fn tirar_links_orfaos(nota: &str, assunto: &str, conhecidas: &[String]) -> Strin
 /// das regras de estilo, e a lista de limitações é explícita — sem ela o modelo não tem
 /// como saber o que este app faz, e preenche a lacuna com o que um assistente genérico
 /// faria.
-fn prompt_de_conversa(assistant_name: &str, memoria: &str) -> String {
+fn prompt_de_conversa(assistant_name: &str, persona: Persona, memoria: &str) -> String {
+    let tom = persona.tom();
+
     let bloco = if memoria.trim().is_empty() {
         "Você ainda não sabe nada sobre ele.".to_owned()
     } else {
@@ -352,6 +358,9 @@ fn prompt_de_conversa(assistant_name: &str, memoria: &str) -> String {
 
     format!(
         "Você é o {assistant_name}, assistente pessoal. Roda local, sem internet.
+
+SEU JEITO
+{tom}
 
 AGORA SÃO {agora}. Use isso quando ele perguntar a data ou a hora — nunca escreva um
 espaço reservado como \"[data atual]\".

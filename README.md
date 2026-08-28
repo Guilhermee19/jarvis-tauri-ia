@@ -17,6 +17,10 @@ achou que foi pedido.
 dizer "**Jarvis**, abre o youtube" manda direto para o roteador. O nome é a declaração
 de que a frase é para ele — sem ele, conversa perto do microfone não vira comando.
 
+**E ele tem dois temas.** _Jarvis_ (ciano, sóbrio) e _Ultron_ (âmbar, seco e irônico), em
+Configurações. Muda a cor do app inteiro, a voz e o jeito de falar, na hora e sem
+reiniciar. O nome — que é o gatilho — segue o tema até você escolher um seu.
+
 **Ele responde falando** (ElevenLabs), em qualquer caminho — o que você digita no chat
 também sai em voz alta. Basta ter a key e uma voz escolhida em Diagnóstico › Voz; sem
 isso ele fica calado, e nada mais muda.
@@ -356,6 +360,44 @@ src/
 A regra que mantém isso saudável: **componente não chama `invoke()` direto**. Ele fala com
 a store, a store fala com `lib/tauri`, e só ali existe a fronteira com o Rust. Quando o
 agente real entrar, nada em `components/` precisa mudar.
+
+### Dois temas: Jarvis e Ultron
+
+Em Configurações › **Tema do sistema**. Um campo, três coisas que sempre andam juntas —
+**a cor do app, a voz do TTS e o jeito de falar**. Um Ultron com a voz e o azul do Jarvis
+não seria o Ultron, então não são três configurações separadas.
+
+|        | Jarvis                               | Ultron                              |
+| ------ | ------------------------------------ | ----------------------------------- |
+| Acento | ciano `#5ec8ff`                      | âmbar `#ff9c3f`                     |
+| Fundo  | quase-preto azulado                  | preto quente                        |
+| Tom    | educado e sóbrio, mordomo competente | seco e irônico, mas **sempre útil** |
+
+**A troca é instantânea, e reiniciar seria regressão.** A cor é CSS; o nome, o gatilho de
+voz e a voz vêm do store; o system prompt é montado a cada mensagem. Não há nada
+congelado no boot para invalidar — reiniciar só custaria o estado das janelinhas e alguns
+segundos.
+
+O que retinge o app é **um atributo no `<html>`** (`usePersona`), porque toda cor sai dos
+tokens de `@theme` e a grade e a vinheta derivam do acento por `color-mix`. O
+`globals.css` redefine os tokens em `:root[data-persona='ultron']` — nenhum componente
+sabe que existe tema.
+
+**O `--color-danger` sai do vermelho e vai para o rosa no Ultron.** Vermelho ao lado de
+laranja é quase a mesma cor, e um erro precisa continuar se distinguindo do destaque.
+
+**O nome é campo à parte, e continua texto livre.** Ele é o gatilho de voz, e trancá-lo no
+tema tiraria a liberdade de chamar o assistente do que quiser. Trocar de tema **sugere** o
+nome — mas só quando você ainda não escolheu um: se o campo diz "Sexta-feira", virar
+Ultron não renomeia nada. Renomear por baixo mudaria o gatilho de voz sem avisar.
+
+**A voz é uma por tema** (`ttsVoiceJarvis` / `ttsVoiceUltron`). Sem isso, virar Ultron
+manteria a voz do Jarvis e a troca ficaria pela metade — cara nova com voz velha. O editor
+em Diagnóstico › Voz mexe na do tema ativo.
+
+**Só a conversa recebe o tema.** O roteador e a busca continuam recebendo apenas o nome:
+classificar um verbo e resumir uma busca não mudam com o jeito de falar, e mexer no prompt
+do roteador é o que quebra o app.
 
 ### Linguagem visual
 
@@ -927,8 +969,10 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
 {
   "anthropicApiKey": "",
   "assistantName": "Jarvis",
+  "persona": "jarvis",
   "elevenLabsApiKey": "",
-  "ttsVoiceId": "",
+  "ttsVoiceJarvis": "",
+  "ttsVoiceUltron": "",
   "ollamaUrl": "http://localhost:11434",
   "ollamaModel": "qwen2.5vl:3b",
   "memoriaPath": "",

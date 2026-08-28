@@ -12,11 +12,13 @@ import { HudFrame } from '@/components/tray-window/HudFrame'
 import { TitleBar } from '@/components/tray-window/TitleBar'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useNowPlaying } from '@/hooks/useNowPlaying'
+import { usePersona } from '@/hooks/usePersona'
 import { useSensorEvents } from '@/hooks/useSensorEvents'
 import { useTrayEvents } from '@/hooks/useTrayEvents'
 
 export default function HomePage() {
   useBootstrap()
+  usePersona()
   useTrayEvents()
   useSensorEvents()
   useNowPlaying()

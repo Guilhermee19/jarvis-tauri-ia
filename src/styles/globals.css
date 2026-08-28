@@ -25,6 +25,32 @@
     ui-sans-serif, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji';
 }
 
+/*
+ * Ultron: o mesmo HUD, em âmbar sobre preto quente.
+ *
+ * Trocar `--color-accent` já retingiria a grade, a vinheta, o núcleo e a varredura —
+ * todos derivam dele por `color-mix`. Mas o azul-escuro do fundo continuaria lá, e um
+ * acento laranja sobre superfície azulada fica sujo em vez de quente. Por isso a paleta
+ * inteira desloca a matiz, não só o acento.
+ *
+ * `--color-danger` sai do vermelho e vai para o rosa: vermelho ao lado de laranja é
+ * quase a mesma cor, e o erro tem que continuar se distinguindo do destaque.
+ *
+ * Fica em `:root[data-persona='ultron']` e não numa classe: o atributo é escrito no
+ * `<html>` antes do React montar, então a cor certa já está na primeira pintura.
+ */
+:root[data-persona='ultron'] {
+  --color-base: #0a0604;
+  --color-surface: #150d06;
+  --color-surface-hover: #21150a;
+  --color-border-soft: #3a2611;
+  --color-content: #f4e5d1;
+  --color-muted: #9a7a5a;
+  --color-accent: #ff9c3f;
+  --color-accent-strong: #b8560f;
+  --color-danger: #ff5470;
+}
+
 html,
 body {
   height: 100%;

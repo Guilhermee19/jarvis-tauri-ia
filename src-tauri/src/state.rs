@@ -77,14 +77,15 @@ mod tests {
         store
             .save(&AppSettings {
                 anthropic_api_key: "sk-teste".to_owned(),
-                assistant_name: "Sexta-feira".to_owned(),
+                persona: crate::config::Persona::Ultron,
                 ..AppSettings::default()
             })
             .expect("salva");
 
         let state = AppState::new(Box::new(store));
 
-        assert_eq!(state.settings().assistant_name, "Sexta-feira");
+        assert_eq!(state.settings().anthropic_api_key, "sk-teste");
+        assert_eq!(state.settings().persona, crate::config::Persona::Ultron);
     }
 
     #[test]
@@ -94,7 +95,6 @@ mod tests {
         state
             .save_settings(AppSettings {
                 anthropic_api_key: "sk-nova".to_owned(),
-                assistant_name: "Jarvis".to_owned(),
                 ..AppSettings::default()
             })
             .expect("salva");

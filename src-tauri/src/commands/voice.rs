@@ -105,7 +105,9 @@ pub async fn speak_text(
 
     let chosen = match voice_id.filter(|id| !id.trim().is_empty()) {
         Some(id) => id,
-        None => resolve_voice(engine.as_ref(), &settings.tts_voice_id).await?,
+        // A voz da persona ATIVA: trocar de Jarvis para Ultron troca a voz junto, sem
+        // reconfigurar nada — cada uma tem a sua guardada.
+        None => resolve_voice(engine.as_ref(), settings.voz()).await?,
     };
 
     // Antes da síntese: mandar calar enquanto a ElevenLabs ainda responde tem que

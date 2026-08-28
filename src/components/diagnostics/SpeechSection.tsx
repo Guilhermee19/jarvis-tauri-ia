@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { listVoices, speakText } from '@/lib/tauri'
 import { useSettingsStore } from '@/stores'
-import type { Voice } from '@/types'
+import { NOME_DA_PERSONA, type Voice } from '@/types'
 
 /** Frase fixa do teste: curta, em português, e com número para checar a prosódia. */
 const TEST_PHRASE = 'Sistemas online. Sou o Jarvis, e estou ouvindo você.'
@@ -18,6 +18,10 @@ export function SpeechSection() {
   const { isBusy, error, run } = useAsyncAction()
 
   const hasKey = settings.elevenLabsApiKey.length > 0
+
+  // Cada tema guarda a sua voz num campo próprio; este editor mexe no do tema ativo.
+  const campoDaVoz = settings.persona === 'ultron' ? 'ttsVoiceUltron' : 'ttsVoiceJarvis'
+  const vozAtual = settings[campoDaVoz]
 
   return (
     <Section
@@ -46,7 +50,12 @@ export function SpeechSection() {
 
       {hasKey ? (
         <label className="flex flex-col gap-1">
-          <span className="text-muted text-[10px] tracking-[0.14em] uppercase">Voz</span>
+          {/* A voz é UMA POR TEMA: este campo edita a do tema ativo. Trocar de tema em
+              Configurações traz o outro campo para cá, e cada um guarda a sua — sem
+              isso, virar Ultron manteria a voz do Jarvis e a troca ficaria pela metade. */}
+          <span className="text-muted text-[10px] tracking-[0.14em] uppercase">
+            Voz do {NOME_DA_PERSONA[settings.persona]}
+          </span>
           {/* Campo de texto com `datalist`, e não um `<select>`: o catálogo exige a
               permissão `voices_read`, que uma key restrita pode não ter — e aí um
               select vazio deixava o app num beco sem saída, porque com `ttsVoiceId`
@@ -59,8 +68,8 @@ export function SpeechSection() {
           <input
             type="text"
             list="tts-voices"
-            value={settings.ttsVoiceId}
-            onChange={(event) => void save({ ...settings, ttsVoiceId: event.target.value })}
+            value={vozAtual}
+            onChange={(event) => void save({ ...settings, [campoDaVoz]: event.target.value })}
             placeholder="ID da voz — vazio usa a primeira da conta (pede voices_read)"
             spellCheck={false}
             className="border-border-soft bg-base text-content placeholder:text-muted/60 focus:border-accent rounded-lg border px-2 py-1.5 text-sm focus:outline-none"

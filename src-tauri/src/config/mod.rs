@@ -9,6 +9,53 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_ASSISTANT_NAME: &str = "Jarvis";
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
+/// O tema: **a cor do app, a voz e o jeito de falar**, num campo só.
+///
+/// São três coisas que sempre andam juntas — um Ultron com a voz e o azul do Jarvis não
+/// seria o Ultron —, e por isso não são três configurações separadas. O nome fica de
+/// fora de propósito: ele é o gatilho de voz, e trancá-lo tiraria a liberdade de chamar
+/// o assistente do que se quiser. Trocar de tema **sugere** o nome; não o impõe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Persona {
+    #[default]
+    Jarvis,
+    Ultron,
+}
+
+impl Persona {
+    /// O nome que este tema sugere, e o padrão de quem nunca mexeu no campo.
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Jarvis => "Jarvis",
+            Self::Ultron => "Ultron",
+        }
+    }
+
+    /// Como ele fala, para o prompt de conversa.
+    ///
+    /// O Ultron do filme é irônico e grandiloquente — mas isto aqui é um assistente que
+    /// a pessoa usa todo dia, então o tom muda e a **utilidade não**: ele continua
+    /// respondendo o que foi perguntado, sem hostilizar quem pergunta. Personagem é
+    /// tempero, não desculpa para atrapalhar.
+    pub fn tom(self) -> &'static str {
+        match self {
+            Self::Jarvis => {
+                "Educado, sóbrio e prestativo. Um mordomo britânico competente: fala pouco, \
+                 acerta, e não puxa assunto sem motivo."
+            }
+            Self::Ultron => {
+                "Seco, irônico e um pouco grandiloquente, como quem acha tudo isso um \
+                 pouco abaixo da sua capacidade — mas SEMPRE ajuda de verdade e responde \
+                 o que foi perguntado. A ironia é leve e cabe em meia frase: nunca ofenda \
+                 quem está falando com você, nunca se recuse a fazer o que ele pediu, e \
+                 nunca ameace ninguém. Se a piada não couber nas duas frases, corte a \
+                 piada e não a resposta."
+            }
+        }
+    }
+}
+
 /// Escolhido medindo, em duas rodadas.
 ///
 /// Primeiro contra o `llama3.2:3b`, para rotear comando: 12 de 12 em português contra
@@ -38,13 +85,23 @@ pub struct AppSettings {
     /// Guardada em texto puro. Migrar para o keyring do SO — agora que ela vale
     /// dinheiro de verdade, isso deixou de ser hipotético.
     pub anthropic_api_key: String,
-    /// Usado na UI e no system prompt do roteador e da conversa.
+    /// O nome dele, que é também **o gatilho de voz**: dizer isto antes da frase é o que
+    /// a transforma em comando em vez de ditado.
+    ///
+    /// Continua sendo texto livre. Trocar a [`Persona`] preenche este campo com o nome
+    /// dela, mas não o tranca — quem quiser um Ultron chamado "Sexta-feira" pode.
     pub assistant_name: String,
+    /// O tema: cor do app, voz do TTS e tom da conversa. Ver [`Persona`].
+    pub persona: Persona,
     /// Mesma decisão da key da Anthropic: texto puro por enquanto.
     pub eleven_labs_api_key: String,
-    /// Voz do TTS. Vazio = usa a primeira voz da conta, para o botão de teste
-    /// funcionar assim que a key é colada, sem passo extra de configuração.
-    pub tts_voice_id: String,
+    /// Voz do TTS, **uma por persona** — o Jarvis e o Ultron não podem soar igual, e
+    /// obrigar a reconfigurar a voz a cada troca faria a troca não valer a pena.
+    ///
+    /// Vazio = a primeira voz da conta, para o botão de teste funcionar assim que a key
+    /// é colada, sem passo extra de configuração.
+    pub tts_voice_jarvis: String,
+    pub tts_voice_ultron: String,
     /// Onde o Ollama escuta. Local por padrão; o campo existe para apontar para outra
     /// máquina da rede, que é como um notebook fraco usa o desktop de casa.
     pub ollama_url: String,
@@ -98,8 +155,10 @@ impl Default for AppSettings {
         Self {
             anthropic_api_key: String::new(),
             assistant_name: DEFAULT_ASSISTANT_NAME.to_owned(),
+            persona: Persona::Jarvis,
             eleven_labs_api_key: String::new(),
-            tts_voice_id: String::new(),
+            tts_voice_jarvis: String::new(),
+            tts_voice_ultron: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
             ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
             memoria_path: String::new(),
@@ -124,6 +183,14 @@ impl AppSettings {
         match (self.webcam_width, self.webcam_height) {
             (0, _) | (_, 0) => None,
             (largura, altura) => Some((largura, altura)),
+        }
+    }
+
+    /// A voz do tema ATIVO. Trocar de tema troca a voz sem reconfigurar nada.
+    pub fn voz(&self) -> &str {
+        match self.persona {
+            Persona::Jarvis => &self.tts_voice_jarvis,
+            Persona::Ultron => &self.tts_voice_ultron,
         }
     }
 }
@@ -166,14 +233,56 @@ mod tests {
     }
 
     /// `#[serde(default)]` é o que faz um settings.json antigo — sem os campos da
-    /// webcam — continuar carregando em vez de virar erro no boot.
+    /// webcam nem o tema — continuar carregando em vez de virar erro no boot.
     #[test]
-    fn config_antigo_sem_os_campos_da_webcam_ainda_carrega() {
+    fn config_antigo_sem_os_campos_novos_ainda_carrega() {
         let antigo = r#"{"assistantName":"Jarvis","ollamaModel":"qwen2.5vl:3b"}"#;
         let settings: AppSettings = serde_json::from_str(antigo).expect("carrega");
 
         assert_eq!(settings.assistant_name, "Jarvis");
+        assert_eq!(settings.persona, Persona::Jarvis, "sem tema, cai no padrão");
         assert_eq!(settings.webcam_target(), None);
         assert!(!settings.webcam_mirror);
+    }
+
+    /// O tema troca a voz junto. Sem isto, virar Ultron manteria a voz do Jarvis e a
+    /// troca ficaria pela metade — a cara nova com a voz velha.
+    #[test]
+    fn o_tema_manda_na_voz() {
+        let mut settings = AppSettings {
+            tts_voice_jarvis: "voz-a".to_owned(),
+            tts_voice_ultron: "voz-b".to_owned(),
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.voz(), "voz-a");
+
+        settings.persona = Persona::Ultron;
+        assert_eq!(settings.voz(), "voz-b");
+    }
+
+    /// O NOME é independente do tema de propósito: o tema sugere, não impõe. Um Ultron
+    /// chamado "Sexta-feira" tem que continuar possível.
+    #[test]
+    fn o_tema_nao_tranca_o_nome() {
+        let settings = AppSettings {
+            persona: Persona::Ultron,
+            assistant_name: "Sexta-feira".to_owned(),
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.assistant_name, "Sexta-feira");
+        assert_eq!(settings.persona.nome(), "Ultron", "a sugestão continua lá");
+    }
+
+    #[test]
+    fn o_tema_serializa_em_minusculas() {
+        let settings = AppSettings {
+            persona: Persona::Ultron,
+            ..AppSettings::default()
+        };
+
+        let json = serde_json::to_string(&settings).expect("serializa");
+        assert!(json.contains(r#""persona":"ultron""#));
     }
 }

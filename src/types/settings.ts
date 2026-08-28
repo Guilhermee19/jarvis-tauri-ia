@@ -1,13 +1,37 @@
 /** Espelha `AppSettings` de `src-tauri/src/config/mod.rs` (serde em camelCase). */
+
+/**
+ * O tema: **a cor do app, a voz e o jeito de falar**, num campo só.
+ *
+ * São três coisas que sempre andam juntas — um Ultron com a voz e o azul do Jarvis não
+ * seria o Ultron. O NOME fica de fora de propósito: ele é o gatilho de voz e continua
+ * texto livre; trocar de tema sugere o nome, não o impõe.
+ */
+export type Persona = 'jarvis' | 'ultron'
+
+/** O nome que cada tema sugere. Espelha `Persona::nome()` no Rust. */
+export const NOME_DA_PERSONA: Record<Persona, string> = {
+  jarvis: 'Jarvis',
+  ultron: 'Ultron',
+}
+
 export interface AppSettings {
   /** Guardada em disco sem validação nesta versão. */
   anthropicApiKey: string
-  /** Vira parte do system prompt quando o agente real entrar. */
+  /** O nome, que é também o gatilho de voz. Texto livre. */
   assistantName: string
+  /** O tema: cor, voz e tom. Ver [`Persona`]. */
+  persona: Persona
   /** Key da ElevenLabs, usada pelo TTS. */
   elevenLabsApiKey: string
-  /** Vazio = o backend usa a primeira voz da conta. */
-  ttsVoiceId: string
+  /**
+   * Voz do TTS, uma por persona — o Jarvis e o Ultron não podem soar igual, e
+   * reconfigurar a cada troca faria a troca não valer a pena.
+   *
+   * Vazio = a primeira voz da conta.
+   */
+  ttsVoiceJarvis: string
+  ttsVoiceUltron: string
   /** Onde o Ollama escuta. Aponta para outra máquina se o Ollama não roda aqui. */
   ollamaUrl: string
   /** Modelo que interpreta, conversa E enxerga. Vazio DESLIGA o intérprete. */
@@ -40,8 +64,10 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   anthropicApiKey: '',
   assistantName: 'Jarvis',
+  persona: 'jarvis',
   elevenLabsApiKey: '',
-  ttsVoiceId: '',
+  ttsVoiceJarvis: '',
+  ttsVoiceUltron: '',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'qwen2.5vl:3b',
   memoriaPath: '',

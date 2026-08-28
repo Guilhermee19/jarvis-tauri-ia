@@ -98,6 +98,7 @@ mod tests {
         let settings = AppSettings {
             anthropic_api_key: "sk-disco".to_owned(),
             assistant_name: "Sexta-feira".to_owned(),
+            persona: crate::config::Persona::Ultron,
             ..AppSettings::default()
         };
 
@@ -106,7 +107,10 @@ mod tests {
         let loaded = store.load().expect("carrega");
 
         assert_eq!(loaded.anthropic_api_key, "sk-disco");
+        // Nome e tema são campos independentes: o tema sugere o nome ao trocar, mas não
+        // o sobrescreve. Um Ultron chamado "Sexta-feira" tem que sobreviver ao disco.
         assert_eq!(loaded.assistant_name, "Sexta-feira");
+        assert_eq!(loaded.persona, crate::config::Persona::Ultron);
     }
 
     /// `#[serde(default)]` é o que evita migração quando um campo novo entra.

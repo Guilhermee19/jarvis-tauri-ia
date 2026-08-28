@@ -356,11 +356,12 @@ async fn conversar(
     let url = &settings.ollama_url;
     let model = &settings.ollama_model;
 
+    // O tema entra SÓ na conversa, e por causa do tom. O roteador e a busca recebem
+    // apenas o nome: classificar um verbo e resumir uma busca não mudam com o jeito de
+    // falar — e mexer no prompt do roteador é o que quebra o app.
     let resposta = converse::responder(
         http,
-        url,
-        model,
-        &settings.assistant_name,
+        settings,
         &memoria.contexto(dito),
         &memoria.recentes(converse::JANELA),
         dito,
