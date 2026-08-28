@@ -709,8 +709,10 @@ o segundo no código.
 plataforma, como Nova Digital, Tramontina, Elgin e boa parte do que se vende barato aqui.
 Uma leitura só enxerga todas.
 
-Por enquanto ele só ENXERGA. Controlar depende da `local_key`, que é uma por aparelho e
-só existe na nuvem da Tuya — esse é o próximo passo.
+**Controlar depende da `local_key`**, que é uma por aparelho e só existe na nuvem da
+Tuya. Ela sai de lá **uma vez** e fica guardada; daí em diante o controle é local, sem
+internet. O passo a passo completo, com as três armadilhas que custam tempo de verdade,
+está em [docs/tuya.md](docs/tuya.md).
 
 ### A chave do anúncio é pública, e isso não é descuido
 
