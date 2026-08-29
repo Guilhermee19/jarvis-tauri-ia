@@ -31,7 +31,7 @@ const ESPERA_MS = 500
  * Antes disto o store guardava UM painel ativo para os dois casos, e abrir a casa fechava
  * a conversa — que é o comportamento certo para gaveta e errado para janela.
  */
-export type JanelaId = 'chat' | 'casa' | 'desempenho' | 'musica'
+export type JanelaId = 'chat' | 'casa' | 'desempenho' | 'navegador' | 'musica'
 export type GavetaId = 'settings'
 
 /**

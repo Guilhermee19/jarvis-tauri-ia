@@ -6,6 +6,7 @@
 mod commands;
 mod config;
 mod core;
+mod navegador;
 mod state;
 mod storage;
 mod tray;
@@ -71,6 +72,8 @@ pub fn run() {
             // perguntar — e ficam abertos depois, porque uso de CPU é uma taxa entre
             // duas leituras.
             app.manage(crate::core::system::DesempenhoState::new());
+            // As abas do navegador interno. Vazio até alguém pedir um site.
+            app.manage(crate::navegador::Navegador::new());
             // As chaves dos aparelhos da casa. Fica ao lado do `AppState` e não dentro
             // dele porque é DADO buscado, não configuração escolhida — e porque o botão
             // de importar reescreve o arquivo inteiro, o que ninguém quer que aconteça
@@ -98,6 +101,15 @@ pub fn run() {
             commands::system::identify_track,
             commands::system::quit_app,
             commands::system::performance_metrics,
+            commands::navegador::browser_open,
+            commands::navegador::browser_search,
+            commands::navegador::browser_state,
+            commands::navegador::browser_select,
+            commands::navegador::browser_close,
+            commands::navegador::browser_navigate,
+            commands::navegador::browser_history,
+            commands::navegador::browser_bounds,
+            commands::navegador::browser_external,
             commands::voice::start_recording,
             commands::voice::stop_recording,
             commands::voice::is_recording,

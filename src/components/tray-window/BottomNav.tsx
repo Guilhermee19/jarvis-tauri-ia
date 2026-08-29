@@ -4,6 +4,7 @@ import {
   CameraIcon,
   ChatIcon,
   GaugeIcon,
+  GlobeIcon,
   HouseIcon,
   MicIcon,
   SettingsIcon,
@@ -33,6 +34,7 @@ const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
   { id: 'casa', label: 'Casa', Icon: HouseIcon },
   { id: 'desempenho', label: 'Desempenho', Icon: GaugeIcon },
+  { id: 'navegador', label: 'Navegador', Icon: GlobeIcon },
 ]
 
 /** Gavetas: uma por vez, então o botão aceso quer dizer "é esta que está aberta". */

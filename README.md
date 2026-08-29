@@ -344,9 +344,10 @@ src/
 │   ├── home/             HomeScreen + JarvisCore — o HUD de fundo
 │   ├── chat/             ChatWindow (a janelinha) + ChatPanel, MessageList, ChatInput
 │   ├── casa/             CasaWindow + CasaPanel — os aparelhos da rede
+│   ├── navegador/        NavegadorWindow + NavegadorPanel — as abas embutidas
 │   ├── music/            NowPlayingWidget — o cartão de "tocando agora"
 │   ├── diagnostics/      as seções da bancada de testes
-│   ├── sheets/           as gavetas da borda: diagnóstico e configurações
+│   ├── sheets/           SettingsSheet — a gaveta da borda (config + diagnóstico)
 │   ├── tray-window/      TitleBar, BottomNav, HudFrame — o chrome da janela
 │   ├── settings/         SettingsForm
 │   └── ui/               Button, Input, Sheet, FloatingPanel, icons — genéricos
@@ -545,9 +546,11 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 | `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`, `stop_speaking`               | `commands/voice.rs`      |
 | `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`                                 | `commands/automation.rs` |
 | `discover_devices`                                                                                                            | `commands/casa.rs`       |
+| `browser_open`, `browser_search`, `browser_state`, `browser_select`, `browser_close`, `browser_navigate`, `browser_history`, `browser_bounds`, `browser_external` | `commands/navegador.rs`  |
 
-**Controlar o PC não adicionou nenhum comando.** Abrir site, abrir programa, volume e
-mídia são chamados pelo agente dentro do `send_message` — não pelo frontend. É por isso
+**Controlar o PC quase não adicionou comando.** Abrir programa, volume e mídia são
+chamados pelo agente dentro do `send_message` — não pelo frontend. (Abrir site saiu dessa
+lista quando virou aba interna: hoje ele PEDE à tela, como a webcam.) É por isso
 que a validação de entrada mora no Rust: o que chega em `core::system` veio de um modelo
 de linguagem interpretando fala, e essa é a fronteira de confiança do app.
 
@@ -632,6 +635,36 @@ receita de pão de queijo inventada, com tempo de forno que não estava em trech
 A 0, e com a regra "se pedirem passo a passo e os trechos só tiverem informação geral,
 diga isso", a resposta virou _"os trechos fornecidos não contêm informações específicas
 sobre como fazer pão de queijo"_. Preferir o "não sei" é o ponto.
+
+---
+
+## Navegador embutido
+
+"abre o youtube" e "pesquisa preço do dólar" não jogam mais a pessoa para fora do app:
+abrem uma **aba dentro do Jarvis**, numa janelinha com barra de abas e barra de endereço.
+
+**Cada aba é um webview filho da janela, não um `<iframe>`.** A escolha não foi de gosto —
+foi medida. Google, YouTube e DuckDuckGo respondem `X-Frame-Options: SAMEORIGIN`, e um
+iframe com qualquer um deles fica em branco. Como "abre o youtube" é justamente o exemplo
+canônico do roteador de intenção, o iframe estava reprovado antes de começar. O preço é a
+_feature_ `unstable` do Tauri, que é o que destrava o `Window::add_child`.
+
+A consequência que explica quase todo o código de `NavegadorPanel.tsx`: **um webview é uma
+camada nativa acima do HTML**. Nenhum CSS o alcança e nada o posiciona sozinho. Então o
+painel desenha um buraco, mede o retângulo com `getBoundingClientRect` e conta para o Rust
+onde encaixá-lo — a cada arrasto, a cada _resize_, e com um `null` ao fechar. Pela mesma
+razão as abas só aparecem quando o painel do navegador é o da **frente**: sendo uma camada
+de cima, elas cobririam a conversa aberta por cima delas.
+
+O agente não abre nada disso direto. `open_site` e `web_search` devolvem um `AcaoDeUi`
+(`abrir-site` / `pesquisar`) e quem age é a tela — o `core` não conhece o Tauri, e é a
+store que precisa abrir a janelinha ANTES do webview nascer, para que exista um buraco a
+medir. O caminho de fora continua vivo no botão ↗ da barra de endereço: senha salva,
+extensão e impressão ainda pedem o navegador de verdade.
+
+A busca mantém a regra que já tinha: **a aba só abre quando mandaram pesquisar**. "Quem foi
+Santos Dumont?" é pergunta e a resposta vem na conversa; abrir uma página no meio de um papo
+é interromper, não ajudar. O que mudou é só o destino da aba.
 
 ---
 

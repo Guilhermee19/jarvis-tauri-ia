@@ -16,6 +16,9 @@ mod janela;
 mod target;
 
 pub use audio::{nudge_volume, press, set_volume, toggle_mute, MediaKey};
+// A mesma normalização que o `abrir_site` usa, para o navegador interno não ter uma
+// segunda ideia do que é uma URL válida.
+pub use target::{search_url, site};
 pub use desempenho::{DesempenhoState, Metricas};
 pub use janela::{esta_parado, titulo_do_spotify};
 
@@ -97,11 +100,6 @@ fn site_conhecido(nome: &str) -> Option<&'static str> {
         .iter()
         .find(|(servico, _)| servico.eq_ignore_ascii_case(nome))
         .map(|(_, url)| *url)
-}
-
-/// Pesquisa no Google abrindo o navegador padrão.
-pub fn search_web(query: &str) -> Result<(), SystemError> {
-    shell_open(target::search_url(query)?.as_str())
 }
 
 /// Abre um `spotify:` — a faixa exata, ou a busca dentro do app.

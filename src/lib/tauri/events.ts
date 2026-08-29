@@ -43,7 +43,11 @@ export interface Faixa {
  * carrega dados.
  */
 export type UiAction =
-  { tipo: 'webcam-on' } | { tipo: 'webcam-off' } | { tipo: 'tocando'; faixa: Faixa }
+  | { tipo: 'webcam-on' }
+  | { tipo: 'webcam-off' }
+  | { tipo: 'tocando'; faixa: Faixa }
+  | { tipo: 'abrir-site'; url: string }
+  | { tipo: 'pesquisar'; query: string }
 
 type JarvisEventName = (typeof JarvisEvent)[keyof typeof JarvisEvent]
 

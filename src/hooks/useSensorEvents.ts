@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { JarvisEvent, onJarvisEvent, type UiAction } from '@/lib/tauri'
-import { useNowPlayingStore, useSensorStore } from '@/stores'
+import { useNavegadorStore, useNowPlayingStore, useSensorStore } from '@/stores'
 
 /**
  * Assina os eventos de sensor uma vez só, no shell da janela.
@@ -17,6 +17,8 @@ export function useSensorEvents() {
   const setTtsLevel = useSensorStore((state) => state.setTtsLevel)
   const setWebcam = useSensorStore((state) => state.setWebcam)
   const mostrarFaixa = useNowPlayingStore((state) => state.mostrar)
+  const abrirSite = useNavegadorStore((state) => state.abrirSite)
+  const pesquisar = useNavegadorStore((state) => state.pesquisar)
 
   useEffect(() => {
     const pendentes: UnlistenFn[] = []
@@ -47,6 +49,15 @@ export function useSensorEvents() {
           case 'tocando':
             mostrarFaixa(acao.faixa)
             break
+          // "abre o youtube" abre uma aba AQUI DENTRO, e pelo mesmo caminho da barra de
+          // endereço: é a store que abre a janelinha antes de criar o webview, e sem essa
+          // ordem a aba nasceria sem um buraco onde caber.
+          case 'abrir-site':
+            void abrirSite(acao.url)
+            break
+          case 'pesquisar':
+            void pesquisar(acao.query)
+            break
         }
       }),
     )
@@ -55,5 +66,5 @@ export function useSensorEvents() {
       cancelled = true
       pendentes.forEach((fn) => fn())
     }
-  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa])
+  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa, abrirSite, pesquisar])
 }

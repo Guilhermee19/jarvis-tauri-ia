@@ -98,6 +98,15 @@ pub enum AcaoDeUi {
     Tocando {
         faixa: music::Faixa,
     },
+    /// Abre um endereço numa aba do navegador interno.
+    ///
+    /// Vem como pedido à UI, e não como coisa feita aqui, porque as abas são webviews do
+    /// Tauri e este módulo não o conhece — a mesma razão da webcam. E é o caminho certo
+    /// por um segundo motivo: quem abre a janelinha do navegador é a tela, e ela precisa
+    /// estar aberta ANTES do webview nascer, para ter um buraco a medir.
+    AbrirSite { url: String },
+    /// Uma busca numa aba nova.
+    Pesquisar { query: String },
 }
 
 /// O que [`handle`] devolve: a fala, e o log quando houve comando ou mudança na memória.
@@ -152,9 +161,9 @@ pub async fn handle(
             log.acao(&acao);
 
             if pediu_a_aba(dito) {
-                let relogio = Instant::now();
-                let abriu = system::search_web(query).map(|()| String::new());
-                log.resultado(&abriu, relogio.elapsed().as_millis());
+                ui = Some(AcaoDeUi::Pesquisar {
+                    query: query.clone(),
+                });
             }
 
             memoria.registrar_acao(Acao {
@@ -313,6 +322,26 @@ pub async fn handle(
             } else {
                 "Isso eu já sabia.".to_owned()
             }
+        }
+
+        // ---- o navegador interno ------------------------------------------
+        //
+        // Abrir um site deixou de sair para o navegador do sistema: agora vira uma aba
+        // aqui dentro. O caminho de fora continua existindo no botão da barra de
+        // endereço — senha salva, extensão e impressão ainda precisam dele.
+        Intent::OpenSite { url } => {
+            log.acao(&acao);
+            ui = Some(AcaoDeUi::AbrirSite { url: url.clone() });
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: true,
+            });
+            memoria.atualizar_rotinas();
+
+            format!("Abrindo {url}.")
         }
 
         // ---- a casa inteligente -------------------------------------------
@@ -634,10 +663,6 @@ fn assunto_de(fato: &str) -> String {
 /// TTS tem o que falar sem esperar nada.
 fn execute(acao: &Intent) -> Result<String, SystemError> {
     Ok(match acao {
-        Intent::OpenSite { url } => {
-            system::open_url(url)?;
-            format!("Abrindo {url}.")
-        }
         Intent::OpenApp { name } => {
             system::open_app(name)?;
             format!("Abrindo o {name}.")
@@ -684,6 +709,7 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. }
+        | Intent::OpenSite { .. }
         | Intent::SmartHome { .. }
         | Intent::SmartColor { .. }
         | Intent::SmartBright { .. } => String::new(),
@@ -1177,6 +1203,28 @@ mod tests {
         ] {
             assert!(!pediu_a_aba(papo), "não devia abrir a aba: {papo:?}");
         }
+    }
+
+    /// O `AcaoDeUi` é espelhado À MÃO em `src/lib/tauri/events.ts`, e nada no build
+    /// liga um lado ao outro. Renomear uma variante aqui não quebra nada que apite: o
+    /// sintoma seria "pedi para abrir o site e não aconteceu nada", sem erro nenhum,
+    /// nem no Rust nem no console. Este teste é o apito.
+    #[test]
+    fn o_pedido_de_aba_sai_na_forma_que_a_tela_espera() {
+        assert_eq!(
+            serde_json::to_value(AcaoDeUi::AbrirSite {
+                url: "https://www.youtube.com".to_owned(),
+            })
+            .unwrap(),
+            serde_json::json!({ "tipo": "abrir-site", "url": "https://www.youtube.com" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AcaoDeUi::Pesquisar {
+                query: "preço do dólar".to_owned(),
+            })
+            .unwrap(),
+            serde_json::json!({ "tipo": "pesquisar", "query": "preço do dólar" }),
+        );
     }
 
     /// O modelo alucina número grande, e "aumenta 200" não pode estourar o `i8` nem

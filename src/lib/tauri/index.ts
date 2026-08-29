@@ -12,6 +12,17 @@ export {
   sendIrKey,
   setLight,
 } from './casa'
+export {
+  browserBounds,
+  browserClose,
+  browserExternal,
+  browserHistory,
+  browserNavigate,
+  browserOpen,
+  browserSearch,
+  browserSelect,
+  browserState,
+} from './navegador'
 export { clearHistory, getHistory, sendMessage } from './chat'
 export { getSettings, saveSettings } from './settings'
 export {

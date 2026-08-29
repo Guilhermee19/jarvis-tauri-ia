@@ -1,5 +1,6 @@
 export { useCasaStore } from './casaStore'
 export { useDesempenhoStore } from './desempenhoStore'
+export { abaAtiva, useNavegadorStore } from './navegadorStore'
 export { useChatStore } from './chatStore'
 export {
   faixaDoTitulo,

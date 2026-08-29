@@ -213,3 +213,13 @@ export function GaugeIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function GlobeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17" />
+      <path d="M12 3.5a13 13 0 0 1 0 17a13 13 0 0 1 0-17Z" />
+    </Svg>
+  )
+}

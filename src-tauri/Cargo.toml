@@ -15,7 +15,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `unstable` destrava `Window::add_child`, que é o que permite um NAVEGADOR de verdade
+# dentro do app: um webview filho, mesmo motor do Edge, sem as restrições de `<iframe>`.
+# Medido: Google, YouTube e DuckDuckGo respondem `X-Frame-Options: SAMEORIGIN` e ficariam
+# em branco num iframe — e "abre o youtube" é o exemplo canônico do roteador.
+#
+# "Unstable" aqui quer dizer que a API pode mudar entre versões menores do Tauri, não que
+# ela seja experimental em produção — é o mesmo webview que a janela principal usa.
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
