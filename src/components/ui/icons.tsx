@@ -223,3 +223,17 @@ export function GlobeIcon(props: IconProps) {
     </Svg>
   )
 }
+
+/** Nós ligados — o mapa do conhecimento. */
+export function GrafoIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="5" cy="6" r="2" />
+      <circle cx="19" cy="8" r="2" />
+      <circle cx="12" cy="17" r="2.5" />
+      <path d="M6.8 7.2 10.4 15" />
+      <path d="M17.4 9.5 13.6 15.3" />
+      <path d="M7 6.4h10" />
+    </Svg>
+  )
+}

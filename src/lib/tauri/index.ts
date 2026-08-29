@@ -1,3 +1,4 @@
+export { knowledgeGraph, noteBody } from './conhecimento'
 export { call, isTauriRuntime, TauriCommandError } from './client'
 export {
   deviceState,

@@ -1,6 +1,7 @@
 export { useCasaStore } from './casaStore'
 export { useDesempenhoStore } from './desempenhoStore'
 export { abaAtiva, useNavegadorStore } from './navegadorStore'
+export { useConhecimentoStore, useGrafoVisivel } from './conhecimentoStore'
 export { useChatStore } from './chatStore'
 export {
   faixaDoTitulo,
