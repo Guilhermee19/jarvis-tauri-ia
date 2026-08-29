@@ -11,8 +11,10 @@ pub mod chat;
 pub mod memory;
 pub mod music;
 pub mod search;
+pub mod lugar;
 pub mod services;
 pub mod system;
+pub mod tempo;
 pub mod vision;
 pub mod voice;
 

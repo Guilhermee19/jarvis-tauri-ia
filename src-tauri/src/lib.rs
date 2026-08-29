@@ -73,6 +73,9 @@ pub fn run() {
             // perguntar — e ficam abertos depois, porque uso de CPU é uma taxa entre
             // duas leituras.
             app.manage(crate::core::system::DesempenhoState::new());
+            // Onde o computador está, com cache de dez minutos. Nada é consultado
+            // aqui: a primeira pergunta sobre o tempo é que acorda o Windows.
+            app.manage(crate::core::lugar::Localizador::new());
             // As abas do navegador interno. Vazio até alguém pedir um site.
             app.manage(crate::navegador::Navegador::new());
             // As chaves dos aparelhos da casa. Fica ao lado do `AppState` e não dentro

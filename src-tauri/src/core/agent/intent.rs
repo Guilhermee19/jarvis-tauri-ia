@@ -53,6 +53,24 @@ pub enum Intent {
     WebSearch {
         query: String,
     },
+    /// "como está o tempo?", "vai chover hoje?" — onde ele ESTÁ.
+    ///
+    /// Chaves vazias, como o [`Intent::VolumeMute`]: sem campo nenhum para preencher, não
+    /// há campo para alucinar.
+    Weather {},
+    /// "como está o tempo em Lisboa?" — numa cidade que ele nomeou.
+    ///
+    /// **Verbo separado, e não um campo opcional no [`Intent::Weather`].** Foi medido
+    /// contra o modelo de 3B: com um `local` opcional, ele preenchia a cidade em TODA
+    /// pergunta, inclusive nas que não citavam lugar nenhum — inventando "São Paulo" para
+    /// "vai chover hoje?". A causa é o schema: um campo declarado é um campo que a
+    /// gramática deixa emitir, e o modelo prefere emitir a omitir.
+    ///
+    /// É a mesma lição que separou `smart_home`/`smart_color`/`smart_bright`: mais
+    /// entradas na lista de verbos, menos campos por entrada.
+    WeatherAt {
+        local: String,
+    },
     /// "toque Charlie Brown Jr só os loucos sabem no spotify". Diferente de
     /// [`Intent::OpenApp`], que só abre o programa, e de [`Intent::MediaPlayPause`],
     /// que retoma o que já estava tocando.
@@ -146,11 +164,13 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 21] = [
+const ACOES: [&str; 23] = [
     "smart_home",
     "smart_color",
     "smart_bright",
     "play_music",
+    "weather",
+    "weather_at",
     "webcam_on",
     "webcam_off",
     "look",
@@ -185,6 +205,7 @@ pub fn schema() -> serde_json::Value {
             "url":      { "type": "string" },
             "name":     { "type": "string" },
             "query":    { "type": "string" },
+            "local":    { "type": "string" },
             "fact":     { "type": "string" },
             "about":    { "type": "string" },
             "nickname": { "type": "string" },
@@ -337,6 +358,9 @@ media_next        pular para a PRÓXIMA música/faixa.
 media_previous    voltar para a música/faixa ANTERIOR.
 play_music        TOCAR uma música específica que ele nomeou. `query` = artista e nome
                   da música, sem \"toca\", sem \"põe\" e sem \"no spotify\".
+weather           tempo, chuva ou temperatura ONDE ELE ESTÁ. Sem argumento nenhum.
+weather_at        tempo, chuva ou temperatura numa CIDADE que ele nomeou na frase.
+                  `local` = só o nome da cidade, copiado da frase dele.
 webcam_on         ligar a câmera na tela.
 webcam_off        desligar a câmera.
 look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
@@ -344,6 +368,8 @@ look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
                   segurando; \"tela\" quando ele fala do que está NA TELA, numa janela,
                   num site ou numa mensagem de erro; \"auto\" quando ele não disser.
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
+                  Tempo, chuva e temperatura NÃO são web_search — são weather, mesmo com
+                  cidade no meio da frase.
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
 smart_home        LIGAR ou DESLIGAR um aparelho da casa (luz, lâmpada, tomada).
@@ -516,6 +542,14 @@ mod tests {
                     query: "preço do dólar".to_owned(),
                 },
             ),
+            (r#"{"action":"weather"}"#, Intent::Weather {}),
+            (
+                r#"{"action":"weather_at","local":"Lisboa"}"#,
+                Intent::WeatherAt {
+                    local: "Lisboa".to_owned(),
+                },
+            ),
+
             (
                 r#"{"action":"remember","fact":"Acorda 6h30."}"#,
                 Intent::Remember {
@@ -580,10 +614,27 @@ mod tests {
             "variante sem amostra, ou ação no schema que o enum não conhece"
         );
 
+        let propriedades = schema["properties"]
+            .as_object()
+            .expect("o schema precisa listar as propriedades");
+
         for (json, esperado) in amostras {
             let intent: Intent = serde_json::from_str(json)
                 .unwrap_or_else(|error| panic!("não parseou {json}: {error}"));
             assert_eq!(intent, esperado);
+
+            // **Todo campo da amostra tem que existir no schema.** O Ollama usa este
+            // schema para RESTRINGIR a geração: um campo que não está aqui é impossível
+            // de emitir, por mais claro que o prompt seja. Aconteceu com o `local` do
+            // `weather` — o modelo roteava certo e devolvia a cidade vazia sempre, e a
+            // culpa parecia ser dele.
+            let amostra: serde_json::Value = serde_json::from_str(json).expect("json");
+            for campo in amostra.as_object().expect("objeto").keys() {
+                assert!(
+                    propriedades.contains_key(campo),
+                    "o campo {campo} não está no schema, então o modelo não consegue emiti-lo"
+                );
+            }
 
             let verbo = serde_json::to_value(&intent).expect("serializa")["action"].clone();
             assert!(acoes.contains(&verbo), "{verbo} não está no schema");
@@ -675,6 +726,14 @@ mod tests {
             "deixa a luz mais quente",
             "a luz dessa sala é muito fraca pra ler",
             "azul é a minha cor favorita",
+            // O tempo, nas formas em que a pergunta realmente aparece. As três primeiras
+            // têm que sair com `local` VAZIO, e as duas últimas com a cidade — confundir
+            // as duas coisas é o jeito mais fácil deste verbo nascer quebrado.
+            "como está o tempo?",
+            "vai chover hoje?",
+            "que temperatura tá fazendo aí fora",
+            "como está o tempo em Lisboa",
+            "vai chover amanhã em São Paulo?",
         ];
 
         let http = client();

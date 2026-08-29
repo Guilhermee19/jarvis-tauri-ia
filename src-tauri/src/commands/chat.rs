@@ -5,6 +5,7 @@ use crate::core::automation::AutomationState;
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
 use crate::core::memory::Memoria;
+use crate::core::lugar::Localizador;
 use crate::core::services::Services;
 use crate::state::AppState;
 
@@ -18,6 +19,10 @@ use crate::state::AppState;
 const UI_ACTION_EVENT: &str = "jarvis://ui-action";
 
 #[tauri::command]
+// Oito parâmetros porque no Tauri a lista de argumentos É o mecanismo de injeção: cada
+// `State` que o comando precisa entra como um parâmetro, e agrupá-los numa struct só
+// para agradar o lint criaria um tipo que existe por causa do lint.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     content: String,
     app: AppHandle,
@@ -26,6 +31,7 @@ pub async fn send_message(
     services: State<'_, Services>,
     automation: State<'_, AutomationState>,
     chaveiro: State<'_, Chaveiro>,
+    localizador: State<'_, Localizador>,
 ) -> Result<ChatResponse, String> {
     let content = content.trim().to_owned();
     if content.is_empty() {
@@ -50,6 +56,7 @@ pub async fn send_message(
         memoria.inner(),
         automation.inner(),
         chaveiro.inner(),
+        localizador.inner(),
         &content,
     )
     .await

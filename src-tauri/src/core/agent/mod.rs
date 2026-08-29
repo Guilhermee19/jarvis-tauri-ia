@@ -28,6 +28,8 @@ use intent::Intent;
 use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
 use crate::core::casa::chaveiro::{Busca, Chaveiro};
+use crate::core::lugar::Localizador;
+use crate::core::tempo;
 use crate::core::casa::controle::{self, Ajuste};
 use crate::core::memory::{Acao, Memoria};
 use crate::core::music;
@@ -125,6 +127,7 @@ pub async fn handle(
     memoria: &Memoria,
     automation: &AutomationState,
     chaveiro: &Chaveiro,
+    localizador: &Localizador,
     dito: &str,
 ) -> Result<Outcome, AgentError> {
     // Modelo vazio desliga o intérprete e volta ao mock. É a saída de emergência sem
@@ -322,6 +325,29 @@ pub async fn handle(
             } else {
                 "Isso eu já sabia.".to_owned()
             }
+        }
+
+        // ---- o tempo lá fora ----------------------------------------------
+        Intent::Weather {} | Intent::WeatherAt { .. } => {
+            log.acao(&acao);
+            let relogio = Instant::now();
+
+            let pedido = match &acao {
+                Intent::WeatherAt { local } => local.as_str(),
+                _ => "",
+            };
+            let frase = ver_o_tempo(http, settings, localizador, pedido).await;
+            log.desfecho(None, relogio.elapsed().as_millis());
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: true,
+            });
+            memoria.atualizar_rotinas();
+
+            frase
         }
 
         // ---- o navegador interno ------------------------------------------
@@ -710,10 +736,53 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::Forget { .. }
         | Intent::Alias { .. }
         | Intent::OpenSite { .. }
+        | Intent::Weather { .. }
+        | Intent::WeatherAt { .. }
         | Intent::SmartHome { .. }
         | Intent::SmartColor { .. }
         | Intent::SmartBright { .. } => String::new(),
     })
+}
+
+/// Descobre ONDE e responde que tempo faz lá.
+///
+/// **Nunca devolve `Err`**, pela mesma razão da casa inteligente: "não achei nenhum lugar
+/// chamado Xique-Xique" é uma resposta de conversa, não o backend caindo. Cada erro do
+/// caminho vira a frase que ele fala.
+///
+/// A ordem das três fontes de "onde" não é arbitrária:
+///
+/// 1. **O lugar que ele nomeou.** Perguntar do tempo em Lisboa não pode responder de casa.
+/// 2. **A cidade das configurações.** Quem preencheu esse campo o fez para vencer a
+///    detecção — VPN, localização desligada, ou preferência.
+/// 3. **O Windows.** O caminho normal, e o único que não precisa de configuração.
+async fn ver_o_tempo(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    localizador: &Localizador,
+    local: &str,
+) -> String {
+    let pedido = local.trim();
+    let casa = settings.cidade.trim();
+
+    let por_nome = if pedido.is_empty() { casa } else { pedido };
+
+    let (onde, nome) = if por_nome.is_empty() {
+        match localizador.onde_estou(&settings.assistant_name) {
+            Ok(coordenadas) => (coordenadas, None),
+            Err(erro) => return erro.to_string(),
+        }
+    } else {
+        match tempo::procurar(http, por_nome).await {
+            Ok(lugar) => (lugar.coordenadas, Some(lugar.completo())),
+            Err(erro) => return erro.to_string(),
+        }
+    };
+
+    match tempo::consultar(http, onde).await {
+        Ok(previsao) => previsao.frase(nome.as_deref()),
+        Err(erro) => erro.to_string(),
+    }
 }
 
 /// Acha o aparelho pelo nome dito e manda o comando.

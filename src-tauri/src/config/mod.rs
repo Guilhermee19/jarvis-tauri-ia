@@ -138,6 +138,13 @@ pub struct AppSettings {
     /// do primeiro upload, sem passo extra.
     pub tts_voice_jarvis: String,
     pub tts_voice_ultron: String,
+    /// A cidade de casa, para a previsão do tempo quando ele não nomear um lugar.
+    ///
+    /// **Vazio = perguntar ao Windows**, que é o caminho normal e não precisa de
+    /// configuração nenhuma. Este campo é a saída para quem tem a localização desligada
+    /// em Privacidade, para quem usa VPN (que joga o IP para outro país), e para quem
+    /// simplesmente prefere não ligar o serviço de localização.
+    pub cidade: String,
     /// Onde o Ollama escuta. Local por padrão; o campo existe para apontar para outra
     /// máquina da rede, que é como um notebook fraco usa o desktop de casa.
     pub ollama_url: String,
@@ -214,6 +221,7 @@ impl Default for AppSettings {
             piper_voice_ultron: String::new(),
             tts_voice_jarvis: String::new(),
             tts_voice_ultron: String::new(),
+            cidade: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
             ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
             memoria_path: String::new(),

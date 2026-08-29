@@ -34,6 +34,7 @@ interface SettingsFormProps {
 export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: SettingsFormProps) {
   const [apiKey, setApiKey] = useState(initial.anthropicApiKey)
   const [assistantName, setAssistantName] = useState(initial.assistantName)
+  const [cidade, setCidade] = useState(initial.cidade)
   const [ollamaUrl, setOllamaUrl] = useState(initial.ollamaUrl)
   const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
   const [memoriaPath, setMemoriaPath] = useState(initial.memoriaPath)
@@ -79,6 +80,14 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setApiKey(event.target.value)}
         placeholder="sk-ant-…"
         hint="Com ela, ele usa o Claude para OLHAR (tela e webcam) — identifica objeto e lê texto muito melhor que o modelo local, e custa ~US$ 0,01 por pergunta com imagem. Vazia, ele olha pelo Ollama, de graça. Guardada em texto puro no arquivo de config."
+      />
+
+      <Input
+        label="Minha cidade"
+        value={cidade}
+        onChange={(event) => setCidade(event.target.value)}
+        placeholder="vazio: ele pergunta ao Windows"
+        hint="Só para a previsão do tempo, e só quando você não nomear uma cidade. Vazio, ele usa a localização do Windows — preencha se ela estiver desligada em Privacidade, se você usa VPN, ou se preferir não ligar o serviço."
       />
 
       <Input
@@ -319,6 +328,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               // voz é escolhido no Diagnóstico, não aqui.
               ...initial,
               anthropicApiKey: apiKey.trim(),
+              cidade: cidade.trim(),
               // Nome vazio cai no nome do TEMA escolhido, não no "Jarvis" fixo — senão
               // apagar o campo com o Ultron ativo devolveria o gatilho errado.
               assistantName: assistantName.trim() || NOME_DA_PERSONA[persona],

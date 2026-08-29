@@ -68,6 +68,14 @@ export interface AppSettings {
    */
   ttsVoiceJarvis: string
   ttsVoiceUltron: string
+  /**
+   * A cidade de casa, para a previsão do tempo quando ele não nomear um lugar.
+   *
+   * Vazio = perguntar ao Windows, que é o caminho normal e não precisa de configuração.
+   * Este campo é a saída para quem tem a localização desligada em Privacidade, para quem
+   * usa VPN (que joga o IP para outro país), e para quem prefere não ligar o serviço.
+   */
+  cidade: string
   /** Onde o Ollama escuta. Aponta para outra máquina se o Ollama não roda aqui. */
   ollamaUrl: string
   /** Modelo que interpreta, conversa E enxerga. Vazio DESLIGA o intérprete. */
@@ -159,6 +167,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   piperVoiceUltron: '',
   ttsVoiceJarvis: '',
   ttsVoiceUltron: '',
+  cidade: '',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'qwen2.5vl:3b',
   memoriaPath: '',
