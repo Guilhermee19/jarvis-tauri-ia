@@ -123,6 +123,8 @@ pub fn run() {
             commands::voice::speak_text,
             commands::voice::stop_speaking,
             commands::voice::transcribe,
+            commands::conhecimento::knowledge_graph,
+            commands::conhecimento::note_body,
             commands::casa::discover_devices,
             commands::casa::known_devices,
             commands::casa::import_tuya_devices,

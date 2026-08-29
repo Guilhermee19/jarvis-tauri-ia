@@ -1307,12 +1307,20 @@ mod tests {
             // ---- 4 e 5. a manutenção de memória, que hoje vem ANTES da fala ----
             let troca = format!("Usuário: {dito}\nAssistente: {resposta}");
 
+            // O índice REAL, e não uma lista vazia: sem ele o modelo não tem como
+            // escolher um assunto que já existe nem como ligar a nota às outras — e o
+            // que se mediria seria um caminho que não acontece no app.
+            let memoria = crate::core::memory::Memoria::new(std::path::Path::new(
+                &std::env::var("JARVIS_MEMORIA").unwrap_or_else(|_| "../memoria".to_owned()),
+            ));
+            let indice = memoria.nomes_das_notas();
+
             let relogio = Instant::now();
             let assunto = converse::destilar_assunto(
                 &http,
                 &settings.ollama_url,
                 &settings.ollama_model,
-                &[],
+                &indice,
                 &troca,
             )
             .await;
@@ -1320,16 +1328,22 @@ mod tests {
 
             if let Ok(Some(assunto)) = assunto {
                 let relogio = Instant::now();
-                let _ = converse::escrever_nota(
+                let nota = converse::escrever_nota(
                     &http,
                     &settings.ollama_url,
                     &settings.ollama_model,
                     &assunto,
-                    "",
+                    &memoria.corpo_da_nota(&assunto),
                     &troca,
-                    &[],
+                    &indice,
                 )
                 .await;
+
+                // Quantos `[[links]]` a nota nova traz. É o que diz se o grafo vai crescer
+                // sozinho ou continuar sendo pontos soltos ligados por semelhança.
+                if let Ok(nota) = &nota {
+                    println!("nota sobre {assunto:?}: {} link(s)", nota.matches("[[").count());
+                }
                 etapas.push(("escrever nota", relogio.elapsed().as_secs_f32()));
             }
 

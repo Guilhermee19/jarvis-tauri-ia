@@ -462,7 +462,10 @@ COMO A NOTA DEVE SER:
   não entra.
 - Use `## Seções` quando houver mais de um aspecto. Com pouco conteúdo, não invente
   seção — um parágrafo basta.
-- Cite outras notas com [[nome-da-nota]] quando o assunto encostar nelas.
+- LIGUE a nota às outras. Sempre que o texto mencionar algo que tem nota na lista
+  abaixo, escreva o nome dele como [[nome-da-nota]], copiando o nome EXATO da lista.
+  Uma nota bem ligada cita de uma a três outras. Só não cite quando o assunto
+  realmente não encostar em nenhuma.
 - No máximo 15 linhas. Denso, sem enrolação.
 
 O QUE PRESERVAR:

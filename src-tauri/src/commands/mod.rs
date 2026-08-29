@@ -6,6 +6,7 @@
 
 pub mod automation;
 pub mod casa;
+pub mod conhecimento;
 pub mod chat;
 pub mod navegador;
 pub mod settings;

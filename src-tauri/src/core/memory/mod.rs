@@ -27,6 +27,7 @@
 //! não abrir.
 
 mod busca;
+pub mod grafo;
 mod nota;
 mod rotinas;
 
