@@ -18,8 +18,9 @@
 //! `setup` do app. Quem nunca usa a voz não paga nada, e não existe um caminho de
 //! falha no boot por causa de um arquivo que talvez nem tenha sido baixado.
 
+use std::fs::File;
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -28,6 +29,12 @@ use crate::core::lock;
 /// Sem isto, uma janela preta de console pisca na tela toda vez que um serviço sobe.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Onde a saída de cada serviço é despejada, dentro da pasta dele.
+///
+/// Um por serviço, sobrescrito a cada subida: é material de diagnóstico da vez, não
+/// histórico — e o que interessa é sempre por que ele não subiu AGORA.
+const ARQUIVO_DE_LOG: &str = "servico.log";
 
 /// Porta do whisper-server. Alta e sem uso conhecido — o 8080 do padrão dele colide
 /// com metade dos projetos web que alguém possa ter rodando.
@@ -119,8 +126,7 @@ pub enum ServiceError {
     )]
     ChatterboxIncompleto(String),
     #[error(
-        "o {servico} subiu e morreu na hora. O erro dele não passa por aqui: rode o \
-         servidor à mão em {pasta} para ver o motivo."
+        "o {servico} subiu e morreu na hora. O motivo está em {pasta}\\servico.log."
     )]
     MorreuAoSubir { servico: String, pasta: String },
     #[error("o {0} subiu mas não respondeu a tempo — veja se outro programa está usando a porta")]
@@ -221,7 +227,7 @@ impl Services {
             // As DLLs (ggml, openblas) ficam ao lado do exe.
             .current_dir(&pasta);
 
-        let filho = self.spawn("whisper-server", comando)?;
+        let filho = self.spawn("whisper-server", comando, Some(&pasta))?;
 
         // Carregar o modelo leva alguns segundos na primeira vez.
         match self.esperar(http, &url, filho, Duration::from_secs(60)).await {
@@ -280,7 +286,7 @@ impl Services {
             // outro lugar ele sobe sem achar nem os clipes de voz.
             .current_dir(&pasta);
 
-        let filho = self.spawn("chatterbox", comando)?;
+        let filho = self.spawn("chatterbox", comando, Some(&pasta))?;
 
         match self.esperar(http, &url, filho, Duration::from_secs(180)).await {
             Espera::Atendeu => Ok(url),
@@ -337,7 +343,7 @@ impl Services {
             .args(["--port", &PORTA_PIPER.to_string()])
             .current_dir(&pasta);
 
-        let filho = self.spawn("piper", comando)?;
+        let filho = self.spawn("piper", comando, Some(&pasta))?;
 
         match self.esperar(http, &url, filho, Duration::from_secs(30)).await {
             Espera::Atendeu => Ok(url),
@@ -363,7 +369,9 @@ impl Services {
         let mut comando = Command::new("ollama");
         comando.arg("serve");
 
-        let Ok(filho) = self.spawn("ollama", comando) else {
+        // Sem pasta: o Ollama não é nosso, não sabemos onde ele mora, e o erro bom dele
+        // vem do `AgentError::Offline` de qualquer forma.
+        let Ok(filho) = self.spawn("ollama", comando, None) else {
             return false;
         };
 
@@ -378,11 +386,44 @@ impl Services {
     ///
     /// O índice, e não o último da lista: dois `ensure_*` concorrentes intercalariam os
     /// `push`, e vigiar "o último" faria um esperar pela morte do outro.
-    fn spawn(&self, servico: &str, mut comando: Command) -> Result<usize, ServiceError> {
+    fn spawn(
+        &self,
+        servico: &str,
+        mut comando: Command,
+        pasta: Option<&Path>,
+    ) -> Result<usize, ServiceError> {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             comando.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        // **Sem isto, um serviço em Python morre antes de abrir a porta.**
+        //
+        // O `CREATE_NO_WINDOW` tira o console, e com ele o stdout do filho deixa de ser
+        // válido. Um `.exe` nativo como o whisper-server não liga; o Flask do Piper imprime
+        // o banner de inicialização assim que sobe, e morre em
+        // `OSError: [Errno 9] Bad file descriptor` — sem nunca escutar na porta, e sem
+        // deixar rastro, porque o rastro ia justamente para o descritor quebrado.
+        //
+        // O arquivo, e não `Stdio::null()`, porque foi exatamente a INVISIBILIDADE que
+        // custou caro: a mensagem de erro do app mandava rodar o servidor à mão para
+        // descobrir o motivo. Agora o motivo fica no disco.
+        comando.stdin(Stdio::null());
+
+        match pasta.map(|pasta| pasta.join(ARQUIVO_DE_LOG)).map(File::create) {
+            Some(Ok(saida)) => {
+                let erros = saida.try_clone().map_err(|error| ServiceError::NaoSubiu {
+                    servico: servico.to_owned(),
+                    detalhe: error.to_string(),
+                })?;
+                comando.stdout(saida).stderr(erros);
+            }
+            // Sem pasta (ou sem permissão de escrita nela) o serviço ainda tem que subir:
+            // perder o log é ruim, não subir é pior.
+            _ => {
+                comando.stdout(Stdio::null()).stderr(Stdio::null());
+            }
         }
 
         let filho = comando.spawn().map_err(|error| ServiceError::NaoSubiu {
@@ -469,6 +510,46 @@ enum Espera {
 #[cfg(test)]
 mod tests {
     use super::threads_para;
+
+    /// Sobe um serviço de verdade pelo caminho do app e diz se ele atendeu.
+    ///
+    /// Existe por causa de um bug que só aparece AQUI: o `CREATE_NO_WINDOW` tira o console
+    /// do filho, e um serviço em Python morre ao imprimir o banner de inicialização —
+    /// `OSError: [Errno 9] Bad file descriptor` — sem nunca abrir a porta. O
+    /// `fala_de_verdade` não pega isso, porque ele conversa com um servidor já de pé.
+    ///
+    /// ```text
+    /// JARVIS_SERVICO=piper cargo test --lib -- --ignored --nocapture sobe_o_servico_de_verdade
+    /// ```
+    #[test]
+    #[ignore]
+    fn sobe_o_servico_de_verdade() {
+        let qual = std::env::var("JARVIS_SERVICO").unwrap_or_else(|_| "piper".to_owned());
+        let data_dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+            .join("com.jarvis.app");
+
+        let servicos = super::Services::new();
+        let http = reqwest::Client::new();
+
+        let subiu = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                match qual.as_str() {
+                    "whisper" => servicos.ensure_whisper(&http, &data_dir).await,
+                    "chatterbox" => servicos.ensure_chatterbox(&http, &data_dir).await,
+                    _ => servicos.ensure_piper(&http, &data_dir).await,
+                }
+            });
+
+        match subiu {
+            Ok(url) => println!("{qual} atendeu em {url}"),
+            Err(erro) => println!("{qual} não subiu: {erro}"),
+        }
+
+        servicos.shutdown();
+    }
 
     /// A regra de threads do Whisper, nos três formatos de máquina que importam.
     #[test]
