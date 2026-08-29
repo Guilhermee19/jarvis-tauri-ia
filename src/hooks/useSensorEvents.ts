@@ -14,6 +14,7 @@ import { useNowPlayingStore, useSensorStore } from '@/stores'
  */
 export function useSensorEvents() {
   const setMicLevel = useSensorStore((state) => state.setMicLevel)
+  const setTtsLevel = useSensorStore((state) => state.setTtsLevel)
   const setWebcam = useSensorStore((state) => state.setWebcam)
   const mostrarFaixa = useNowPlayingStore((state) => state.mostrar)
 
@@ -30,6 +31,7 @@ export function useSensorEvents() {
     }
 
     assinar(onJarvisEvent<number>(JarvisEvent.MicLevel, setMicLevel))
+    assinar(onJarvisEvent<number>(JarvisEvent.TtsLevel, setTtsLevel))
 
     // O agente pedindo à UI. "abre a webcam" cai no MESMO caminho do botão da barra
     // de ícones — é isso que mantém o botão aceso e o preview rodando.
@@ -53,5 +55,5 @@ export function useSensorEvents() {
       cancelled = true
       pendentes.forEach((fn) => fn())
     }
-  }, [setMicLevel, setWebcam, mostrarFaixa])
+  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa])
 }

@@ -122,6 +122,28 @@ body {
   filter: drop-shadow(0 0 5px currentColor);
 }
 
+/* O núcleo respondendo ao áudio — do microfone quando ouve, da própria fala quando fala.
+
+   O valor entra por `--nivel` (0 a 1) num `style` inline, que é como este projeto já faz
+   grandeza dinâmica: o JIT do Tailwind só gera as classes que encontra escritas, e
+   `scale-[1.03]` calculado em tempo de execução não existiria no CSS final.
+
+   Os 10% de escala são o teto. O núcleo tem 256 px na home, então o pulso cresce uns
+   25 px no pico — dá para ver de canto de olho sem virar um coração batendo. O brilho é
+   quem carrega a intensidade: ele varia cinco vezes mais que o tamanho, porque halo
+   pulsando lê como energia e tamanho pulsando lê como movimento.
+
+   75 ms de transição: o nível chega a cada 50 ms, então a interpolação cobre o intervalo
+   inteiro e o movimento sai contínuo em vez de escadinha. É a mesma duração das barras de
+   nível que já existem. */
+.hud-nucleo-vivo {
+  transform: scale(calc(1 + var(--nivel, 0) * 0.1));
+  filter: drop-shadow(0 0 calc(5px + var(--nivel, 0) * 30px) currentColor);
+  transition:
+    transform 75ms linear,
+    filter 75ms linear;
+}
+
 /* RotaÃ§Ã£o de elementos SVG: sem `view-box` o giro sai do canto, nÃ£o do centro. */
 .hud-rotor {
   transform-box: view-box;
@@ -329,5 +351,13 @@ body {
      atravessando o topo da tela para sempre. Ela existe só como movimento. */
   .webcam-scan {
     display: none;
+  }
+
+  /* O núcleo perde o TAMANHO e mantém o brilho. É uma exceção consciente à regra de
+     desligar tudo: brilho não é movimento, e apagá-lo junto tiraria o único sinal de
+     "estou ouvindo" da tela principal justamente de quem pediu menos animação. */
+  .hud-nucleo-vivo {
+    transform: none;
+    transition: filter 75ms linear;
   }
 }

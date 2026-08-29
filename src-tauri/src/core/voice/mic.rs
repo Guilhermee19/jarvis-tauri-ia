@@ -19,7 +19,10 @@ use crate::core::lock;
 
 /// De quanto em quanto tempo o medidor de volume é publicado para a UI. 50 ms
 /// (20 Hz) é o suficiente para a barra parecer contínua sem inundar o IPC.
-const LEVEL_INTERVAL: Duration = Duration::from_millis(50);
+///
+/// Compartilhada com o `tts`, que mede o áudio de SAÍDA: as duas fontes alimentam a
+/// mesma animação, e cadências diferentes dariam texturas diferentes para a mesma coisa.
+pub(super) const LEVEL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// O que sobra de uma gravação: um WAV em disco e os números que a transcrição
 /// (v0.2+) vai querer saber antes de abrir o arquivo.
@@ -209,7 +212,13 @@ where
 /// O pico viaja como os bits de um `f32` dentro de um `AtomicU32` para não precisar
 /// de mutex no callback de áudio (que não pode bloquear). Para valores não negativos
 /// a ordem dos bits é a mesma dos floats, então `fetch_max` funciona como máximo.
-fn store_peak(peak: &AtomicU32, value: f32) {
+/// Guarda o maior valor visto, com o `f32` disfarçado de `u32`.
+///
+/// `fetch_max` sobre `to_bits()` só é correto porque o valor é sempre positivo — o
+/// chamador manda `abs()`. Para floats positivos a ordem dos bits é a mesma da ordem
+/// numérica, e é isso que permite um máximo atômico sem `Mutex` no meio do callback de
+/// áudio, que roda em tempo real e não pode bloquear.
+pub(super) fn store_peak(peak: &AtomicU32, value: f32) {
     peak.fetch_max(value.to_bits(), Ordering::Relaxed);
 }
 

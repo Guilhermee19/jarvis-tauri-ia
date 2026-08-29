@@ -10,6 +10,12 @@ use crate::state::AppState;
 /// retorno de comando, porque a UI não pergunta: ela desenha o que chega.
 const MIC_LEVEL_EVENT: &str = "jarvis://mic-level";
 
+/// O mesmo, para o áudio que SAI. Irmão do de cima, e não um evento só com um campo
+/// "fonte": os dois têm ciclos de vida independentes — o microfone publica entre
+/// `start_recording` e `stop_recording`, a fala publica durante uma reprodução — e juntá-
+/// -los obrigaria todo consumidor a filtrar algo que ele já sabe pelo nome.
+const TTS_LEVEL_EVENT: &str = "jarvis://tts-level";
+
 /// Nome do arquivo da última gravação. Um só, sobrescrito: é material de
 /// diagnóstico, não histórico — a v0.2 lê este WAV, transcreve e descarta.
 const RECORDING_FILE: &str = "ultima-gravacao.wav";
@@ -111,6 +117,7 @@ pub async fn list_voices(
 /// `speak_text(texto, None)` e não precisa saber nada sobre catálogo de vozes.
 #[tauri::command]
 pub async fn speak_text(
+    app: AppHandle,
     text: String,
     voice_id: Option<String>,
     voice: State<'_, VoiceState>,
@@ -135,7 +142,11 @@ pub async fn speak_text(
 
     // `play` bloqueia até o fim da fala. Fora do executor async isso travaria o
     // runtime do Tauri e, com ele, todos os outros comandos.
-    tauri::async_runtime::spawn_blocking(move || play(audio, cancelar))
+    tauri::async_runtime::spawn_blocking(move || {
+        play(audio, cancelar, |level| {
+            let _ = app.emit(TTS_LEVEL_EVENT, level);
+        })
+    })
         .await
         .map_err(|error| format!("a thread de áudio falhou: {error}"))?
         .map_err(stringify)

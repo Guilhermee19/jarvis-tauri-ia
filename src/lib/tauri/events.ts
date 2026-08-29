@@ -13,6 +13,14 @@ export const JarvisEvent = {
   /** Pico do microfone (0–1), ~20×/s enquanto há gravação em andamento. */
   MicLevel: 'jarvis://mic-level',
   /**
+   * O mesmo, para o áudio que SAI — ~20×/s enquanto o Jarvis fala, e um zero no fim.
+   *
+   * Irmão do de cima e não um evento só com um campo "fonte": os dois têm ciclos de vida
+   * independentes, e juntá-los obrigaria todo consumidor a filtrar algo que o nome já
+   * diz.
+   */
+  TtsLevel: 'jarvis://tts-level',
+  /**
    * O agente pedindo à UI algo que só ela sabe fazer — quem é dono do laço de preview
    * da câmera é o `sensorStore`, não o Rust. Emitido por `commands/chat.rs`.
    */

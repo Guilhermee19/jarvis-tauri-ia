@@ -102,10 +102,21 @@ interface SensorState {
   isMicBusy: boolean
   /** Pico de 0 a 1 do último intervalo, vindo do evento `jarvis://mic-level`. */
   micLevel: number
+  /**
+   * O mesmo, para o áudio que o Jarvis está FALANDO.
+   *
+   * Mora aqui ao lado do microfone, e não no `chatStore` junto do `isSpeaking`, porque a
+   * divisão é entre naturezas e não entre features: os dois são medidas do encanamento de
+   * áudio, com a mesma faixa e a mesma cadência. O `isSpeaking` continua lá porque ele é
+   * uma FASE da resposta — ele começa antes do som existir, enquanto a ElevenLabs ainda
+   * está sintetizando.
+   */
+  ttsLevel: number
   micError: string | null
   lastRecording: Recording | null
   toggleMic: () => Promise<void>
   setMicLevel: (level: number) => void
+  setTtsLevel: (level: number) => void
 
   /**
    * Ditado do chat (segurar o botão para falar). Mora AQUI, junto do `toggleMic`,
@@ -293,6 +304,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
     isMicOn: false,
     isMicBusy: false,
     micLevel: 0,
+    ttsLevel: 0,
     micError: null,
     lastRecording: null,
 
@@ -316,6 +328,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
     },
 
     setMicLevel: (level) => set({ micLevel: level }),
+    setTtsLevel: (level) => set({ ttsLevel: level }),
 
     isDictating: false,
     isTranscribing: false,

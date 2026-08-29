@@ -9,12 +9,14 @@
 //! impl, sem tocar em `commands::voice::speak_text`.
 
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rodio::Source;
 use serde::{Deserialize, Serialize};
 
+use super::mic::{store_peak, LEVEL_INTERVAL};
 use super::VoiceError;
 
 const API_BASE: &str = "https://api.elevenlabs.io/v1";
@@ -25,9 +27,49 @@ const API_BASE: &str = "https://api.elevenlabs.io/v1";
 /// escolha certa para narração longa, onde ninguém está esperando na frente.
 const MODEL_ID: &str = "eleven_flash_v2_5";
 
-/// De quanto em quanto tempo a fala em andamento checa se mandaram calar. 100 ms é
-/// imperceptível para quem interrompe e não faz a thread girar à toa.
-const CHECAGEM_DE_CANCELAMENTO: Duration = Duration::from_millis(100);
+/// Um `Source` que deixa as amostras passarem e anota a maior que viu.
+///
+/// **É a única costura possível para medir o que sai.** O `rodio` puxa amostras do
+/// `Source` sob demanda do dispositivo e as entrega ao `Sink`; sem este embrulho no meio,
+/// o áudio vai do MP3 decodificado direto para a placa e nenhuma linha do projeto chega
+/// perto dele. Medir depois, no mixer, exigiria capturar a saída do sistema.
+///
+/// Não altera nada: `next` repassa a amostra intacta, e os quatro métodos do trait são
+/// delegados. O custo é uma comparação atômica por amostra — a mesma que o microfone já
+/// paga no callback dele.
+struct ComPico<S> {
+    fonte: S,
+    pico: Arc<AtomicU32>,
+}
+
+impl<S: Source> Iterator for ComPico<S> {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let amostra = self.fonte.next()?;
+        store_peak(&self.pico, amostra.abs());
+
+        Some(amostra)
+    }
+}
+
+impl<S: Source> Source for ComPico<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.fonte.current_span_len()
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.fonte.channels()
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.fonte.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.fonte.total_duration()
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,22 +171,45 @@ struct CatalogEntry {
 /// `sink.sleep_until_end()` que estava aqui não tem como ser interrompido: quem
 /// mandasse parar no meio de uma resposta longa continuaria ouvindo por meia frase,
 /// e o microfone só reabriria depois.
-pub fn play(audio: Vec<u8>, cancelar: Arc<AtomicBool>) -> Result<(), VoiceError> {
+///
+/// `on_level` recebe o pico do intervalo, de 0 a 1 — a mesma forma e a mesma cadência do
+/// medidor do microfone, porque os dois alimentam a mesma animação. Callback e não evento
+/// do Tauri pelo mesmo motivo de lá: o `core` não conhece o Tauri, e quem traduz isso em
+/// evento é o `commands`.
+pub fn play(
+    audio: Vec<u8>,
+    cancelar: Arc<AtomicBool>,
+    on_level: impl Fn(f32),
+) -> Result<(), VoiceError> {
     let stream = rodio::OutputStreamBuilder::open_default_stream().map_err(playback)?;
     let decoder = rodio::Decoder::new(Cursor::new(audio)).map_err(playback)?;
 
+    let pico = Arc::new(AtomicU32::new(0));
     let sink = rodio::Sink::connect_new(stream.mixer());
-    sink.append(decoder);
+    sink.append(ComPico {
+        fonte: decoder,
+        pico: Arc::clone(&pico),
+    });
 
     // O `stream` tem que continuar vivo enquanto o sink toca — é por isso que a
     // espera fica aqui dentro, e não no chamador com o sink na mão.
+    //
+    // O mesmo laço serve para duas coisas: checar o cancelamento e publicar o nível. Eram
+    // 100 ms só para o cancelamento; agora são os 50 ms do medidor, que é o que a
+    // animação precisa e continua imperceptível para quem interrompe.
     while !sink.empty() {
         if cancelar.load(Ordering::Relaxed) {
             sink.stop();
             break;
         }
-        std::thread::sleep(CHECAGEM_DE_CANCELAMENTO);
+        std::thread::sleep(LEVEL_INTERVAL);
+        on_level(f32::from_bits(pico.swap(0, Ordering::Relaxed)));
     }
+
+    // O zero final vale tanto para a fala que terminou quanto para a que foi cortada: sem
+    // ele o último pico fica congelado na tela e o núcleo do HUD continua aceso depois
+    // que o Jarvis calou.
+    on_level(0.0);
 
     Ok(())
 }
@@ -186,4 +251,150 @@ fn network(error: reqwest::Error) -> VoiceError {
 
 fn playback(error: impl std::fmt::Display) -> VoiceError {
     VoiceError::Playback(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Um `Source` de mentira, para o teste não depender de placa de som nem de MP3.
+    struct Fita(std::vec::IntoIter<rodio::Sample>);
+
+    impl Iterator for Fita {
+        type Item = rodio::Sample;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.next()
+        }
+    }
+
+    impl Source for Fita {
+        fn current_span_len(&self) -> Option<usize> {
+            None
+        }
+        fn channels(&self) -> rodio::ChannelCount {
+            1
+        }
+        fn sample_rate(&self) -> rodio::SampleRate {
+            44_100
+        }
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+    }
+
+    fn tocar(amostras: Vec<f32>) -> (Vec<f32>, f32) {
+        let pico = Arc::new(AtomicU32::new(0));
+        let mut fonte = ComPico {
+            fonte: Fita(amostras.into_iter()),
+            pico: Arc::clone(&pico),
+        };
+
+        let saida: Vec<f32> = std::iter::from_fn(|| fonte.next()).collect();
+
+        (saida, f32::from_bits(pico.swap(0, Ordering::Relaxed)))
+    }
+
+    /// Sintetiza uma frase de verdade e imprime a série de níveis.
+    ///
+    /// Fora do `cargo test` comum porque gasta crédito da ElevenLabs, toca som na caixa e
+    /// depende de rede. **É a única forma de provar que a amplitude acompanha a fala** —
+    /// os testes de mesa acima provam que o embrulho mede, não que o que ele mede varia.
+    ///
+    /// ```text
+    /// ELEVEN_KEY=… cargo test --lib -- --ignored --nocapture fala_de_verdade
+    /// ```
+    #[test]
+    #[ignore]
+    fn fala_de_verdade() {
+        let chave = std::env::var("ELEVEN_KEY").unwrap_or_default();
+        let frase = std::env::var("ELEVEN_FRASE")
+            .unwrap_or_else(|_| "Um, dois, três. Pausa. Quatro, cinco.".to_owned());
+
+        let motor = ElevenLabs::new(reqwest::Client::new(), chave);
+
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let audio = bloco.block_on(async {
+            let voz = match motor.voices().await {
+                Ok(vozes) => vozes.first().map(|voz| voz.id.clone()).unwrap_or_default(),
+                Err(erro) => {
+                    println!("não listou as vozes: {erro}");
+                    return None;
+                }
+            };
+
+            match motor.synthesize(&frase, &voz).await {
+                Ok(audio) => Some(audio),
+                Err(erro) => {
+                    println!("não sintetizou: {erro}");
+                    None
+                }
+            }
+        });
+
+        let Some(audio) = audio else { return };
+        println!("{} bytes de MP3", audio.len());
+
+        let niveis = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let coletor = Arc::clone(&niveis);
+
+        play(audio, Arc::new(AtomicBool::new(false)), move |nivel| {
+            coletor.lock().expect("mutex").push(nivel);
+        })
+        .expect("tocou");
+
+        let lidos = niveis.lock().expect("mutex").clone();
+        let maior = lidos.iter().copied().fold(0.0_f32, f32::max);
+        let barras: String = lidos
+            .iter()
+            .map(|nivel| {
+                let altura = (nivel / maior.max(f32::EPSILON) * 7.0) as usize;
+                ['.', '_', '-', '=', '+', '*', '#', '@'][altura.min(7)]
+            })
+            .collect();
+
+        println!("{} amostras, pico {maior:.3}", lidos.len());
+        println!("{barras}");
+    }
+
+    /// O embrulho não pode alterar o áudio: ele existe para MEDIR. Uma amostra trocada
+    /// aqui viraria distorção na fala, e ninguém ligaria uma coisa à outra.
+    #[test]
+    fn as_amostras_passam_intactas() {
+        let original = vec![0.1, -0.4, 0.25, 0.0];
+        let (saida, _) = tocar(original.clone());
+
+        assert_eq!(saida, original);
+    }
+
+    /// O pico é o maior valor ABSOLUTO: um estouro negativo é tão alto quanto um
+    /// positivo, e ignorar o sinal faria a onda sumir na metade das sílabas.
+    #[test]
+    fn o_pico_e_o_maior_valor_absoluto() {
+        let (_, pico) = tocar(vec![0.1, -0.8, 0.3]);
+
+        assert!((pico - 0.8).abs() < f32::EPSILON, "pico foi {pico}");
+    }
+
+    /// O `swap` zera de propósito: cada leitura é o pico DAQUELE intervalo, não o da
+    /// fala inteira. Sem isso a animação subiria uma vez e nunca mais desceria.
+    #[test]
+    fn a_leitura_zera_o_acumulador() {
+        let pico = Arc::new(AtomicU32::new(0));
+        let mut fonte = ComPico {
+            fonte: Fita(vec![0.9_f32].into_iter()),
+            pico: Arc::clone(&pico),
+        };
+
+        fonte.next();
+        let primeira = f32::from_bits(pico.swap(0, Ordering::Relaxed));
+        let segunda = f32::from_bits(pico.swap(0, Ordering::Relaxed));
+
+        assert!((primeira - 0.9).abs() < f32::EPSILON);
+        assert_eq!(segunda, 0.0, "sem amostra nova, o intervalo seguinte é silêncio");
+    }
 }

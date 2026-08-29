@@ -6,6 +6,14 @@ interface JarvisCoreProps {
   label: string
   /** Liga as camadas que giram — desligado dá a leitura de "parado/ocioso". */
   isActive?: boolean
+  /**
+   * O quanto o núcleo deve reagir, de 0 a 1.
+   *
+   * **Já com a curva aplicada.** Quem chama decide como o nível vira intensidade; aqui
+   * ele é usado cru, e passar o valor linear do áudio deixaria a fala inteira no fundo
+   * da escala.
+   */
+  nivel?: number
   className?: string
 }
 
@@ -16,11 +24,19 @@ interface JarvisCoreProps {
  * É tudo SVG em um viewBox de 200×200, então escala sem perder nitidez — o
  * tamanho real vem da classe (`h-* w-*`) de quem usa.
  */
-export function JarvisCore({ label, isActive = true, className }: JarvisCoreProps) {
+export function JarvisCore({ label, isActive = true, nivel = 0, className }: JarvisCoreProps) {
   const spin = (animation: string) => cn('hud-rotor', isActive && animation)
 
   return (
-    <svg viewBox="0 0 200 200" className={cn('overflow-visible', className)} aria-hidden="true">
+    <svg
+      viewBox="0 0 200 200"
+      // A variável CSS carrega o valor, e o `.hud-nucleo-vivo` decide o que fazer com
+      // ele. Assim a regra de quanto cresce e quanto brilha mora no CSS, junto das outras
+      // do HUD, em vez de espalhada em `style` calculado aqui.
+      style={{ '--nivel': nivel } as React.CSSProperties}
+      className={cn('hud-nucleo-vivo overflow-visible', className)}
+      aria-hidden="true"
+    >
       <defs>
         <radialGradient id="jarvis-core-glow">
           <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.35" />

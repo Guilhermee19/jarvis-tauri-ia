@@ -1,8 +1,9 @@
 'use client'
 
 import { JarvisCore } from './JarvisCore'
+import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { cn } from '@/lib/utils'
-import { useChatStore, useJanelaStore, useSensorStore, useSettingsStore } from '@/stores'
+import { useJanelaStore, useSensorStore, useSettingsStore } from '@/stores'
 
 /**
  * O HUD ocioso do assistente — o que fica na frente do fundo da janela.
@@ -10,14 +11,21 @@ import { useChatStore, useJanelaStore, useSensorStore, useSettingsStore } from '
  * Com a webcam ligada o fundo deixa de ser a grade vazia e passa a ser a imagem da
  * câmera (`WebcamStage`). Por isso o núcleo encolhe e vai para o canto: centralizado
  * e grande, ele taparia justamente o meio do que a câmera está vendo.
+ *
+ * **O núcleo reage ao áudio**, e é o único sinal de microfone desta tela. Antes havia uma
+ * linha de status dizendo "captando" ou "em espera"; ela mostrava se o microfone estava
+ * ABERTO, e não se ele estava ouvindo alguma coisa — mudo no painel do Windows e
+ * funcionando davam a mesma tela. O pulso mostra intensidade, que é a pergunta real.
  */
 export function HomeScreen() {
   const assistantName = useSettingsStore((state) => state.settings.assistantName)
-  const hasApiKey = useSettingsStore((state) => state.settings.anthropicApiKey.length > 0)
-  const messageCount = useChatStore((state) => state.messages.length)
   const abrirJanela = useJanelaStore((state) => state.abrir)
   const isWebcamOn = useSensorStore((state) => state.isWebcamOn)
-  const isMicOn = useSensorStore((state) => state.isMicOn)
+  const { nivelDeAudio } = useVoiceInput()
+
+  // A raiz quadrada tira a fala do fundo da escala linear — é a mesma curva das três
+  // barras de nível que já existem no app, e o motivo está no `BottomNav`.
+  const pulso = Math.sqrt(nivelDeAudio)
 
   return (
     <>
@@ -35,34 +43,11 @@ export function HomeScreen() {
         >
           <JarvisCore
             label={assistantName}
+            nivel={pulso}
             className={cn('transition-all duration-500', isWebcamOn ? 'h-24 w-24' : 'h-64 w-64')}
           />
         </button>
 
-        {/* Com a câmera ligada, o texto de apoio sai de cena: o conteúdo é a imagem.
-        {isWebcamOn ? null : (
-          <>
-            <p className="text-muted mt-9 text-[10px] tracking-[0.28em] uppercase">
-              {messageCount > 0 ? `${messageCount} mensagens na sessão` : 'toque para conversar'}
-            </p>
-
-            <dl className="mt-8 w-full max-w-[300px] space-y-1.5">
-              <StatusRow label="Núcleo" value="simulado" tone="warn" />
-              <StatusRow
-                label="Voz"
-                value={isMicOn ? 'captando' : 'em espera'}
-                tone={isMicOn ? 'ok' : 'idle'}
-              />
-              <StatusRow label="Visão" value="em espera" />
-              <StatusRow label="Memória" value="sessão" />
-              <StatusRow
-                label="API key"
-                value={hasApiKey ? 'definida' : 'ausente'}
-                tone={hasApiKey ? 'ok' : 'warn'}
-              />
-            </dl>
-          </>
-        )} */}
       </div>
 
       <SensorAlerts />
@@ -93,30 +78,5 @@ function Alert({ label, message }: { label: string; message: string }) {
     <p className="border-danger/30 bg-danger/15 text-danger rounded border px-2 py-1.5 text-[11px] leading-relaxed backdrop-blur-sm">
       <span className="tracking-[0.14em] uppercase">{label}</span> · {message}
     </p>
-  )
-}
-
-const TONES = {
-  idle: 'text-muted',
-  ok: 'text-accent',
-  warn: 'text-content',
-} as const
-
-function StatusRow({
-  label,
-  value,
-  tone = 'idle',
-}: {
-  label: string
-  value: string
-  tone?: keyof typeof TONES
-}) {
-  return (
-    <div className="flex items-baseline gap-2 text-[10px] tracking-[0.14em] uppercase">
-      <dt className="text-muted/70">{label}</dt>
-      {/* A linha pontilhada liga rótulo e valor sem precisar de tabela. */}
-      <div className="border-border-soft mb-[3px] flex-1 border-b border-dotted" />
-      <dd className={TONES[tone]}>{value}</dd>
-    </div>
   )
 }
