@@ -1,10 +1,11 @@
 //! Serviços locais que o Jarvis usa e, se preciso, sobe sozinho.
 //!
-//! São três processos fora do app: o **Ollama** (que interpreta os comandos), o
-//! **whisper-server** (que transcreve a fala) e o **Chatterbox** (que fala). O Ollama se
-//! instala como serviço do Windows e normalmente já está de pé; os outros dois são
-//! programa numa pasta, e sem isto aqui o usuário teria que abrir um terminal antes de
-//! falar com o assistente.
+//! São até quatro processos fora do app: o **Ollama** (que interpreta os comandos), o
+//! **whisper-server** (que transcreve a fala) e **dois motores de voz** — o Piper (rápido,
+//! voz de catálogo) e o Chatterbox (lento, clona a voz do dono). Só um dos dois de voz sobe:
+//! quem manda é a configuração. O Ollama se instala como serviço do Windows e normalmente
+//! já está de pé; os outros são programa numa pasta, e sem isto aqui o usuário teria que
+//! abrir um terminal antes de falar com o assistente.
 //!
 //! Os três juntos são o motivo de o Jarvis não depender de nenhuma API paga para ouvir,
 //! pensar e responder: tudo acontece nesta máquina.
@@ -58,6 +59,34 @@ const PYTHON_DO_CHATTERBOX: &str = "venv/Scripts/python.exe";
 /// falar no meio da instalação sobe um servidor que morre no primeiro `import`.
 const CARIMBO_DE_INSTALACAO: &str = "venv/.install_complete";
 
+/// Porta do Piper. Vizinha da do Whisper, e **não** a 5000 que ele usa por padrão — essa
+/// colide com metade dos projetos web que alguém possa ter rodando.
+const PORTA_PIPER: u16 = 8645;
+
+/// O Python do ambiente do Piper. Aqui é `venv` porque é o nome que o passo de instalação
+/// do README cria — não há instalador próprio ditando o nome, como no Chatterbox.
+const PYTHON_DO_PIPER: &str = "venv/Scripts/python.exe";
+
+/// As quatro vozes brasileiras do catálogo do Piper.
+///
+/// Mora aqui, e não no frontend, porque é a mesma lista que a mensagem de erro de
+/// instalação precisa citar — duas cópias divergiriam no dia em que uma quinta voz
+/// aparecesse.
+///
+/// **Repare no `edresson`:** ele é `low`, e os outros três são `medium`. Deduzir o
+/// sufixo daria um id que não existe, e o servidor do Piper responde a voz inexistente
+/// caindo em SILÊNCIO na voz padrão — o sintoma seria "escolhi o edresson e saiu o faber".
+pub const VOZES_PIPER: [&str; 4] = [
+    "pt_BR-cadu-medium",
+    "pt_BR-edresson-low",
+    "pt_BR-faber-medium",
+    "pt_BR-jeff-medium",
+];
+
+/// A voz que sobe com o servidor. Ele carrega as outras sob demanda, então esta é só a
+/// primeira a ficar quente — não uma trava.
+const VOZ_INICIAL_DO_PIPER: &str = "pt_BR-faber-medium";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error(
@@ -75,6 +104,14 @@ pub enum ServiceError {
     ChatterboxAusente(String),
     #[error("não consegui iniciar o {servico}: {detalhe}")]
     NaoSubiu { servico: String, detalhe: String },
+    #[error(
+        "não achei o Piper em {0}.\nCrie o ambiente e baixe as vozes:\n  \
+         py -3.10 -m venv <pasta>\\venv\n  \
+         <pasta>\\venv\\Scripts\\python -m pip install \"piper-tts[http]\"\n  \
+         <pasta>\\venv\\Scripts\\python -m piper.download_voices --data-dir <pasta> \
+         pt_BR-cadu-medium pt_BR-edresson-low pt_BR-faber-medium pt_BR-jeff-medium"
+    )]
+    PiperAusente(String),
     #[error(
         "o servidor de voz ainda está sendo instalado em {0}.\nDeixe o `start.bat` \
          terminar — ele baixa alguns GB e leva vários minutos. A pasta já existe, mas o \
@@ -96,6 +133,10 @@ pub fn whisper_url() -> String {
 
 pub fn chatterbox_url() -> String {
     format!("http://127.0.0.1:{PORTA_CHATTERBOX}")
+}
+
+pub fn piper_url() -> String {
+    format!("http://127.0.0.1:{PORTA_PIPER}")
 }
 
 /// Dono dos processos que o app subiu, para poder derrubá-los ao sair.
@@ -216,6 +257,63 @@ impl Services {
                 pasta: pasta.display().to_string(),
             }),
             Espera::Demorou => Err(ServiceError::NaoRespondeu("servidor de voz".to_owned())),
+        }
+    }
+
+    /// Garante que existe um Piper atendendo, e devolve a URL dele.
+    ///
+    /// É o irmão rápido do [`Self::ensure_chatterbox`], e as diferenças todas vêm de o
+    /// Piper ser pequeno:
+    ///
+    /// - **Espera 30 s, não 180.** Um `.onnx` de ~60 MB não se compara a meio bilhão de
+    ///   parâmetros indo para a VRAM.
+    /// - **Não tem carimbo de instalação** como o `.install_complete` do Chatterbox,
+    ///   porque não há instalador próprio para deixá-lo. O que se checa é o interpretador
+    ///   **e pelo menos uma voz**: um `pip install` que terminou sem o `download_voices`
+    ///   deixa exatamente esse estado, e sem a segunda checagem o servidor subiria mudo.
+    /// - **Não usa a GPU.** O Piper roda em CPU e deixa a placa inteira para o Ollama, que
+    ///   é metade da razão de ele existir aqui.
+    pub async fn ensure_piper(
+        &self,
+        http: &reqwest::Client,
+        data_dir: &Path,
+    ) -> Result<String, ServiceError> {
+        let url = piper_url();
+        if responde(http, &url).await {
+            return Ok(url);
+        }
+
+        let pasta = data_dir.join("piper");
+        let python = pasta.join(PYTHON_DO_PIPER);
+        let tem_voz = VOZES_PIPER
+            .iter()
+            .any(|voz| pasta.join(format!("{voz}.onnx")).is_file());
+
+        if !python.is_file() || !tem_voz {
+            return Err(ServiceError::PiperAusente(pasta.display().to_string()));
+        }
+
+        let mut comando = Command::new(&python);
+        comando
+            .args(["-m", "piper.http_server"])
+            .args(["-m", VOZ_INICIAL_DO_PIPER])
+            // O `--data-dir` é o que deixa UM servidor atender as quatro vozes: ele carrega
+            // sob demanda o `.onnx` que a requisição pedir, e guarda em cache.
+            .arg("--data-dir")
+            .arg(&pasta)
+            .args(["--host", "127.0.0.1"])
+            .args(["--port", &PORTA_PIPER.to_string()])
+            .current_dir(&pasta);
+
+        let filho = self.spawn("piper", comando)?;
+
+        match self.esperar(http, &url, filho, Duration::from_secs(30)).await {
+            Espera::Atendeu => Ok(url),
+            Espera::Morreu => Err(ServiceError::MorreuAoSubir {
+                servico: "Piper".to_owned(),
+                pasta: pasta.display().to_string(),
+            }),
+            Espera::Demorou => Err(ServiceError::NaoRespondeu("Piper".to_owned())),
         }
     }
 

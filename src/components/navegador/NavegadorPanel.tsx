@@ -21,7 +21,7 @@ import { abaAtiva, useJanelaStore, useNavegadorStore } from '@/stores'
  *   o da FRENTE: sem essa regra, abrir a conversa por cima do navegador desenharia a
  *   conversa embaixo dele.
  */
-export function NavegadorPanel() {
+export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
   const abas = useNavegadorStore((state) => state.abas)
   const ativa = useNavegadorStore((state) => state.ativa)
   const erro = useNavegadorStore((state) => state.erro)
@@ -32,6 +32,10 @@ export function NavegadorPanel() {
   const andar = useNavegadorStore((state) => state.andar)
   const posicionar = useNavegadorStore((state) => state.posicionar)
   const abrirSite = useNavegadorStore((state) => state.abrirSite)
+  // Seletor, e não `getState()` dentro do render: o endereço muda por EVENTO quando a
+  // pessoa clica num link, e um retrato lido no render não reagiria a isso — a barra
+  // mostraria para sempre o endereço com que a aba nasceu.
+  const urlAtiva = useNavegadorStore((state) => abaAtiva(state)?.url ?? '')
 
   // A posição e o tamanho do painel mudam a cada quadro enquanto ele é arrastado, e é
   // isso que dispara a remedição — sem um laço de animação girando à toa.
@@ -44,7 +48,7 @@ export function NavegadorPanel() {
   useEffect(() => {
     const medir = () => {
       const alvo = buraco.current
-      if (!alvo || !naFrente) {
+      if (!alvo || !naFrente || escondido) {
         posicionar(null)
         return
       }
@@ -73,7 +77,7 @@ export function NavegadorPanel() {
       observador.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [posicionar, naFrente, arranjo])
+  }, [posicionar, naFrente, arranjo, escondido])
 
   // Fechar o painel desmonta este componente, e o webview precisa sumir junto — ele não
   // sabe que o painel dele deixou de existir.
@@ -92,7 +96,7 @@ export function NavegadorPanel() {
       {ativa ? (
         <BarraDeEndereco
           key={ativa}
-          url={abaAtiva(useNavegadorStore.getState())?.url ?? ''}
+          url={urlAtiva}
           onIr={(url) => void navegar(ativa, url)}
           onAndar={(passo) => void andar(ativa, passo)}
           onFora={() => void browserExternal(ativa)}
@@ -108,7 +112,8 @@ export function NavegadorPanel() {
         </p>
       ) : null}
 
-      {/* O buraco. Ele é medido, não preenchido — quem desenha aqui é o sistema. */}
+      {/* O buraco. Ele é medido, não preenchido — quem desenha aqui é o sistema.
+          A faixa logo abaixo é o que deixa esta janelinha ser redimensionável. */}
       <div ref={buraco} className="bg-base min-h-0 flex-1">
         {abas.length === 0 ? (
           <div className="text-muted flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
@@ -126,6 +131,16 @@ export function NavegadorPanel() {
           </div>
         ) : null}
       </div>
+
+      {/* Faixa reservada para a alça de redimensionar, que fica no canto de baixo à
+          direita e tem 16 px (`h-4`).
+
+          Sem ela o buraco iria até a borda, e o webview — camada NATIVA acima de todo o
+          HTML — cobriria a alça. O sintoma é específico e enganoso: a janelinha do
+          navegador arrasta pelo cabeçalho como as outras (o cabeçalho fica acima do
+          webview) mas é a única que não redimensiona, e não há nada de errado com o
+          código de redimensionamento. */}
+      <div className="h-4 shrink-0" />
     </div>
   )
 }
@@ -193,9 +208,21 @@ function BarraDeEndereco({
   onAndar: (passo: number) => void
   onFora: () => void
 }) {
-  // Estado local e não controlado pela store: quem digita é o dono do campo até apertar
-  // Enter. Refletir a URL de volta a cada navegação apagaria o que estivesse sendo escrito.
+  // Estado local: quem digita é o dono do campo até apertar Enter.
   const [texto, setTexto] = useState(url)
+  const [urlAnterior, setUrlAnterior] = useState(url)
+
+  // ...mas navegar TROCA o campo. Sem isto, clicar num link deixaria a barra mostrando o
+  // endereço anterior, que é pior que perder o que estava sendo digitado — e digitar
+  // enquanto a página navega sozinha é raro, ao contrário de clicar em link.
+  //
+  // Ajuste DURANTE o render, e não num efeito: é o padrão que o React documenta para
+  // estado derivado de prop, e o único que não custa um render descartado a cada
+  // navegação. Um `useEffect` aqui é justamente o que o eslint acusa de cascata.
+  if (url !== urlAnterior) {
+    setUrlAnterior(url)
+    setTexto(url)
+  }
 
   return (
     <div className="border-border-soft flex shrink-0 items-center gap-1 border-b px-2 py-1.5">

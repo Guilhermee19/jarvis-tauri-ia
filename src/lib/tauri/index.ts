@@ -40,7 +40,13 @@ export {
   type MediaKey,
   type NowPlaying,
 } from './system'
-export { JarvisEvent, onJarvisEvent, type Faixa, type UiAction } from './events'
+export {
+  JarvisEvent,
+  onJarvisEvent,
+  type Faixa,
+  type MudouDeEndereco,
+  type UiAction,
+} from './events'
 export {
   isRecording,
   listInputDevices,

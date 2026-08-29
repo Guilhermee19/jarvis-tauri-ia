@@ -47,7 +47,7 @@
 | Wake word                 | ~~Porcupine (Picovoice)~~ **deixou de ser opção** — ver abaixo | **openWakeWord** (open source, tem modelo `hey_jarvis` pronto; em Rust via `oww-rs`) |
 | STT (fala→texto)          | whisper.cpp local (rápido, privado)                            | API da OpenAI/Deepgram (mais fácil de integrar no início)                            |
 | Agente de IA              | **Ollama local** (`qwen2.5vl:3b`) com JSON schema — 21 verbos   | ~~API da Anthropic~~ (virou opcional, só para visão)                                 |
-| TTS (texto→fala)          | **Chatterbox local** (Resemble AI, MIT) — clona a sua voz       | ~~ElevenLabs~~ (saiu: era a última API paga); ~~Piper~~ (não clona voz)               |
+| TTS (texto→fala)          | **Piper local** (padrão, 0,14 s) **+ Chatterbox** (clona a voz)  | ~~ElevenLabs~~ — saiu, era a última API paga                                          |
 | Controle de mouse/teclado | crate `enigo` (Rust, equivalente ao pyautogui)                 | sidecar Python com pyautogui                                                         |
 | Screenshot                | crate `xcap` ou `screenshots` (Rust)                           | `mss` via sidecar Python                                                             |
 | Webcam                    | crate `nokhwa` (Rust)                                          | `opencv-python` via sidecar Python                                                   |
@@ -265,11 +265,20 @@ a um Echo, e as bibliotecas que fazem isso logam na conta com cookie e quebram s
 
 ---
 
-### 🟢 Voz local — **feita** (fora da numeração original)
+### 🟢 Voz local — **feita, com dois motores** (fora da numeração original)
 
-A última API paga saiu. O TTS agora é o **Chatterbox** (Resemble AI, licença MIT) rodando
-nesta máquina, e ele **clona a voz do dono** a partir de um clipe de ~10 segundos — sem
-treino, sem conta, sem crédito.
+A última API paga saiu, e no lugar dela entraram **dois motores locais**. A escolha entre
+eles é entre velocidade e identidade, e os números são medidos nesta máquina (RTX 2060,
+frase de 52 caracteres):
+
+| motor | por frase | fator | pico | voz |
+| --- | --- | --- | --- | --- |
+| **Piper** (padrão) | **0,14–0,21 s** | 0,04× (25× mais rápido que tempo real) | 1,000 | catálogo, 4 em pt-BR |
+| **Chatterbox** | 6,6–8,1 s | ~1,4× (mais LENTO que tempo real) | 0,28 | **a do dono**, clonada |
+
+O Piper roda em **CPU** e deixa a GPU inteira para o Ollama. O Chatterbox (Resemble AI,
+licença MIT) **clona a voz do dono** a partir de um clipe de ~10 segundos — sem treino, sem
+conta, sem crédito —, e é a única forma de ter a própria voz.
 
 - ✅ Terceiro serviço local em `core/services.rs`, no mesmo ciclo dos outros dois: bate na
   porta, sobe se ninguém atender, morre junto com o app
@@ -280,19 +289,23 @@ treino, sem conta, sem crédito.
 - ✅ Os três portões de "tem API key?" viraram "tem clipe?" — a pergunta antiga era global,
   a nova é por persona
 
-**O preço, medido e não estimado:** numa RTX 2060 com o modelo Multilingual, uma frase de
-52 caracteres (4,4 s de áudio) leva **6,6 a 8,1 s** para ser sintetizada, com o modelo já
-quente. Ele gera **mais devagar que tempo real**. A ElevenLabs `flash` fazia isso em
-dezenas de milissegundos — essa é a conta da independência.
+**Como o Piper entrou:** o Chatterbox sozinho era lento demais para conversa, e os dois
+botões de aceleração dele foram medidos e **os dois pioraram** — `cfg_weight: 0.0` (9,0 s) e
+`TTS_BF16=on` (8,6 s, porque a 2060 é Turing e emula bf16). O `stream: true` do servidor
+também: 8,9 s até o primeiro byte, pior que os 7 s do bloco inteiro. Sem botão para girar,
+a saída foi outro motor.
 
-**O `stream: true` do servidor não é a saída** — medido, é pior: 8,9 s até o primeiro byte
-contra 7 s do total sem streaming. Ele fatia por trecho, e uma frase de conversa é um
-trecho só. A saída de verdade, se a espera incomodar, é **fatiar do lado do app**: quebrar
-a resposta em frases e tocar a primeira enquanto a segunda é gerada.
-
-- ⬜ Fatiamento por frase com reprodução em pipeline (o item acima)
-- ⬜ Modelo mais rápido: a variante Turbo faz isso em uma passada de decoder, mas **fala só
-  inglês**. Só entra se sair uma Turbo multilíngue
+- ✅ Um campo escolhe o motor, e **cada motor guarda a própria voz por persona** — quatro
+  campos ao todo. Não é exagero: o servidor do Piper **não recusa** um id de voz que não
+  existe, usa a padrão em silêncio. Com um par só de campos, trocar de motor deixaria um
+  `.mp3` no lugar do id e a fala sairia com a voz errada, sem erro nenhum
+- ✅ O `PICO_TIPICO_DA_FALA` do HUD passou a seguir o motor: 1,0 no Piper (que normaliza) e
+  0,28 no Chatterbox. Um número só faria o núcleo saturar num e ficar parado no outro
+- ⬜ Fatiar a resposta por frase e tocar a primeira enquanto a segunda é gerada. Medido:
+  corta **85%** da espera numa resposta longa. Ficou desnecessário com o Piper, e volta a
+  fazer sentido se alguém usar o Chatterbox no dia a dia
+- ⬜ Treinar a voz do dono DENTRO do Piper (~1300 frases, ~8 h de gravação). É o único
+  caminho conhecido para ter voz própria E resposta instantânea
 
 ---
 

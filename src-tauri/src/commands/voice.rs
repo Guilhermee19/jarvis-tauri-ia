@@ -1,5 +1,6 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::config::MotorDeVoz;
 use crate::core::services::Services;
 use crate::core::voice::{
     play, transcribe as transcribe_audio, Recording, Voice, VoiceError, VoiceState,
@@ -101,37 +102,47 @@ pub async fn transcribe(
         .map_err(stringify)
 }
 
-/// Sobe o servidor de voz se preciso e devolve a URL dele.
+/// Sobe o servidor do motor pedido, se preciso, e devolve a URL dele.
 ///
 /// Mesmo preâmbulo do `transcribe` com o Whisper, e pelo mesmo motivo: a subida é
 /// preguiçosa, então quem chama qualquer coisa de voz é quem paga por ela estar de pé.
+///
+/// **Só um dos dois sobe.** Quem nunca sai do Piper nunca carrega o modelo do Chatterbox,
+/// e vice-versa — é o mesmo princípio de "quem não usa a voz não paga nada", aplicado um
+/// nível abaixo.
 async fn servidor_de_voz(
     app: &AppHandle,
     http: &reqwest::Client,
     services: &Services,
+    motor: MotorDeVoz,
 ) -> Result<String, String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("sem diretório de dados para achar o servidor de voz: {error}"))?;
 
-    services
-        .ensure_chatterbox(http, &data_dir)
-        .await
-        .map_err(|error| error.to_string())
+    let subiu = match motor {
+        MotorDeVoz::Piper => services.ensure_piper(http, &data_dir).await,
+        MotorDeVoz::Chatterbox => services.ensure_chatterbox(http, &data_dir).await,
+    };
+
+    subiu.map_err(|error| error.to_string())
 }
 
-/// Os clipes de voz cadastrados no servidor.
+/// As vozes disponíveis no motor ativo — clipes cadastrados, no Chatterbox; vozes de
+/// catálogo instaladas, no Piper.
 #[tauri::command]
 pub async fn list_voices(
     app: AppHandle,
     voice: State<'_, VoiceState>,
+    state: State<'_, AppState>,
     services: State<'_, Services>,
 ) -> Result<Vec<Voice>, String> {
+    let motor = state.settings().tts_engine;
     let http = voice.http();
-    let url = servidor_de_voz(&app, &http, &services).await?;
+    let url = servidor_de_voz(&app, &http, &services, motor).await?;
 
-    voice.tts(&url).voices().await.map_err(stringify)
+    voice.tts(motor, &url).voices().await.map_err(stringify)
 }
 
 /// Manda um `.wav`/`.mp3` da voz de alguém para o servidor e devolve o nome com que ele
@@ -148,7 +159,9 @@ pub async fn upload_voice_reference(
     services: State<'_, Services>,
 ) -> Result<String, String> {
     let http = voice.http();
-    let url = servidor_de_voz(&app, &http, &services).await?;
+    // Sempre o Chatterbox, mesmo com o Piper ativo: clipe de referência é coisa dele, e
+    // subir o motor errado aqui daria um 404 confuso em vez de um cadastro.
+    let url = servidor_de_voz(&app, &http, &services, MotorDeVoz::Chatterbox).await?;
 
     voice
         .cadastrar_voz(&url, std::path::Path::new(&caminho))
@@ -170,8 +183,8 @@ pub async fn speak_text(
 ) -> Result<(), String> {
     let settings = state.settings();
     let http = voice.http();
-    let url = servidor_de_voz(&app, &http, &services).await?;
-    let engine = voice.tts(&url);
+    let url = servidor_de_voz(&app, &http, &services, settings.tts_engine).await?;
+    let engine = voice.tts(settings.tts_engine, &url);
 
     let chosen = match voice_id.filter(|id| !id.trim().is_empty()) {
         Some(id) => id,

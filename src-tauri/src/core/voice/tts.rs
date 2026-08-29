@@ -1,8 +1,18 @@
 //! Síntese de fala.
 //!
-//! O motor é o **Chatterbox**, rodando na própria máquina: um modelo aberto da Resemble AI
-//! (licença MIT) que **clona uma voz a partir de um clipe de ~10 s**, sem treino nenhum.
-//! Quem sobe e derruba o processo é `crate::core::services`; daqui para baixo é só HTTP
+//! **Dois motores locais**, atrás da mesma [`TtsEngine`], e a escolha entre eles é a troca
+//! entre velocidade e identidade:
+//!
+//! | motor | latência | voz |
+//! | --- | --- | --- |
+//! | [`Piper`] | ~10× tempo real, em CPU | de catálogo, quatro em pt-BR |
+//! | [`Chatterbox`] | mais devagar que tempo real | **a do dono**, clonada de um clipe |
+//!
+//! O Chatterbox mede 6,6 a 8,1 s numa RTX 2060 para uma frase curta — bom demais para
+//! largar, lento demais para conversa. O Piper roda em **CPU** e deixa a GPU inteira para o
+//! Ollama, que é metade da razão de ele existir aqui.
+//!
+//! Quem sobe e derruba os processos é `crate::core::services`; daqui para baixo é só HTTP
 //! contra o `localhost`, do mesmo jeito que o `stt.rs` fala com o whisper-server.
 //!
 //! Aqui morava a ElevenLabs. Ela saiu inteira, e a aposta da doc antiga se pagou: como o
@@ -305,6 +315,107 @@ pub fn play(
     Ok(())
 }
 
+/// O Piper: rápido, em CPU, com voz de catálogo.
+///
+/// Não clona nada — cada voz saiu de alguém que gravou horas de estúdio e publicou um
+/// `.onnx`. É o oposto do [`Chatterbox`], e é essa a troca que o usuário faz ao escolher
+/// entre os dois.
+pub struct Piper {
+    http: reqwest::Client,
+    base: String,
+}
+
+impl Piper {
+    pub fn new(http: reqwest::Client, base: &str) -> Self {
+        Self {
+            http,
+            base: base.trim_end_matches('/').to_owned(),
+        }
+    }
+
+    fn rota(&self, caminho: &str) -> String {
+        format!("{}{caminho}", self.base)
+    }
+}
+
+#[async_trait::async_trait]
+impl TtsEngine for Piper {
+    /// As vozes instaladas no disco — a rota devolve um OBJETO (`{ id: config }`), e o que
+    /// interessa são as chaves.
+    ///
+    /// Só lista o que está instalado de verdade, e não o catálogo remoto (isso é a
+    /// `/all-voices`). Serve para conferir a instalação; quem desenha o select da tela usa
+    /// a lista fixa de `core::services`, para não ficar vazio enquanto o servidor sobe.
+    async fn voices(&self) -> Result<Vec<Voice>, VoiceError> {
+        let resposta = self
+            .http
+            .get(self.rota("/voices"))
+            .send()
+            .await
+            .map_err(network)?;
+
+        let instaladas: std::collections::BTreeMap<String, serde::de::IgnoredAny> =
+            check(resposta).await?.json().await.map_err(network)?;
+
+        Ok(instaladas
+            .into_keys()
+            .map(|id| Voice {
+                name: nome_da_voz(&id),
+                description: qualidade_da_voz(&id),
+                id,
+            })
+            .collect())
+    }
+
+    async fn synthesize(&self, text: &str, voice_id: &str) -> Result<Vec<u8>, VoiceError> {
+        let resposta = self
+            .http
+            .post(self.rota("/synthesize"))
+            .json(&PedidoDoPiper {
+                text,
+                voice: voice_id,
+            })
+            .send()
+            .await
+            .map_err(network)?;
+
+        let audio = check(resposta).await?.bytes().await.map_err(network)?;
+        Ok(audio.to_vec())
+    }
+}
+
+/// **Cuidado com o `voice`.** Quando o id não existe no disco, o servidor NÃO devolve erro:
+/// ele cai na voz com que subiu, em silêncio. Um id errado aqui vira "escolhi o edresson e
+/// saiu o faber", sem nada nos logs — é por isso que a configuração guarda a voz do Piper
+/// num campo separado da do Chatterbox.
+#[derive(Serialize)]
+struct PedidoDoPiper<'a> {
+    text: &'a str,
+    voice: &'a str,
+}
+
+/// `pt_BR-faber-medium` vira `Faber`. O id inteiro na tela é ruído: o idioma é sempre o
+/// mesmo, e a qualidade vai no campo ao lado.
+fn nome_da_voz(id: &str) -> String {
+    let Some((_, resto)) = id.split_once('-') else {
+        return id.to_owned();
+    };
+
+    let cru = resto.rsplit_once('-').map_or(resto, |(nome, _)| nome);
+    let mut letras = cru.chars();
+
+    match letras.next() {
+        Some(primeira) => primeira.to_uppercase().collect::<String>() + letras.as_str(),
+        None => id.to_owned(),
+    }
+}
+
+/// A qualidade (`medium`, `low`) do fim do id. Vale mostrar porque **não é uniforme**: das
+/// quatro vozes brasileiras, o `edresson` é a única `low`.
+fn qualidade_da_voz(id: &str) -> Option<String> {
+    id.rsplit_once('-').map(|(_, qualidade)| qualidade.to_owned())
+}
+
 /// Erro do servidor com o corpo junto: sem ele, um "422" não diz se o clipe de referência
 /// sumiu do disco, se o idioma não existe no modelo carregado, ou se o texto veio vazio.
 ///
@@ -406,6 +517,38 @@ mod tests {
         );
     }
 
+    /// O irmão do teste acima, para o outro motor. O corpo do `/synthesize` é curto, e é
+    /// justamente por isso que ele merece trava: um `voice` renomeado não daria erro — o
+    /// servidor do Piper **ignora voz desconhecida e usa a padrão em silêncio**, então o
+    /// sintoma seria toda voz soando igual, sem nada nos logs.
+    #[test]
+    fn o_pedido_do_piper_sai_com_os_campos_que_o_servidor_espera() {
+        let pedido = PedidoDoPiper {
+            text: "oi",
+            voice: "pt_BR-faber-medium",
+        };
+
+        assert_eq!(
+            serde_json::to_value(&pedido).expect("json"),
+            serde_json::json!({ "text": "oi", "voice": "pt_BR-faber-medium" }),
+        );
+    }
+
+    /// O id inteiro na tela é ruído — o idioma é sempre o mesmo e a qualidade vai ao lado.
+    #[test]
+    fn o_id_da_voz_vira_nome_e_qualidade() {
+        assert_eq!(nome_da_voz("pt_BR-faber-medium"), "Faber");
+        assert_eq!(qualidade_da_voz("pt_BR-faber-medium").as_deref(), Some("medium"));
+
+        // O edresson é a exceção que justifica mostrar a qualidade: das quatro vozes
+        // brasileiras, é a única `low`.
+        assert_eq!(nome_da_voz("pt_BR-edresson-low"), "Edresson");
+        assert_eq!(qualidade_da_voz("pt_BR-edresson-low").as_deref(), Some("low"));
+
+        // Id fora do formato não pode virar string vazia na lista: melhor feio que sumido.
+        assert_eq!(nome_da_voz("solta"), "solta");
+    }
+
     /// O nome que vale é o que o SERVIDOR devolveu, não o do arquivo que mandamos: ele
     /// higieniza o nome, e guardar o nosso deixaria a configuração apontando para um
     /// clipe que não existe do lado de lá.
@@ -454,28 +597,42 @@ mod tests {
     /// caixa. Não é um teste: é a ferramenta de medição da feature, e produz os dois
     /// números que ninguém consegue deduzir lendo código.
     ///
-    /// 1. **Quantos segundos até a primeira palavra.** Numa RTX 2060 com o Multilingual,
-    ///    uma frase de 52 caracteres levou **6,6 a 8,1 s** já quente — mais devagar que
-    ///    tempo real. O `stream: true` do servidor foi medido e é PIOR (8,9 s até o
-    ///    primeiro byte): ele fatia por trecho, e uma frase é um trecho só. Numa GPU
-    ///    diferente esse número muda, e é por isso que a ferramenta continua aqui.
+    /// 1. **Quantos segundos até a primeira palavra.** Medido nesta máquina (RTX 2060,
+    ///    frase de 52 caracteres): **0,14 a 0,21 s no Piper** contra **6,6 a 8,1 s no
+    ///    Chatterbox**. É a diferença entre conversa e espera, e foi ela que fez o Piper
+    ///    virar padrão. Em outra máquina os números mudam — daí a ferramenta continuar aqui.
     /// 2. **O pico típico da fala**, que calibra o `PICO_TIPICO_DA_FALA` do
-    ///    `useVoiceInput.ts` — hoje 0,28, medido aqui. Ele depende do volume do CLIPE de
-    ///    referência, porque o modelo clona o volume junto com a voz: trocar de clipe
-    ///    pede rodar isto de novo.
+    ///    `useVoiceInput.ts`. Também depende do motor: o Piper **normaliza** e bate 1,000;
+    ///    o Chatterbox deu 0,28 e ainda varia com o volume do clipe de referência, porque
+    ///    ele clona o volume junto com a voz.
     ///
     /// ```text
-    /// JARVIS_TTS_VOZ=minha-voz.wav cargo test --lib -- --ignored --nocapture fala_de_verdade
+    /// JARVIS_TTS_MOTOR=piper cargo test --lib -- --ignored --nocapture fala_de_verdade
+    /// JARVIS_TTS_MOTOR=chatterbox JARVIS_TTS_VOZ=minha-voz.wav cargo test --lib -- --ignored --nocapture fala_de_verdade
     /// ```
     #[test]
     #[ignore]
     fn fala_de_verdade() {
-        let base = std::env::var("JARVIS_TTS_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8004".to_owned());
+        let piper = std::env::var("JARVIS_TTS_MOTOR").unwrap_or_default() != "chatterbox";
+        let padrao = if piper {
+            "http://127.0.0.1:8645"
+        } else {
+            "http://127.0.0.1:8004"
+        };
+
+        let base = std::env::var("JARVIS_TTS_URL").unwrap_or_else(|_| padrao.to_owned());
         let frase = std::env::var("JARVIS_TTS_FRASE")
             .unwrap_or_else(|_| "Um, dois, três. Pausa. Quatro, cinco.".to_owned());
 
-        let motor = Chatterbox::new(reqwest::Client::new(), &base);
+        println!("motor: {}", if piper { "piper" } else { "chatterbox" });
+
+        // `Box<dyn>` para as duas metades do teste servirem aos dois motores sem duplicar
+        // o corpo inteiro — é a mesma trait que a fábrica do `VoiceState` usa.
+        let motor: Box<dyn TtsEngine> = if piper {
+            Box::new(Piper::new(reqwest::Client::new(), &base))
+        } else {
+            Box::new(Chatterbox::new(reqwest::Client::new(), &base))
+        };
 
         let bloco = tokio::runtime::Builder::new_current_thread()
             .enable_all()

@@ -15,6 +15,22 @@ pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 /// seria o Ultron —, e por isso não são três configurações separadas. O nome fica de
 /// fora de propósito: ele é o gatilho de voz, e trancá-lo tiraria a liberdade de chamar
 /// o assistente do que se quiser. Trocar de tema **sugere** o nome; não o impõe.
+/// Qual motor sintetiza a fala.
+///
+/// Os dois são locais e nenhum custa dinheiro; a escolha é entre **velocidade e
+/// identidade**. O Piper responde em uma fração do tempo, com uma voz de catálogo; o
+/// Chatterbox usa a voz clonada do dono e demora mais que o áudio que produz.
+///
+/// Padrão Piper porque é o que torna a conversa por voz utilizável — quem quer a própria
+/// voz troca sabendo o que está pagando.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MotorDeVoz {
+    #[default]
+    Piper,
+    Chatterbox,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Persona {
@@ -97,6 +113,20 @@ pub struct AppSettings {
     pub assistant_name: String,
     /// O tema: cor do app, voz do TTS e tom da conversa. Ver [`Persona`].
     pub persona: Persona,
+    /// Qual dos dois motores de voz usar. Ver [`MotorDeVoz`].
+    pub tts_engine: MotorDeVoz,
+    /// Voz do Piper, **uma por persona** — no mesmo esquema dos clipes logo abaixo.
+    ///
+    /// Guardada separada do clipe do Chatterbox de propósito, e a razão é uma armadilha
+    /// concreta: quando o id de voz não existe no disco, o servidor do Piper **cai
+    /// silenciosamente na voz padrão** em vez de recusar. Com um campo só, trocar de motor
+    /// deixaria `voz_limpa_jarvis.mp3` aqui, e o sintoma seria "mudei a voz e não mudou
+    /// nada" — sem erro em lugar nenhum para investigar.
+    ///
+    /// Vazio de propósito no padrão, como todo o resto: é o que mantém o Jarvis calado até
+    /// alguém escolher, em vez de errar a cada mensagem em quem não instalou o Piper.
+    pub piper_voice_jarvis: String,
+    pub piper_voice_ultron: String,
     /// Clipe de voz clonada, **um por persona** — o Jarvis e o Ultron não podem soar
     /// igual, e obrigar a reconfigurar a voz a cada troca faria a troca não valer a pena.
     ///
@@ -179,6 +209,9 @@ impl Default for AppSettings {
             anthropic_api_key: String::new(),
             assistant_name: DEFAULT_ASSISTANT_NAME.to_owned(),
             persona: Persona::Jarvis,
+            tts_engine: MotorDeVoz::Piper,
+            piper_voice_jarvis: String::new(),
+            piper_voice_ultron: String::new(),
             tts_voice_jarvis: String::new(),
             tts_voice_ultron: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
@@ -212,11 +245,19 @@ impl AppSettings {
         }
     }
 
-    /// O clipe de voz do tema ATIVO. Trocar de tema troca a voz sem reconfigurar nada.
+    /// A voz do tema ATIVO, no motor ATIVO. Trocar de tema ou de motor troca a voz sem
+    /// reconfigurar nada.
+    ///
+    /// **A assinatura não mudou** quando o segundo motor entrou, e isso foi de propósito:
+    /// os campos dobraram, mas quem chama (`resolve_voice`, e os dois portões do frontend
+    /// pelo gêmeo `vozDaPersona`) continua perguntando a mesma coisa e recebendo uma
+    /// string. O cruzamento fica todo aqui.
     pub fn voz(&self) -> &str {
-        match self.persona {
-            Persona::Jarvis => &self.tts_voice_jarvis,
-            Persona::Ultron => &self.tts_voice_ultron,
+        match (self.tts_engine, self.persona) {
+            (MotorDeVoz::Piper, Persona::Jarvis) => &self.piper_voice_jarvis,
+            (MotorDeVoz::Piper, Persona::Ultron) => &self.piper_voice_ultron,
+            (MotorDeVoz::Chatterbox, Persona::Jarvis) => &self.tts_voice_jarvis,
+            (MotorDeVoz::Chatterbox, Persona::Ultron) => &self.tts_voice_ultron,
         }
     }
 
@@ -287,20 +328,45 @@ mod tests {
         assert!(!settings.webcam_mirror);
     }
 
-    /// O tema troca a voz junto. Sem isto, virar Ultron manteria a voz do Jarvis e a
-    /// troca ficaria pela metade — a cara nova com a voz velha.
+    /// A voz segue o tema E o motor. Sem o eixo do tema, virar Ultron manteria a voz do
+    /// Jarvis e a troca ficaria pela metade — a cara nova com a voz velha. Sem o eixo do
+    /// motor, trocar de motor usaria a voz do outro.
+    ///
+    /// Os quatro cantos, e não dois: um `match` com braços trocados daria a voz errada em
+    /// só UM dos motores, que é o tipo de bug que passa despercebido porque o outro
+    /// caminho continua certo.
     #[test]
-    fn o_tema_manda_na_voz() {
+    fn o_motor_e_o_tema_juntos_mandam_na_voz() {
         let mut settings = AppSettings {
-            tts_voice_jarvis: "voz-a".to_owned(),
-            tts_voice_ultron: "voz-b".to_owned(),
+            piper_voice_jarvis: "piper-jarvis".to_owned(),
+            piper_voice_ultron: "piper-ultron".to_owned(),
+            tts_voice_jarvis: "clone-jarvis".to_owned(),
+            tts_voice_ultron: "clone-ultron".to_owned(),
             ..AppSettings::default()
         };
 
-        assert_eq!(settings.voz(), "voz-a");
-
+        settings.tts_engine = MotorDeVoz::Piper;
+        settings.persona = Persona::Jarvis;
+        assert_eq!(settings.voz(), "piper-jarvis");
         settings.persona = Persona::Ultron;
-        assert_eq!(settings.voz(), "voz-b");
+        assert_eq!(settings.voz(), "piper-ultron");
+
+        settings.tts_engine = MotorDeVoz::Chatterbox;
+        assert_eq!(settings.voz(), "clone-ultron");
+        settings.persona = Persona::Jarvis;
+        assert_eq!(settings.voz(), "clone-jarvis");
+    }
+
+    /// Um `settings.json` de antes desta leva não tem `ttsEngine` nem `piperVoice*`, e
+    /// tem que continuar carregando — no Piper, que é o padrão, e portanto **calado** até
+    /// alguém escolher uma voz. Falar com a voz errada seria pior que não falar.
+    #[test]
+    fn config_sem_motor_cai_no_piper_e_fica_mudo() {
+        let antigo = r#"{"persona":"ultron","ttsVoiceUltron":"voz_limpa.mp3"}"#;
+        let settings: AppSettings = serde_json::from_str(antigo).expect("desserializa");
+
+        assert_eq!(settings.tts_engine, MotorDeVoz::Piper);
+        assert_eq!(settings.voz(), "");
     }
 
     /// O NOME é independente do tema de propósito: o tema sugere, não impõe. Um Ultron

@@ -21,11 +21,16 @@ de que a frase é para ele — sem ele, conversa perto do microfone não vira co
 Configurações. Muda a cor do app inteiro, a voz e o jeito de falar, na hora e sem
 reiniciar. O nome — que é o gatilho — segue o tema até você escolher um seu.
 
-**Ele responde falando com a SUA voz.** O TTS é o Chatterbox rodando nesta máquina, e ele
-**clona uma voz a partir de um clipe de ~10 segundos** — escolha um `.wav` em Diagnóstico ›
-Voz e pronto, sem treino e sem conta em lugar nenhum. Vale em qualquer caminho: o que você
-digita no chat também sai em voz alta. Sem clipe escolhido ele fica calado, e nada mais
-muda.
+**Ele responde falando, e você escolhe como.** São dois motores locais em Diagnóstico ›
+Voz, e a escolha é entre velocidade e identidade:
+
+- **Piper** (padrão) — quatro vozes brasileiras de catálogo, em **0,14 a 0,21 s** por frase.
+  Roda na CPU e deixa a placa de vídeo inteira para o Ollama.
+- **Chatterbox** — **clona a sua voz** de um clipe de ~10 segundos, sem treino nenhum. Custa
+  6,6 a 8,1 s por frase, ou seja, mais devagar que o áudio que produz.
+
+Vale em qualquer caminho: o que você digita no chat também sai em voz alta. Sem voz
+escolhida ele fica calado, e nada mais muda.
 
 **E dá para simplesmente conversar.** O botão de ondas ao lado do microfone liga o
 _modo conversa_: o microfone fica aberto, o silêncio de 1,2 s marca o fim da sua frase,
@@ -168,7 +173,38 @@ morre sem transcrever. `curl -L -C - --retry 10` retoma de onde parou.
 Sem essa pasta o app sobe normalmente; só o botão de microfone devolve erro (e agora ele
 **mostra** esse erro no chat, em vez de não fazer nada).
 
-### 7. Chatterbox — opcional, só para ele falar
+### 7. Piper — opcional, o motor de voz rápido
+
+Quatro vozes brasileiras de catálogo, em CPU. É o motor padrão, e o que torna a conversa
+por voz utilizável.
+
+```powershell
+# O Piper roda em qualquer Python recente; o 3.10 já está aí por causa do passo 8.
+cd $env:APPDATA\com.jarvis.app
+py -3.10 -m venv piper\venv
+piper\venv\Scripts\python -m pip install "piper-tts[http]"
+
+cd piper
+venv\Scripts\python -m piper.download_voices --data-dir . `
+  pt_BR-cadu-medium pt_BR-edresson-low pt_BR-faber-medium pt_BR-jeff-medium
+```
+
+**O `[http]` não é enfeite.** Sem ele o `pip install piper-tts` instala só a biblioteca, o
+servidor morre num `ModuleNotFoundError: No module named 'flask'`, e a mensagem culpa o
+lugar errado.
+
+São ~240 MB no total. Depois disso o Jarvis sobe o servidor sozinho e escolhe a voz em
+Diagnóstico › Voz.
+
+**Repare no `edresson`:** ele é `-low`, e os outros três são `-medium`. Deduzir o sufixo dá
+um id que não existe — e o servidor do Piper **não recusa voz desconhecida**, ele usa a
+padrão em silêncio. O sintoma seria escolher uma voz e ouvir outra.
+
+> **Licença:** o Piper se declara para **uso pessoal e pesquisa**, e cada voz traz o seu
+> `MODEL_CARD` com os termos do dataset. Para um assistente pessoal, tudo bem — mas fica o
+> registro para quem pensar em empacotar isso.
+
+### 8. Chatterbox — opcional, para ele falar com a SUA voz
 
 O TTS **clona a sua voz** a partir de um clipe de ~10 segundos, e roda inteiro nesta
 máquina. É um servidor Python, e é o único serviço do projeto que não é um `.exe` solto.
@@ -209,7 +245,7 @@ Sem essa pasta o app sobe normal; só a fala fica desligada, e o Diagnóstico �
 que falta. Depois de instalado, escolha ali um `.wav` com a sua voz — uns 10 segundos
 falando em português, sem música e sem ruído atrás.
 
-### 8. Clone, instale e rode
+### 9. Clone, instale e rode
 
 ```powershell
 git clone <url-do-repo>
@@ -221,10 +257,11 @@ npm run tauri dev
 O primeiro `tauri dev` compila ~600 crates e leva **10–20 minutos**. Os seguintes são
 segundos. A janela abre sozinha quando terminar.
 
-### Os três serviços locais
+### Os serviços locais
 
-O app **sobe os três sozinho** quando precisa, e derruba ao sair — mas os arquivos
-precisam existir. Nenhum é baixado automaticamente: são centenas de megabytes (no caso do
+São quatro, e o app **sobe sozinho** o que precisar, derrubando tudo ao sair — mas os
+arquivos precisam existir. Dos dois motores de voz, **só o escolhido sobe**: quem nunca sai
+do Piper nunca carrega o modelo do Chatterbox. Nenhum é baixado automaticamente: são centenas de megabytes (no caso do
 Chatterbox, gigabytes), e essa é uma decisão do dono da máquina.
 
 Juntos, eles são o motivo de o Jarvis **não depender de nenhuma API paga** para ouvir,
@@ -272,19 +309,23 @@ Latências medidas nesta máquina (i5-11300H, GTX 1650): primeira chamada ao Oll
 `whisper-cublas-*-bin-x64.zip` embute o runtime CUDA e roda na GPU sem instalar o
 toolkit — é trocar os arquivos, não o código.
 
-**Chatterbox** — fala, com a voz do dono. Instalação no [passo 7](#7-chatterbox--opcional-só-para-ele-falar).
-É o único dos três que não é um `.exe` solto: é um servidor Python, e o único lugar do
-projeto onde um sidecar Python entrou. Não foi escolha — a única variante do Chatterbox com
-export ONNX (que rodaria em Rust puro) é a Turbo, e ela fala só inglês.
+**Piper** — fala, rápido, com voz de catálogo. Instalação no [passo 7](#7-piper--opcional-o-motor-de-voz-rápido).
+É o motor **padrão**, e o único serviço que roda em CPU — a GPU fica inteira para o Ollama.
 
-O modelo **clona o volume junto com a voz**: um clipe de referência gravado baixo gera fala
-baixa. É por isso que o `PICO_TIPICO_DA_FALA` do `useVoiceInput.ts` — que iguala a
-amplitude da fala à do microfone para o núcleo do HUD pulsar igual nos dois — está
-documentado como dependente do SEU clipe, e não como uma constante do motor.
+**Chatterbox** — fala com a voz do dono, quando você trocar para ele. Instalação no
+[passo 8](#8-chatterbox--opcional-para-ele-falar-com-a-sua-voz). Os dois são servidores
+Python, e são o único lugar do projeto onde um sidecar Python entrou. Não foi escolha: a
+única variante do Chatterbox com export ONNX (que rodaria em Rust puro) é a Turbo, e ela
+fala só inglês.
 
-Latência medida numa RTX 2060 com o Multilingual: **6,6 a 8,1 s** para uma frase de 52
-caracteres, com o modelo já quente. Isso é mais devagar que tempo real, e é a conta de não
-depender de nuvem. Os detalhes e as saídas possíveis estão no [Modo conversa](#modo-conversa).
+O Chatterbox **clona o volume junto com a voz**: um clipe de referência gravado baixo gera
+fala baixa. O Piper, ao contrário, **normaliza** e sempre entrega pico 1,0. É por isso que o
+`PICO_TIPICO_DA_FALA` do `useVoiceInput.ts` — que iguala a amplitude da fala à do microfone,
+para o núcleo do HUD pulsar igual nos dois — segue o MOTOR, e não é um número só.
+
+Latências medidas nesta máquina (RTX 2060, frase de 52 caracteres, tudo já quente): **0,14 a
+0,21 s no Piper**, **6,6 a 8,1 s no Chatterbox**. Os detalhes estão no
+[Modo conversa](#modo-conversa).
 
 ## Rodando
 
@@ -363,6 +404,9 @@ sozinho pelo registro, desde que ele exista.
 | "o servidor de voz ainda está sendo instalado" | o `start.bat` não terminou           | espere o `venv\.install_complete` aparecer     |
 | "não achei o servidor de voz"               | pasta com nome errado, ou modo portable | tem que ser `…\chatterbox\venv\Scripts\python.exe` |
 | Ele fala, mas em inglês                     | `config.yaml` no `chatterbox-turbo`     | troque para `chatterbox-multilingual`          |
+| "não achei o Piper"                         | faltou o `download_voices`              | passo 7 — só o `pip install` não basta         |
+| Piper morre em `No module named 'flask'`    | instalou sem o extra `[http]`           | `pip install "piper-tts[http]"`                |
+| Escolhi uma voz e saiu outra                | id de voz que não existe no disco       | o Piper cai na padrão em silêncio — use o select |
 | O núcleo do HUD pulsa de menos quando fala  | clipe de voz gravado baixo              | `PICO_TIPICO_DA_FALA` em `useVoiceInput.ts`    |
 | `cargo` reclama de clippy no build          | `[lints.clippy] all = "deny"`           | é de propósito — corrija o lint                |
 
@@ -538,7 +582,7 @@ src-tauri/src/
 │   ├── agent/            intent.rs (roteador) + converse.rs (papo e extração) + o log
 │   ├── memory/           a pasta de markdown: nota.rs, busca.rs, rotinas.rs
 │   ├── system/           AGE sobre o SO: target.rs (validação) + audio.rs (COM)
-│   ├── services.rs       sobe e derruba o Ollama, o whisper-server e o Chatterbox
+│   ├── services.rs       sobe e derruba o Ollama, o whisper-server, o Piper e o Chatterbox
 │   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (Chatterbox)
 │   ├── vision/           ENTENDE a imagem: claude.rs + ollama.rs, atrás da mesma `ver()`
 │   ├── casa.rs           ouve os aparelhos Tuya (Positivo, EKAZA) se anunciando na rede
@@ -672,20 +716,48 @@ Enquanto ele fala, o microfone está fechado, então não existe eco para suprim
 ele, desligar o modo no meio de uma resposta longa continuaria falando meia frase
 adiante, e o botão de desligar estaria mentindo.
 
-**A latência do TTS é o preço desta escolha, e ele é alto.** Medido numa RTX 2060 com o
-modelo Multilingual, a frase _"Sistemas online. Sou o Jarvis, e estou ouvindo você."_ (52
-caracteres, 4,4 s de áudio) levou **6,6 a 8,1 segundos** para ser sintetizada — três
-medições, já quente, sem carregamento de modelo no meio. Ou seja, ele gera **mais devagar
-que tempo real**. A ElevenLabs `flash` fazia isso em dezenas de milissegundos.
+**A latência do TTS foi o que decidiu qual motor é o padrão.** Mesma frase _"Sistemas
+online. Sou o Jarvis, e estou ouvindo você."_ (52 caracteres), mesma máquina, tudo já quente:
+
+| motor | por frase | fator |
+| --- | --- | --- |
+| Piper | **0,14–0,21 s** | 0,04× — 25 vezes mais rápido que tempo real |
+| Chatterbox | 6,6–8,1 s | ~1,4× — mais LENTO que o áudio que produz |
+
+O Chatterbox continua valendo pelo que só ele faz: a voz é a sua. Mas numa conversa aqueles
+segundos entram inteiros na espera, a cada frase, e é por isso que o padrão é o outro.
 
 **O `stream: true` do servidor NÃO resolve** — foi medido, e é pior: 8,9 s até o primeiro
 byte contra 7 s do total sem streaming. Ele fatia por trecho, e uma frase de conversa é um
 trecho só, então sobra o overhead sem o ganho. Estava documentado aqui como a saída de
 emergência; não é.
 
-A saída de verdade, se a espera incomodar, é **fatiar do lado do app**: quebrar a resposta
-em frases, tocar a primeira enquanto a segunda é sintetizada. Isso não ajuda numa resposta
-de uma frase só — mas é justamente nas respostas longas que a espera dói.
+**Dois botões do servidor foram testados e os dois pioraram** — ficam anotados aqui para
+ninguém tentar de novo:
+
+| tentativa | resultado | por quê |
+| --- | --- | --- |
+| `cfg_weight: 0.0` (desligar a guidance) | 9,0 s vs 6,7 s | não corta passos; muda o áudio gerado |
+| `TTS_BF16=on` | 8,6 s vs 6,7 s | a 2060 é **Turing**: sem tensor core bf16, o PyTorch emula |
+
+O `torch.cuda.is_bf16_supported()` responde `True` numa 2060 e isso engana: bf16 nativo só
+existe de **Ampere (capability 8.0)** para cima, e a 7.5 apenas emula. Numa placa mais nova
+esse flag passa a valer.
+
+**Treinar não entra nessa conta.** Fine-tuning muda o que e como ele fala, não quantas
+contas a GPU faz — o custo por segundo de áudio é o mesmo antes e depois.
+
+**A saída de verdade é fatiar do lado do app**, e o ganho foi medido. O tempo é
+proporcional ao áudio gerado (fator ~1,3–1,5× constante), então quebrar a resposta em
+frases e tocar a primeira enquanto a segunda é sintetizada corta a espera **em 85%**:
+
+```
+resposta longa (241 caracteres, 18 s de áudio)
+  bloco inteiro:    21,80 s até ouvir a primeira palavra
+  só a 1ª frase:     3,19 s
+```
+
+Isso não ajuda numa resposta de uma frase só — mas é justamente nas longas que a espera dói.
 
 ## Busca com resumo
 

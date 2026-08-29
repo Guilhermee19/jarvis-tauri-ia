@@ -1,6 +1,6 @@
 'use client'
 
-import { useChatStore, useSensorStore } from '@/stores'
+import { useChatStore, useSensorStore, useSettingsStore } from '@/stores'
 
 /** De quem é a vez no modo conversa. */
 export type ConversationStatus = 'ouvindo' | 'pensando' | 'falando'
@@ -44,6 +44,8 @@ export function useVoiceInput() {
   // versões da mesma verdade, e uma delas ficaria para trás.
   const isThinking = useChatStore((state) => state.isTyping)
   const isSpeaking = useChatStore((state) => state.isSpeaking)
+  // O motor decide a calibração do medidor logo abaixo — os dois normalizam diferente.
+  const motorDeVoz = useSettingsStore((state) => state.settings.ttsEngine)
   const conversationStatus: ConversationStatus = isSpeaking
     ? 'falando'
     : isThinking
@@ -66,16 +68,21 @@ export function useVoiceInput() {
    * visivelmente menos quando o Jarvis fala do que quando ele ouve, e essa diferença não
    * diz nada sobre o áudio.
    *
-   * **0,28 saiu de medir**, no Chatterbox com um clipe de referência real: uma frase de 4,4 s
-   * gerada em WAV bateu pico 0,264. O valor anterior era 0,6, medido no encoder MP3 da
-   * ElevenLabs — mantido por engano, o núcleo do HUD pulsaria com menos da METADE da
-   * amplitude, e ninguém ligaria isso a uma constante de outro motor.
+   * **Os dois números saíram de medir**, e são bem diferentes:
    *
-   * **Depende do seu clipe.** O modelo clona o volume junto com a voz: uma referência
-   * gravada baixa gera fala baixa. Se o núcleo pulsar de menos, o número certo sai de
-   * `cargo test --lib -- --ignored --nocapture fala_de_verdade`, que imprime o pico da sua.
+   * - **Piper: 1,0.** Ele normaliza a saída, e a frase de teste bateu pico exatamente 1,000.
+   * - **Chatterbox: 0,28.** Uma frase de 4,4 s gerada em WAV bateu 0,264 — e ainda depende
+   *   do clipe, porque o modelo clona o VOLUME junto com a voz.
+   *
+   * Por isso a constante segue o motor, e não é um número só. Usar o 0,28 com o Piper faria
+   * o núcleo saturar em toda sílaba; usar 1,0 com o Chatterbox o deixaria quase parado. É a
+   * mesma armadilha que o 0,6 da ElevenLabs já causou uma vez, e o que a evita é ela ser
+   * derivada de `ttsEngine` em vez de escrita à mão.
+   *
+   * Se trocar o clipe do Chatterbox e o núcleo pulsar de menos, o número novo sai de
+   * `cargo test --lib -- --ignored --nocapture fala_de_verdade`, que imprime o pico.
    */
-  const PICO_TIPICO_DA_FALA = 0.28
+  const PICO_TIPICO_DA_FALA = motorDeVoz === 'piper' ? 1 : 0.28
   const nivelDeAudio = isSpeaking ? Math.min(1, ttsLevel / PICO_TIPICO_DA_FALA) : level
 
   return {

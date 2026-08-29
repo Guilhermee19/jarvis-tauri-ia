@@ -34,6 +34,14 @@ interface NavegadorState {
   andar: (id: string, passo: number) => Promise<void>
   /** Informa onde desenhar. `null` esconde tudo. */
   posicionar: (area: AreaDoNavegador | null) => void
+  /**
+   * Anota que uma aba mudou de endereço por conta própria.
+   *
+   * Não passa por comando nenhum: a navegação acontece dentro da página, e quem conta é o
+   * evento `jarvis://browser-url`. Sem isto a barra de endereço mostraria para sempre o
+   * endereço com que a aba nasceu.
+   */
+  anotarEndereco: (id: string, url: string) => void
   limparErro: () => void
 }
 
@@ -106,9 +114,30 @@ export const useNavegadorStore = create<NavegadorState>((set) => {
       void browserBounds(area).catch((erro: unknown) => set({ erro: descrever(erro) }))
     },
 
+    anotarEndereco: (id, url) =>
+      set((estado) => ({
+        abas: estado.abas.map((aba) =>
+          aba.id === id ? { ...aba, url, titulo: hostDe(url) } : aba,
+        ),
+      })),
+
     limparErro: () => set({ erro: null }),
   }
 })
+
+/**
+ * O host sem `www.`, para a lingueta — o gêmeo do `titulo_de` no Rust.
+ *
+ * Existe deste lado porque o endereço novo chega por evento, e refazer a viagem até o Rust
+ * só para encurtar uma string seria uma ida e volta de IPC por clique em link.
+ */
+function hostDe(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
 
 /** A aba que está na frente, ou `undefined` com o navegador vazio. */
 export function abaAtiva(estado: NavegadorState): Aba | undefined {

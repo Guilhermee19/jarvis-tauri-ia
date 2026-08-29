@@ -46,6 +46,17 @@ interface FloatingPanelProps {
   /** `null` enquanto ninguém redimensionou: o tamanho vem das classes. */
   size: PanelSize | null
   onSizeChange: (size: PanelSize) => void
+  /**
+   * Avisa quando o arrasto da alça começa e termina.
+   *
+   * Existe por causa de UMA janelinha: a do navegador, cujo conteúdo é um webview nativo
+   * empilhado acima do HTML. Enquanto a alça é arrastada o ponteiro entra na área dele, e
+   * uma camada nativa engole o evento do mouse antes que o HTML o veja — o arrasto morre no
+   * meio. Escondendo o webview durante o arrasto, o problema não existe.
+   *
+   * Opcional porque as outras janelinhas são HTML puro e não precisam saber disso.
+   */
+  onResizingChange?: (redimensionando: boolean) => void
   /** Ocupa a área inteira. Posição e tamanho ficam GUARDADOS para o restaurar. */
   maximized: boolean
   onMaximizedChange: (maximized: boolean) => void
@@ -83,6 +94,7 @@ export function FloatingPanel({
   onPositionChange,
   size,
   onSizeChange,
+  onResizingChange,
   maximized,
   onMaximizedChange,
   onClose,
@@ -219,6 +231,7 @@ export function FloatingPanel({
     }
     event.currentTarget.setPointerCapture(event.pointerId)
     event.stopPropagation()
+    onResizingChange?.(true)
   }
 
   function resize(event: ReactPointerEvent<HTMLElement>) {
@@ -235,6 +248,7 @@ export function FloatingPanel({
 
   function endResize(event: ReactPointerEvent<HTMLElement>) {
     resizeRef.current = null
+    onResizingChange?.(false)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { JarvisEvent, onJarvisEvent, type UiAction } from '@/lib/tauri'
+import { JarvisEvent, onJarvisEvent, type MudouDeEndereco, type UiAction } from '@/lib/tauri'
 import { useNavegadorStore, useNowPlayingStore, useSensorStore } from '@/stores'
 
 /**
@@ -18,6 +18,7 @@ export function useSensorEvents() {
   const setWebcam = useSensorStore((state) => state.setWebcam)
   const mostrarFaixa = useNowPlayingStore((state) => state.mostrar)
   const abrirSite = useNavegadorStore((state) => state.abrirSite)
+  const anotarEndereco = useNavegadorStore((state) => state.anotarEndereco)
   const pesquisar = useNavegadorStore((state) => state.pesquisar)
 
   useEffect(() => {
@@ -34,6 +35,18 @@ export function useSensorEvents() {
 
     assinar(onJarvisEvent<number>(JarvisEvent.MicLevel, setMicLevel))
     assinar(onJarvisEvent<number>(JarvisEvent.TtsLevel, setTtsLevel))
+
+    // O navegador se mexendo por conta própria. Os dois vêm de callbacks do webview, que
+    // rodam na thread principal do Tauri: por isso eles AVISAM em vez de agir — criar uma
+    // aba lá dentro trava o app. Quem age é a store, daqui, por comando `async`.
+    assinar(
+      onJarvisEvent<MudouDeEndereco>(JarvisEvent.BrowserUrl, (mudou) =>
+        anotarEndereco(mudou.id, mudou.url),
+      ),
+    )
+    assinar(
+      onJarvisEvent<string>(JarvisEvent.BrowserNewTab, (url) => void abrirSite(url)),
+    )
 
     // O agente pedindo à UI. "abre a webcam" cai no MESMO caminho do botão da barra
     // de ícones — é isso que mantém o botão aceso e o preview rodando.
@@ -66,5 +79,5 @@ export function useSensorEvents() {
       cancelled = true
       pendentes.forEach((fn) => fn())
     }
-  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa, abrirSite, pesquisar])
+  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa, abrirSite, pesquisar, anotarEndereco])
 }

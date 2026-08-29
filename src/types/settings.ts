@@ -9,6 +9,31 @@
  */
 export type Persona = 'jarvis' | 'ultron'
 
+/**
+ * Qual motor sintetiza a fala. Espelha `MotorDeVoz` no Rust.
+ *
+ * Os dois são locais e nenhum custa nada; a escolha é entre **velocidade e identidade**.
+ */
+export type MotorDeVoz = 'piper' | 'chatterbox'
+
+/**
+ * As vozes brasileiras do catálogo do Piper, na ordem em que aparecem no select.
+ *
+ * Lista fixa, e não o retorno de `listVoices()`: listar exige o servidor de pé, e um
+ * select vazio enquanto ele sobe deixaria a tela num beco. O `listVoices` continua
+ * servindo para conferir o que está instalado de verdade.
+ *
+ * **O `edresson` é `low`, os outros três são `medium`** — deduzir o sufixo daria um id que
+ * não existe, e o servidor do Piper responde a voz desconhecida caindo em silêncio na voz
+ * padrão. O sintoma seria escolher uma voz e ouvir outra.
+ */
+export const VOZES_PIPER = [
+  { id: 'pt_BR-cadu-medium', nome: 'Cadu' },
+  { id: 'pt_BR-edresson-low', nome: 'Edresson' },
+  { id: 'pt_BR-faber-medium', nome: 'Faber' },
+  { id: 'pt_BR-jeff-medium', nome: 'Jeff' },
+] as const
+
 /** O nome que cada tema sugere. Espelha `Persona::nome()` no Rust. */
 export const NOME_DA_PERSONA: Record<Persona, string> = {
   jarvis: 'Jarvis',
@@ -22,6 +47,17 @@ export interface AppSettings {
   assistantName: string
   /** O tema: cor, voz e tom. Ver [`Persona`]. */
   persona: Persona
+  /** Qual motor de voz usar. Ver [`MotorDeVoz`]. */
+  ttsEngine: MotorDeVoz
+  /**
+   * Voz do Piper, uma por persona — no mesmo esquema dos clipes abaixo.
+   *
+   * Separada do clipe do Chatterbox porque o servidor do Piper **não recusa** um id de voz
+   * que não existe: ele usa a padrão em silêncio. Com um campo só, trocar de motor
+   * deixaria um `.mp3` aqui e a fala sairia com a voz errada, sem erro nenhum.
+   */
+  piperVoiceJarvis: string
+  piperVoiceUltron: string
   /**
    * Clipe de voz clonada, um por persona — o Jarvis e o Ultron não podem soar igual, e
    * reconfigurar a cada troca faria a troca não valer a pena.
@@ -88,13 +124,39 @@ export interface AppSettings {
  * Agora não vale mais — dá para ter o Jarvis com voz e o Ultron sem.
  */
 export function vozDaPersona(settings: AppSettings): string {
-  return settings.persona === 'ultron' ? settings.ttsVoiceUltron : settings.ttsVoiceJarvis
+  const ultron = settings.persona === 'ultron'
+
+  return settings.ttsEngine === 'chatterbox'
+    ? ultron
+      ? settings.ttsVoiceUltron
+      : settings.ttsVoiceJarvis
+    : ultron
+      ? settings.piperVoiceUltron
+      : settings.piperVoiceJarvis
+}
+
+/** O campo de configuração que o editor de voz mexe, dado o motor e a persona ativos. */
+export function campoDaVoz(
+  settings: AppSettings,
+): 'piperVoiceJarvis' | 'piperVoiceUltron' | 'ttsVoiceJarvis' | 'ttsVoiceUltron' {
+  const ultron = settings.persona === 'ultron'
+
+  return settings.ttsEngine === 'chatterbox'
+    ? ultron
+      ? 'ttsVoiceUltron'
+      : 'ttsVoiceJarvis'
+    : ultron
+      ? 'piperVoiceUltron'
+      : 'piperVoiceJarvis'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   anthropicApiKey: '',
   assistantName: 'Jarvis',
   persona: 'jarvis',
+  ttsEngine: 'piper',
+  piperVoiceJarvis: '',
+  piperVoiceUltron: '',
   ttsVoiceJarvis: '',
   ttsVoiceUltron: '',
   ollamaUrl: 'http://localhost:11434',

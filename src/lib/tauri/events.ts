@@ -20,6 +20,10 @@ export const JarvisEvent = {
    * diz.
    */
   TtsLevel: 'jarvis://tts-level',
+  /** A aba do navegador mudou de endereço sozinha — link, redirecionamento, rota de SPA. */
+  BrowserUrl: 'jarvis://browser-url',
+  /** A página pediu janela nova: clique do meio, `target="_blank"`, `window.open`. */
+  BrowserNewTab: 'jarvis://browser-new-tab',
   /**
    * O agente pedindo à UI algo que só ela sabe fazer — quem é dono do laço de preview
    * da câmera é o `sensorStore`, não o Rust. Emitido por `commands/chat.rs`.
@@ -42,6 +46,12 @@ export interface Faixa {
  * serializado com tag externa — por isso o `tipo` discrimina e só uma das variantes
  * carrega dados.
  */
+/** Carga do {@link JarvisEvent.BrowserUrl}. Espelha `MudouDeEndereco` no Rust. */
+export interface MudouDeEndereco {
+  id: string
+  url: string
+}
+
 export type UiAction =
   | { tipo: 'webcam-on' }
   | { tipo: 'webcam-off' }

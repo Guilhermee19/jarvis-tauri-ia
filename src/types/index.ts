@@ -14,6 +14,6 @@ export type {
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'
 export type { Metricas } from './desempenho'
 export type { Aba, AreaDoNavegador, EstadoDoNavegador } from './navegador'
-export type { AppSettings, Persona } from './settings'
-export { DEFAULT_SETTINGS, NOME_DA_PERSONA, vozDaPersona } from './settings'
+export type { AppSettings, MotorDeVoz, Persona } from './settings'
+export { campoDaVoz, DEFAULT_SETTINGS, NOME_DA_PERSONA, VOZES_PIPER, vozDaPersona } from './settings'
 export type { CapturedImage, MonitorInfo, Recording, Voice, WebcamResolution } from './sensors'

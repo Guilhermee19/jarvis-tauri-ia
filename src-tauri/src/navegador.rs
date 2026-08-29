@@ -20,6 +20,28 @@
 //! - Fechar a janelinha não basta esconder o HTML: o webview precisa ser escondido
 //!   explicitamente, senão ele continua desenhado sobre um painel que não existe mais.
 //!
+//! ## A regra da thread, que custou um travamento inteiro
+//!
+//! Um `#[tauri::command]` **sem `async` roda na thread principal**, dentro do callback de
+//! mensagem do WebView2 que trouxe a chamada. Criar um webview dali trava o app: o wry
+//! espera o controlador do WebView2 ficar pronto com `webview2_com::wait_with_pump`, que é
+//! um `GetMessage`/`DispatchMessage` — ou seja, **um message loop aninhado dentro de um
+//! handler do WebView2**. O app congela e não volta.
+//!
+//! Daí as três regras que este arquivo e o `commands/navegador.rs` seguem:
+//!
+//! 1. Todo comando que **cria ou destrói** um webview é `#[tauri::command(async)]`, para
+//!    sair da thread principal. Aí o `send_user_message` do Tauri posta um evento no laço
+//!    em vez de executar em linha, e o webview nasce no laço normal, sem aninhamento.
+//! 2. **Nenhum `Mutex` daqui é segurado durante uma chamada ao Tauri.** `set_position` e
+//!    companhia atravessam para a thread principal e ESPERAM por ela; segurar um cadeado
+//!    nessa espera trava o app se a thread principal estiver, no mesmo instante, pedindo o
+//!    mesmo cadeado dentro de um `browser_bounds` — que a tela dispara a cada quadro de
+//!    arrasto. É por isso que `redesenhar` monta um plano antes de mexer em qualquer janela.
+//! 3. **Os callbacks do webview não criam nada** — eles avisam a tela, e ela pede. É a
+//!    mesma razão da regra 1: um `add_child` de dentro do `on_new_window` seria o
+//!    aninhamento de novo, agora por outra porta.
+//!
 //! Este módulo mora fora de `core/` de propósito: ele **é** Tauri da primeira à última
 //! linha, e a regra de `core/` é justamente não conhecê-lo.
 
@@ -27,7 +49,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::webview::WebviewBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl};
 use url::Url;
 
 use crate::core::lock;
@@ -42,6 +64,25 @@ const PREFIXO: &str = "aba-";
 /// Fora da tela, e não em `0,0`: entre criar o webview e a primeira medida do painel
 /// passa um quadro, e nesse quadro ele cobriria o canto superior esquerdo da janela.
 const LONGE: LogicalPosition<f64> = LogicalPosition::new(-10_000.0, -10_000.0);
+
+/// A página nasce reduzida.
+///
+/// A janelinha é bem menor que uma janela de navegador, e um site desenhado para 1280 px
+/// dentro de 600 px vira barra de rolagem horizontal e menu sanfonado. A 80% cabe a
+/// largura de conteúdo que a maioria dos sites espera.
+const ZOOM: f64 = 0.8;
+
+/// A aba mudou de endereço sozinha — clique num link, redirecionamento, rota de SPA.
+///
+/// Precisa ser evento: a navegação acontece DENTRO da página, sem passar por comando
+/// nenhum, então a barra de endereço não tem como saber sem alguém contar.
+const EVENTO_URL: &str = "jarvis://browser-url";
+
+/// A página pediu uma janela nova (clique do meio, `target="_blank"`, `window.open`).
+///
+/// Vai como pedido à tela em vez de virar aba aqui mesmo, e não é preciosismo: abrir o
+/// webview de dentro deste callback é o message loop aninhado da regra 1 lá em cima.
+const EVENTO_ABA_NOVA: &str = "jarvis://browser-new-tab";
 
 /// Uma aba, do jeito que a tela precisa desenhá-la.
 #[derive(Debug, Clone, Serialize)]
@@ -95,17 +136,56 @@ impl Navegador {
         };
 
         let area = lock(&self.area).unwrap_or_default();
+
+        let avisa_url = {
+            let app = app.clone();
+            let id = id.clone();
+
+            move |destino: &Url| {
+                // Guarda no estado E avisa a tela. O estado é o que `browser_state`
+                // devolve; o evento é o que move a barra de endereço na hora.
+                let navegador = app.state::<Navegador>();
+                let destino = destino.to_string();
+
+                if let Some(aba) = lock(&navegador.abas).iter_mut().find(|aba| aba.id == id) {
+                    aba.titulo = Url::parse(&destino).as_ref().map_or_else(
+                        |_| destino.clone(),
+                        titulo_de,
+                    );
+                    aba.url = destino.clone();
+                }
+
+                let _ = app.emit(EVENTO_URL, MudouDeEndereco { id: &id, url: &destino });
+                true
+            }
+        };
+
+        let pede_aba_nova = {
+            let app = app.clone();
+
+            move |destino: Url, _: tauri::webview::NewWindowFeatures| {
+                // NUNCA `add_child` aqui: este callback roda na thread principal, dentro
+                // do WebView2, e criar webview daqui é o travamento da regra 1. A tela
+                // recebe o pedido e chama o comando `async`, que roda fora dela.
+                let _ = app.emit(EVENTO_ABA_NOVA, destino.to_string());
+                tauri::webview::NewWindowResponse::Deny
+            }
+        };
+
         let webview = janela
             .add_child(
                 WebviewBuilder::new(&id, WebviewUrl::External(url.clone()))
+                    .on_navigation(avisa_url)
                     // Sem isto, um link com `target="_blank"` abriria uma JANELA nova do
-                    // Tauri, sem barra de abas e sem como fechar. Dentro da mesma aba é o
-                    // que um navegador simples faz.
-                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny),
+                    // Tauri, sem barra de abas e sem como fechar. Aqui ela vira aba.
+                    .on_new_window(pede_aba_nova),
                 LONGE,
                 LogicalSize::new(area.largura.max(1.0), area.altura.max(1.0)),
             )
             .map_err(|erro| self::erro(&format!("não consegui abrir a aba: {erro}")))?;
+
+        // Erro ignorado: zoom é conforto, e uma aba em 100% é melhor que nenhuma aba.
+        let _ = webview.set_zoom(ZOOM);
 
         let aba = Aba {
             titulo: titulo_de(url),
@@ -115,7 +195,6 @@ impl Navegador {
 
         lock(&self.abas).push(aba.clone());
         self.ativar(app, &id)?;
-        let _ = webview;
 
         Ok(aba)
     }
@@ -221,27 +300,47 @@ impl Navegador {
     /// navegador continuaria desenhado sobre um painel que já não existe, e não haveria
     /// como clicar em nada por baixo dele.
     fn redesenhar(&self, app: &AppHandle) {
-        let area = *lock(&self.area);
-        let ativa = lock(&self.ativa).clone();
+        // O plano sai PRIMEIRO, e os cadeados caem antes da primeira chamada ao Tauri —
+        // ver a regra 2 no topo do arquivo. `None` na área quer dizer "esconde esta".
+        let plano: Vec<(String, Option<Area>)> = {
+            let area = *lock(&self.area);
+            let ativa = lock(&self.ativa).clone();
 
-        for aba in lock(&self.abas).iter() {
-            let Some(webview) = app.get_webview(&aba.id) else {
+            lock(&self.abas)
+                .iter()
+                .map(|aba| {
+                    let na_frente = ativa.as_deref() == Some(aba.id.as_str());
+                    (aba.id.clone(), area.filter(|_| na_frente))
+                })
+                .collect()
+        };
+
+        for (id, area) in plano {
+            let Some(webview) = app.get_webview(&id) else {
                 continue;
             };
 
-            match (area, ativa.as_deref() == Some(aba.id.as_str())) {
-                (Some(area), true) => {
+            match area {
+                Some(area) => {
                     let _ = webview.set_position(LogicalPosition::new(area.x, area.y));
-                    let _ =
-                        webview.set_size(LogicalSize::new(area.largura.max(1.0), area.altura.max(1.0)));
+                    let _ = webview
+                        .set_size(LogicalSize::new(area.largura.max(1.0), area.altura.max(1.0)));
                     let _ = webview.show();
                 }
-                _ => {
+                None => {
                     let _ = webview.hide();
                 }
             }
         }
     }
+}
+
+/// Carga do [`EVENTO_URL`]. Espelhado em `src/lib/tauri/events.ts`.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MudouDeEndereco<'a> {
+    id: &'a str,
+    url: &'a str,
 }
 
 /// O host, sem `www.`, para caber na lingueta.

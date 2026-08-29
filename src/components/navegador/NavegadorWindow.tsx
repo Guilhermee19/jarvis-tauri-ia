@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { NavegadorPanel } from './NavegadorPanel'
 import { FloatingPanel } from '@/components/ui/FloatingPanel'
 import { useJanelaStore, useNavegadorStore, zDaJanela } from '@/stores'
@@ -22,6 +23,11 @@ export function NavegadorWindow() {
   const fixadas = useJanelaStore((state) => state.fixadas)
   const fixar = useJanelaStore((state) => state.fixar)
 
+  // A página some enquanto a alça é arrastada. Sem isso o webview — camada nativa acima do
+  // HTML — engoliria o ponteiro assim que ele entrasse na área dele, e o arrasto morreria
+  // no meio do movimento.
+  const [redimensionando, setRedimensionando] = useState(false)
+
   return (
     <FloatingPanel
       open={isOpen}
@@ -32,6 +38,7 @@ export function NavegadorWindow() {
       onPositionChange={(posicao) => ajustar('navegador', { posicao })}
       size={arranjo?.tamanho ?? null}
       onSizeChange={(tamanho) => ajustar('navegador', { tamanho })}
+      onResizingChange={setRedimensionando}
       maximized={arranjo?.maximizada ?? false}
       onMaximizedChange={(maximizada) => ajustar('navegador', { maximizada })}
       fixada={fixadas.includes('navegador')}
@@ -40,7 +47,7 @@ export function NavegadorWindow() {
       description="Páginas abertas dentro do Jarvis, em abas."
       actions={<Contagem />}
     >
-      <NavegadorPanel />
+      <NavegadorPanel escondido={redimensionando} />
     </FloatingPanel>
   )
 }

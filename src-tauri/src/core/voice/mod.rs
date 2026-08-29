@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 
 pub use mic::{list_input_devices, Recorder, Recording};
 pub use stt::transcribe;
-pub use tts::{play, Chatterbox, TtsEngine, Voice};
+pub use tts::{play, Chatterbox, Piper, TtsEngine, Voice};
 
+use crate::config::MotorDeVoz;
 use crate::core::lock;
 
 #[derive(Debug, thiserror::Error)]
@@ -121,14 +122,21 @@ impl VoiceState {
         recorder.stop(path)
     }
 
-    /// Motor de TTS apontando para o servidor local.
+    /// Motor de TTS apontando para o servidor local do motor escolhido.
     ///
-    /// **Não devolve mais `Result`.** Enquanto era a ElevenLabs, esta fábrica existia
+    /// **Não devolve `Result`.** Enquanto era a ElevenLabs, esta fábrica existia
     /// principalmente para reclamar de uma API key vazia; sem chave para faltar, não sobrou
     /// nada aqui que possa dar errado. O que pode falhar é o servidor não estar de pé, e
-    /// disso quem cuida é o `ensure_chatterbox`, antes desta chamada.
-    pub fn tts(&self, base_url: &str) -> Box<dyn TtsEngine> {
-        Box::new(Chatterbox::new(self.http.clone(), base_url))
+    /// disso cuidam os `ensure_*`, antes desta chamada.
+    ///
+    /// Continua sendo o **único** ponto do projeto que constrói um `TtsEngine` — foi isso
+    /// que deixou a troca da ElevenLabs pelo Chatterbox caber num arquivo, e é o que deixa
+    /// dois motores conviverem agora sem espalhar `match` por aí.
+    pub fn tts(&self, motor: MotorDeVoz, base_url: &str) -> Box<dyn TtsEngine> {
+        match motor {
+            MotorDeVoz::Piper => Box::new(Piper::new(self.http.clone(), base_url)),
+            MotorDeVoz::Chatterbox => Box::new(Chatterbox::new(self.http.clone(), base_url)),
+        }
     }
 
     /// Cadastra um clipe de voz no servidor e devolve o nome com que ele ficou lá.
