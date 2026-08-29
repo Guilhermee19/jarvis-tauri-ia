@@ -19,10 +19,16 @@
                │            │              │               │
                ▼            ▼              ▼               ▼
         ┌──────────────────────────────────────────────────────┐
-        │              Camada de IA (via API)                  │
-        │  STT (Whisper) → Agente LLM (tool use) → TTS         │
+        │           Camada de IA — TUDO LOCAL, hoje            │
+        │  whisper-server → Ollama (tool use) → Chatterbox     │
+        │  três processos nesta máquina, nenhuma API paga      │
         └──────────────────────────────────────────────────────┘
 ```
+
+> **O diagrama acima já não é aspiração.** O plano original tinha "via API" nas três
+> caixas; hoje as três rodam localmente, e a última a sair foi o TTS. Sobrou **uma** chave
+> opcional em todo o app: a da Anthropic, e só para o Claude olhar imagem melhor que o
+> modelo local — sem ela ele enxerga pelo Ollama, de graça.
 
 **Por que essa divisão:**
 
@@ -40,13 +46,14 @@
 | App shell                 | Tauri v2                                                       | Electron (mais pesado, evite)                                                        |
 | Wake word                 | ~~Porcupine (Picovoice)~~ **deixou de ser opção** — ver abaixo | **openWakeWord** (open source, tem modelo `hey_jarvis` pronto; em Rust via `oww-rs`) |
 | STT (fala→texto)          | whisper.cpp local (rápido, privado)                            | API da OpenAI/Deepgram (mais fácil de integrar no início)                            |
-| Agente de IA              | API da Anthropic (Claude) com tool use                         | OpenAI GPT com function calling                                                      |
-| TTS (texto→fala)          | ElevenLabs (qualidade alta, cloud)                             | Piper TTS (local, mais rápido e grátis)                                              |
+| Agente de IA              | **Ollama local** (`qwen2.5vl:3b`) com JSON schema — 21 verbos   | ~~API da Anthropic~~ (virou opcional, só para visão)                                 |
+| TTS (texto→fala)          | **Chatterbox local** (Resemble AI, MIT) — clona a sua voz       | ~~ElevenLabs~~ (saiu: era a última API paga); ~~Piper~~ (não clona voz)               |
 | Controle de mouse/teclado | crate `enigo` (Rust, equivalente ao pyautogui)                 | sidecar Python com pyautogui                                                         |
 | Screenshot                | crate `xcap` ou `screenshots` (Rust)                           | `mss` via sidecar Python                                                             |
 | Webcam                    | crate `nokhwa` (Rust)                                          | `opencv-python` via sidecar Python                                                   |
 | Visão (entender a tela)   | Claude com input de imagem (a screenshot)                      | GPT-4V                                                                               |
-| Memória/personalidade     | SQLite local + system prompt customizado                       | Vector DB (ex: Chroma) se crescer muito                                              |
+| Memória/personalidade     | **Markdown em pasta**, com índice — não SQLite                  | Vector DB (ex: Chroma) se crescer muito                                              |
+| Navegador embutido        | **Webview filho do Tauri** (`add_child`, feature `unstable`)    | ~~`<iframe>`~~ — medido: Google/YouTube mandam `X-Frame-Options: SAMEORIGIN`          |
 
 > ⚠️ **O Porcupine não é mais grátis.** O free tier do Picovoice foi desligado em
 > **30/06/2026** e as AccessKeys gratuitas foram desabilitadas — e mesmo antes disso, as
@@ -59,7 +66,11 @@
 > — dá para ter wake word por texto reusando o que existe, pagando uma transcrição por
 > frase falada perto do microfone.
 >
-> Dica: você pode manter tudo em Rust nativo (mais performático e um único binário) **ou** usar um sidecar em Python só para a parte de automação (pyautogui/mss), já que você já conhece essas libs. O sidecar conversa com o Tauri via HTTP local ou stdin/stdout. Comece com o que for mais rápido pra você validar a ideia — dá pra trocar depois.
+> **Sobre o sidecar Python:** a dica original era usá-lo para automação (pyautogui/mss).
+> Isso não aconteceu — captura de tela e webcam ficaram em crates Rust (`xcap`, `nokhwa`).
+> Mas o sidecar entrou por outra porta: **o TTS**. E foi forçado, não escolhido: a única
+> variante do Chatterbox com export ONNX (que rodaria em Rust puro) é a Turbo, e ela fala
+> só inglês. Português exige a Multilingual, que só existe em PyTorch.
 
 ---
 
@@ -83,7 +94,7 @@
 **Objetivo:** habilitar todos os "sentidos" e a "voz" do Jarvis como capacidades isoladas e testáveis, antes de conectar qualquer inteligência a eles. Isso faz as próximas versões (que já dependem de IA) ficarem muito mais simples, porque a infraestrutura de captura já vai existir e só precisa ser plugada no agente.
 
 - **Microfone:** captura de áudio via Tauri, com um botão de teste na UI que grava e mostra um indicador de volume/atividade (sem transcrição ainda, ou com STT básico rodando só como demo, sem ligar ao chat)
-- **Fala (TTS):** integração com um serviço de TTS (ElevenLabs ou Piper — decidir nesse momento), com um botão "testar voz" que fala uma frase fixa, e configuração de qual voz usar
+- **Fala (TTS):** integração com um serviço de TTS, com um botão "testar voz" que fala uma frase fixa e configuração de qual voz usar. _A decisão adiada aqui foi tomada duas vezes: primeiro a ElevenLabs (cloud, paga), depois o **Chatterbox local** — nem ela nem o Piper, porque nenhum dos dois clona a voz do dono. Ver "Voz local", mais abaixo._
 - **Webcam:** botão para abrir/fechar a webcam, com preview ao vivo na UI, usando uma crate como `nokhwa` no Rust; captura de um frame sob demanda (ainda sem nenhum reconhecimento — isso vem depois, quando plugado ao agente com visão)
 - **Visão de tela (screenshot):** botão para capturar a tela atual (crate `xcap`) e mostrar o preview na UI, confirmando que a captura funciona corretamente (multi-monitor incluso, se você tiver mais de uma tela)
 - Todas essas capacidades ficam organizadas nos módulos `voice` e `automation` já criados na v0.1 (`/src-tauri/src/core/voice` para mic/TTS, `/src-tauri/src/core/automation` para webcam/screenshot), expostas como comandos Tauri independentes, sem nenhuma lógica de decisão ainda
@@ -96,17 +107,19 @@
 
 **Objetivo:** conectar com um LLM e ter uma conversa de verdade — já aproveitando o TTS da v0.1.5 para ele responder em voz desde o início.
 
-- Integração com a API da Claude (texto → texto)
-- Prompt de sistema definindo a personalidade inicial dele
-- Histórico de conversa persistido localmente (SQLite ou arquivo local)
-- Streaming da resposta na UI
-- A resposta já é falada automaticamente usando o módulo de TTS criado na v0.1.5 (reaproveitando, não recriando)
+- ✅ Integração com um LLM — **acabou sendo o Ollama local**, não a API da Claude. Um 3B
+  na máquina responde de graça e sem rede; a chave da Anthropic virou opcional e só serve
+  para visão
+- ✅ Prompt de sistema definindo a personalidade — e viraram **duas** (Jarvis e Ultron)
+- ✅ Histórico persistido localmente
+- ✅ A resposta é falada automaticamente, reaproveitando o TTS da v0.1.5
+- ⬜ Streaming da resposta na UI — a resposta ainda aparece de uma vez
 
 **Entrega:** você digita, ele responde com texto **e** em voz, já com uma "cara" própria.
 
 ---
 
-### 🟡 v0.3 — Voz de entrada conectada ao chat (push-to-talk)
+### 🟢 v0.3 — Voz de entrada conectada ao chat (push-to-talk) — **feita, e passou disso**
 
 **Objetivo:** você fala com ele dentro do fluxo real de conversa (ainda sem wake word), reaproveitando a captura de microfone da v0.1.5.
 
@@ -115,6 +128,10 @@
 - Esse texto vira o input do agente (reaproveita o pipeline de chat da v0.2)
 
 **Entrega:** aperta uma tecla, fala, ele entende e responde em texto e voz.
+
+Passou do combinado: além do push-to-talk existe o **modo conversa**, um laço contínuo que
+fecha o microfone enquanto ele fala e reabre quando cala. O fim de frase é detectado pelo
+medidor de volume que já desenhava a barra — **sem crate de VAD nenhuma**.
 
 ---
 
@@ -131,28 +148,41 @@
 
 ---
 
-### 🟠 v0.5 — Agente com decisão de ação (tool use)
+### 🟢 v0.5 — Agente com decisão de ação (tool use) — **feita**
 
 **Objetivo:** ele para de só "conversar" e começa a decidir o que fazer.
 
-- Estrutura de tools/functions no agente: `pesquisar_na_web`, `responder_direto`, `executar_acao_no_pc` (ainda vazia)
-- O LLM decide, a partir do pedido, qual tool usar
-- Implementação real da tool de pesquisa web (search API)
+- ✅ **21 verbos** num enum plano (`core/agent/intent.rs`), não um `oneOf` aninhado: o
+  aninhamento vira uma grammar que um 3B erra muito mais
+- ✅ O modelo escolhe o verbo, e o schema garante só a FORMA — quem valida a combinação
+  verbo↔campos é o serde, no parse
+- ✅ Pesquisa web de verdade: Wikipedia por padrão, Brave Search com chave. Sem a chave,
+  **ele admite que não sabe** em vez de inventar
+- ✅ Agir no PC saiu da caixa "ainda vazia": volume, mídia, abrir programa e abrir site
 
-**Entrega:** ele entende se deve só responder, pesquisar algo, ou (no futuro) agir no PC — e já pesquisa de verdade.
+**Lição que custou uma reescrita:** um campo `acao` como enum dentro do verbo falhou em 7
+de 8 frases reais contra o modelo de 3B. A saída foi **três verbos separados**
+(`smart_home`, `smart_color`, `smart_bright`) — mais entradas na lista, menos campos por
+entrada, e o modelo acerta.
+
+**Entrega:** ele entende se deve só responder, pesquisar algo ou agir no PC — e faz os três.
 
 ---
 
-### 🔴 v0.6 — Controle do computador
+### 🟡 v0.6 — Controle do computador — **metade feita, e a outra metade está reservada de propósito**
 
 **Objetivo:** ele consegue mexer no PC.
 
-- Implementação da tool `executar_acao_no_pc` usando `enigo` (ou sidecar com pyautogui)
-- Ações básicas: abrir programas, digitar texto, clicar em posições, atalhos de teclado
-- Camada de **confirmação/segurança**: antes de executar ações "perigosas" (fechar programas, deletar algo), ele pergunta antes
-- Log de tudo que ele executa (auditoria)
+- ✅ Abrir programa, abrir site, volume (subir/baixar/definir/mudo) e teclas de mídia
+- ✅ **Log de tudo que ele executa** — cada ação vira uma linha `system` no histórico, com
+  verbo, alvo e quanto tempo levou
+- ⬜ `enigo`: mouse e teclado sintéticos. **Não é falta de tempo, é escolha.** As ações de
+  hoje não dependem de qual janela está em foco e nenhuma precisa de confirmação. Clicar em
+  coordenada depende das duas coisas — é aí que a camada de confirmação passa a ser
+  obrigatória, e ela não existe ainda
+- ⬜ Camada de confirmação para ações perigosas — entra junto com o `enigo`, não antes
 
-**Entrega:** ele consegue, por exemplo, abrir o navegador e digitar algo, sozinho.
+**Entrega parcial:** ele abre programa e site sozinho. Digitar e clicar continuam fora.
 
 ---
 
@@ -170,34 +200,38 @@
 
 ---
 
-### 🟣 v0.8 — Personalidade e memória de longo prazo
+### 🟢 v0.8 — Personalidade e memória de longo prazo — **feita**
 
 **Objetivo:** ele deixa de ser genérico e vira "o seu" assistente.
 
-- Sistema de memória persistente (fatos sobre você, preferências, contexto de projetos)
-- Prompt de personalidade mais elaborado (tom de voz, jeito de falar, humor)
-- Ajuste fino de como ele resume/lembra conversas antigas (para não estourar contexto)
-- Configuração de personalidade pela própria UI (ajustar tom, nome, etc.)
+- ✅ Memória persistente em **markdown numa pasta**, com índice — e não SQLite. Arquivo de
+  texto se lê, se edita e se versiona no git; um `.db` binário não
+- ✅ Duas personas completas (Jarvis e Ultron): cor do app, voz e tom de conversa, trocadas
+  na hora e sem reiniciar
+- ✅ Rotinas observadas: ele anota padrões do que você pede
+- ✅ Configuração pela UI: nome, persona, e o clipe de voz de cada uma
 
 **Entrega:** ele lembra de coisas entre sessões e tem um jeito consistente de ser.
 
 ---
 
-### ⚫ v1.0 — Polimento e robustez
+### 🟡 v1.0 — Polimento e robustez — **em curso**
 
 **Objetivo:** deixar de ser protótipo e virar algo que você usa todo dia.
 
-- Autostart com o sistema operacional
-- Tratamento de erros (API fora do ar, sem internet, mic falhando)
-- Permissões e sandboxing das ações no PC (whitelist de apps/comandos permitidos)
-- Painel de configurações completo (trocar de LLM, TTS, wake word, atalhos)
-- Otimização de custo (cache, escolher quando usar modelo mais barato vs mais caro)
-
-**Entrega:** app estável, configurável, seguro, pronto pro dia a dia.
+- ⬜ Autostart com o sistema operacional — não existe ainda
+- ✅ Tratamento de erros: cada serviço local tem mensagem própria dizendo **o que falta e
+  onde baixar**, e o app sobe normalmente sem nenhum deles
+- ✅ Fronteira de confiança no Rust: o que chega em `core::system` veio de um modelo
+  interpretando fala, então a validação de URL e de nome de programa mora lá, não na UI
+- ✅ Painel de configurações e bancada de diagnóstico (microfone, voz, webcam, tela)
+- ⬜ Whitelist de apps/comandos — hoje a trava é por categoria de ação, não por lista
+- ✅ **Otimização de custo virou irrelevante**: não há mais custo por uso. Os três serviços
+  são locais, e a única chave opcional que sobrou é a da visão
 
 ---
 
-### 🟡 Casa inteligente — **fase 1 feita** (fora da numeração original)
+### 🟡 Casa inteligente — **fases 1 a 3 feitas** (fora da numeração original)
 
 Não estava no roadmap; entrou por pedido. O painel **Casa** já lista os aparelhos Tuya
 (Positivo, EKAZA e as outras rebrands) ouvindo a rede local, sem conta nem chave.
@@ -231,9 +265,62 @@ a um Echo, e as bibliotecas que fazem isso logam na conta com cookie e quebram s
 
 ---
 
+### 🟢 Voz local — **feita** (fora da numeração original)
+
+A última API paga saiu. O TTS agora é o **Chatterbox** (Resemble AI, licença MIT) rodando
+nesta máquina, e ele **clona a voz do dono** a partir de um clipe de ~10 segundos — sem
+treino, sem conta, sem crédito.
+
+- ✅ Terceiro serviço local em `core/services.rs`, no mesmo ciclo dos outros dois: bate na
+  porta, sobe se ninguém atender, morre junto com o app
+- ✅ Uma voz clonada **por persona** — o campo já existia para os ids da ElevenLabs, e
+  passou a guardar o nome do clipe sem mudar `AppSettings::voz()`
+- ✅ Seletor de arquivo nativo (`tauri-plugin-dialog`, o **primeiro e único** plugin do
+  projeto: não há como abrir um diálogo nativo sem ele)
+- ✅ Os três portões de "tem API key?" viraram "tem clipe?" — a pergunta antiga era global,
+  a nova é por persona
+
+**O preço, medido e não estimado:** numa RTX 2060 com o modelo Multilingual, uma frase de
+52 caracteres (4,4 s de áudio) leva **6,6 a 8,1 s** para ser sintetizada, com o modelo já
+quente. Ele gera **mais devagar que tempo real**. A ElevenLabs `flash` fazia isso em
+dezenas de milissegundos — essa é a conta da independência.
+
+**O `stream: true` do servidor não é a saída** — medido, é pior: 8,9 s até o primeiro byte
+contra 7 s do total sem streaming. Ele fatia por trecho, e uma frase de conversa é um
+trecho só. A saída de verdade, se a espera incomodar, é **fatiar do lado do app**: quebrar
+a resposta em frases e tocar a primeira enquanto a segunda é gerada.
+
+- ⬜ Fatiamento por frase com reprodução em pipeline (o item acima)
+- ⬜ Modelo mais rápido: a variante Turbo faz isso em uma passada de decoder, mas **fala só
+  inglês**. Só entra se sair uma Turbo multilíngue
+
+---
+
+### 🟢 Navegador embutido — **feito** (fora da numeração original)
+
+"abre o youtube" e "pesquisa preço do dólar" deixaram de jogar a pessoa para fora do app.
+
+- ✅ Abas dentro de uma janelinha, com barra de endereço e histórico
+- ✅ Cada aba é um **webview filho** (`Window::add_child`), não um `<iframe>` — foi medido
+  que Google, YouTube e DuckDuckGo respondem `X-Frame-Options: SAMEORIGIN` e ficariam em
+  branco, e "abre o youtube" é o exemplo canônico do roteador
+- ✅ O agente não abre a aba direto: devolve um `AcaoDeUi` e quem age é a tela, porque
+  `core/` não conhece o Tauri
+- ✅ Saída para o navegador do sistema no botão ↗ — senha salva, extensão e impressão ainda
+  precisam dele
+
+**A armadilha que custou um travamento:** um `#[tauri::command]` **sem `async` roda na
+thread principal**, dentro do callback do WebView2. Criar um webview dali faz o wry abrir
+um message loop aninhado (`wait_with_pump`) dentro de um handler do WebView2, e o app
+congela sem volta. Todo comando que cria ou destrói aba é `#[tauri::command(async)]`, e
+nenhum `Mutex` do módulo é segurado durante uma chamada ao Tauri.
+
+---
+
 ### 🚀 Depois do v1.0 (ideias de expansão)
 
-- Plugins/skills customizáveis (ex: integração com Spotify, Google Calendar, Home Assistant)
+- ✅ ~~Spotify~~ — já feito: tocar faixa nomeada, com o widget de "tocando agora"
+- Plugins/skills customizáveis (Google Calendar, Home Assistant)
 - Execução de tarefas em background/agendadas ("todo dia às 9h me resuma meus e-mails")
 - Modo "colaborativo": ele narra o que está vendo/fazendo em tempo real enquanto executa ações longas
 - Suporte a múltiplos perfis de voz/persona
@@ -250,3 +337,9 @@ Se quiser um caminho ainda mais enxuto pra validar rápido:
 4. v0.5 → v0.7 (agente + controle + visão) é a parte mais trabalhosa — pode levar mais tempo que todo o resto junto
 
 Isso evita você travar cedo tentando resolver wake word + controle de PC ao mesmo tempo, que são as partes tecnicamente mais chatas.
+
+> **Como o caminho realmente foi:** a ordem acima se cumpriu até a v0.3. Daí em diante o
+> projeto seguiu por pedido, não por numeração — casa inteligente, painel de desempenho,
+> navegador embutido e voz local entraram na frente da wake word (v0.4), que continua sendo
+> a única peça do plano original ainda intocada. E a v0.6 parou na metade **de propósito**:
+> mouse e teclado sintéticos só entram junto com a camada de confirmação.

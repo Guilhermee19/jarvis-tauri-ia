@@ -192,11 +192,18 @@ Três coisas que economizam uma tarde:
 
 - **A pasta tem que se chamar `chatterbox`**, dentro de `%APPDATA%\com.jarvis.app\` — é
   onde `core::services` procura. O `git clone … chatterbox` do comando acima já faz isso.
-- **Escolha o modelo Multilingual** na interface do servidor (ele abre em
-  `localhost:8004`). O Turbo é mais rápido, e **fala só inglês** — com ele o Jarvis
-  responde em português com sotaque de quem não sabe português.
+- **Troque o modelo para o Multilingual.** O `config.yaml` vem com
+  `repo_id: chatterbox-turbo` de fábrica, e **o Turbo fala só inglês** — com ele o Jarvis
+  responde em português com sotaque de quem não sabe português. Abra o `config.yaml` e
+  deixe `repo_id: chatterbox-multilingual` (os valores aceitos estão no `MODEL_SELECTOR_MAP`
+  do `engine.py`). Confira em `localhost:8004/api/model-info`: tem que dizer
+  `"type": "multilingual"` e trazer `"pt": "Portuguese"` na lista.
 - **Python 3.11+ não serve.** O projeto depende de wheels que só existem para o 3.10, e o
   erro que aparece é de compilação de dependência, não uma mensagem dizendo isso.
+- **Se você mandar a saída do `start.bat` para um arquivo, force UTF-8**
+  (`PYTHONUTF8=1`). Sem console, o Python assume a codepage do Windows e morre no primeiro
+  "✓" que o instalador imprime — um `UnicodeEncodeError` que não tem nada a ver com a
+  instalação.
 
 Sem essa pasta o app sobe normal; só a fala fica desligada, e o Diagnóstico › Voz diz o
 que falta. Depois de instalado, escolha ali um `.wav` com a sua voz — uns 10 segundos
@@ -264,6 +271,20 @@ Latências medidas nesta máquina (i5-11300H, GTX 1650): primeira chamada ao Oll
 (carrega o modelo na VRAM), depois ~0,4 s. Se a transcrição incomodar, a release
 `whisper-cublas-*-bin-x64.zip` embute o runtime CUDA e roda na GPU sem instalar o
 toolkit — é trocar os arquivos, não o código.
+
+**Chatterbox** — fala, com a voz do dono. Instalação no [passo 7](#7-chatterbox--opcional-só-para-ele-falar).
+É o único dos três que não é um `.exe` solto: é um servidor Python, e o único lugar do
+projeto onde um sidecar Python entrou. Não foi escolha — a única variante do Chatterbox com
+export ONNX (que rodaria em Rust puro) é a Turbo, e ela fala só inglês.
+
+O modelo **clona o volume junto com a voz**: um clipe de referência gravado baixo gera fala
+baixa. É por isso que o `PICO_TIPICO_DA_FALA` do `useVoiceInput.ts` — que iguala a
+amplitude da fala à do microfone para o núcleo do HUD pulsar igual nos dois — está
+documentado como dependente do SEU clipe, e não como uma constante do motor.
+
+Latência medida numa RTX 2060 com o Multilingual: **6,6 a 8,1 s** para uma frase de 52
+caracteres, com o modelo já quente. Isso é mais devagar que tempo real, e é a conta de não
+depender de nuvem. Os detalhes e as saídas possíveis estão no [Modo conversa](#modo-conversa).
 
 ## Rodando
 
@@ -339,6 +360,10 @@ sozinho pelo registro, desde que ele exista.
 | Janela abre em branco                       | WebView2 ausente                        | passo 4                                        |
 | Respostas genéricas, comando não executa    | Ollama fora do ar ou modelo não baixado | `ollama list` tem que mostrar `qwen2.5vl:3b`   |
 | Microfone devolve erro                      | `whisper-server.exe` não está na pasta  | passo 6                                        |
+| "o servidor de voz ainda está sendo instalado" | o `start.bat` não terminou           | espere o `venv\.install_complete` aparecer     |
+| "não achei o servidor de voz"               | pasta com nome errado, ou modo portable | tem que ser `…\chatterbox\venv\Scripts\python.exe` |
+| Ele fala, mas em inglês                     | `config.yaml` no `chatterbox-turbo`     | troque para `chatterbox-multilingual`          |
+| O núcleo do HUD pulsa de menos quando fala  | clipe de voz gravado baixo              | `PICO_TIPICO_DA_FALA` em `useVoiceInput.ts`    |
 | `cargo` reclama de clippy no build          | `[lints.clippy] all = "deny"`           | é de propósito — corrija o lint                |
 
 ## Build
@@ -513,7 +538,7 @@ src-tauri/src/
 │   ├── agent/            intent.rs (roteador) + converse.rs (papo e extração) + o log
 │   ├── memory/           a pasta de markdown: nota.rs, busca.rs, rotinas.rs
 │   ├── system/           AGE sobre o SO: target.rs (validação) + audio.rs (COM)
-│   ├── services.rs       sobe e derruba o Ollama e o whisper-server
+│   ├── services.rs       sobe e derruba o Ollama, o whisper-server e o Chatterbox
 │   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (Chatterbox)
 │   ├── vision/           ENTENDE a imagem: claude.rs + ollama.rs, atrás da mesma `ver()`
 │   ├── casa.rs           ouve os aparelhos Tuya (Positivo, EKAZA) se anunciando na rede
