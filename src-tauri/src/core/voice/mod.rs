@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 pub use mic::{list_input_devices, Recorder, Recording};
 pub use stt::transcribe;
-pub use tts::{play, ElevenLabs, TtsEngine, Voice};
+pub use tts::{play, Chatterbox, TtsEngine, Voice};
 
 use crate::core::lock;
 
@@ -60,17 +60,16 @@ pub enum VoiceError {
     TranscricaoRecusada { status: u16, corpo: String },
     #[error("falha de rede ao transcrever: {0}")]
     TranscricaoRede(String),
-    #[error("defina a API key da ElevenLabs em Configurações para usar a voz")]
-    MissingApiKey,
-    #[error("nenhuma voz disponível na conta da ElevenLabs")]
-    NoVoiceAvailable,
-    #[error("a ElevenLabs recusou a chamada (HTTP {status}): {body}")]
-    TtsRejected { status: u16, body: String },
     #[error(
-        "a key da ElevenLabs não tem permissão para esta operação. Ajuste as permissões da key no site da ElevenLabs (Profile › API Keys) — e se o que falta é `voices_read`, cole o ID da voz em Diagnóstico › Voz: com uma voz escolhida o app não precisa listar o catálogo. Resposta: {0}"
+        "nenhum clipe de voz cadastrado. Escolha um arquivo com a sua voz em \
+         Diagnóstico › Voz — bastam uns 10 segundos falando."
     )]
-    TtsSemPermissao(String),
-    #[error("falha de rede ao falar com a ElevenLabs: {0}")]
+    NoVoiceAvailable,
+    #[error("o servidor de voz recusou a chamada (HTTP {status}): {body}")]
+    TtsRejected { status: u16, body: String },
+    #[error("não consegui ler o clipe de voz: {0}")]
+    ClipeIlegivel(String),
+    #[error("falha de rede ao falar com o servidor de voz: {0}")]
     TtsNetwork(String),
     #[error("falha ao tocar o áudio: {0}")]
     Playback(String),
@@ -97,8 +96,7 @@ impl VoiceState {
         lock(&self.recorder).is_some()
     }
 
-    /// O mesmo pool que fala com a ElevenLabs serve para falar com o Whisper local —
-    /// clonar compartilha as conexões.
+    /// Um pool só para os dois serviços locais — clonar compartilha as conexões.
     pub fn http(&self) -> reqwest::Client {
         self.http.clone()
     }
@@ -123,24 +121,37 @@ impl VoiceState {
         recorder.stop(path)
     }
 
-    /// Motor de TTS com a key que está nas configurações AGORA — o usuário pode
-    /// colar a key e testar a voz sem reiniciar o app.
-    pub fn tts(&self, api_key: &str) -> Result<Box<dyn TtsEngine>, VoiceError> {
-        if api_key.trim().is_empty() {
-            return Err(VoiceError::MissingApiKey);
-        }
+    /// Motor de TTS apontando para o servidor local.
+    ///
+    /// **Não devolve mais `Result`.** Enquanto era a ElevenLabs, esta fábrica existia
+    /// principalmente para reclamar de uma API key vazia; sem chave para faltar, não sobrou
+    /// nada aqui que possa dar errado. O que pode falhar é o servidor não estar de pé, e
+    /// disso quem cuida é o `ensure_chatterbox`, antes desta chamada.
+    pub fn tts(&self, base_url: &str) -> Box<dyn TtsEngine> {
+        Box::new(Chatterbox::new(self.http.clone(), base_url))
+    }
 
-        Ok(Box::new(ElevenLabs::new(
-            self.http.clone(),
-            api_key.to_owned(),
-        )))
+    /// Cadastra um clipe de voz no servidor e devolve o nome com que ele ficou lá.
+    ///
+    /// Passa por aqui, e não direto pelo comando, porque `Chatterbox` é privado ao módulo
+    /// de voz — de fora só se vê a trait, e `enviar_referencia` não está nela (é cadastro,
+    /// não síntese).
+    pub async fn cadastrar_voz(
+        &self,
+        base_url: &str,
+        caminho: &Path,
+    ) -> Result<String, VoiceError> {
+        Chatterbox::new(self.http.clone(), base_url)
+            .enviar_referencia(caminho)
+            .await
     }
 
     /// Limpa um "cala a boca" antigo e entrega a bandeira para o [`play`] desta fala.
     ///
     /// Zerar aqui, e não no fim da fala anterior, é o que faz o cancelamento valer
-    /// também durante a SÍNTESE: mandar parar enquanto a ElevenLabs ainda está
-    /// respondendo marca a flag, e o áudio que chegar depois já nasce cancelado.
+    /// também durante a SÍNTESE: mandar parar enquanto o modelo ainda está gerando marca
+    /// a flag, e o áudio que chegar depois já nasce cancelado. Com um modelo local isso
+    /// pesa mais do que pesava com a nuvem — a geração demora mais que o download.
     pub fn iniciar_fala(&self) -> Arc<AtomicBool> {
         self.cancelar_fala.store(false, Ordering::Relaxed);
         Arc::clone(&self.cancelar_fala)

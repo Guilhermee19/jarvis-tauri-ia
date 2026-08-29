@@ -22,13 +22,13 @@ export interface AppSettings {
   assistantName: string
   /** O tema: cor, voz e tom. Ver [`Persona`]. */
   persona: Persona
-  /** Key da ElevenLabs, usada pelo TTS. */
-  elevenLabsApiKey: string
   /**
-   * Voz do TTS, uma por persona — o Jarvis e o Ultron não podem soar igual, e
+   * Clipe de voz clonada, um por persona — o Jarvis e o Ultron não podem soar igual, e
    * reconfigurar a cada troca faria a troca não valer a pena.
    *
-   * Vazio = a primeira voz da conta.
+   * O valor é o nome do arquivo guardado no servidor de voz local. Vazio = o primeiro
+   * clipe cadastrado, e **vazio também é o que faz o Jarvis não falar**: sem clipe não há
+   * voz para clonar, e o app fica quieto em vez de errar.
    */
   ttsVoiceJarvis: string
   ttsVoiceUltron: string
@@ -79,11 +79,22 @@ export interface AppSettings {
   logDetalhado: boolean
 }
 
+/**
+ * O clipe de voz da persona ATIVA — o gêmeo de `AppSettings::voz()` no Rust.
+ *
+ * Existe porque **três lugares** precisam fazer a mesma pergunta ("tem voz montada?") e
+ * cada um deles escolhendo o campo por conta própria já deu errado uma vez: enquanto era
+ * a chave da ElevenLabs, a pergunta era global e valia para as duas personas de uma vez.
+ * Agora não vale mais — dá para ter o Jarvis com voz e o Ultron sem.
+ */
+export function vozDaPersona(settings: AppSettings): string {
+  return settings.persona === 'ultron' ? settings.ttsVoiceUltron : settings.ttsVoiceJarvis
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   anthropicApiKey: '',
   assistantName: 'Jarvis',
   persona: 'jarvis',
-  elevenLabsApiKey: '',
   ttsVoiceJarvis: '',
   ttsVoiceUltron: '',
   ollamaUrl: 'http://localhost:11434',

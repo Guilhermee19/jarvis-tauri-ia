@@ -52,6 +52,7 @@ fn pasta_da_memoria(settings: &AppSettings, app: &tauri::AppHandle) -> PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let state = AppState::new(Box::new(JsonSettingsStore::new(&config_dir)));
@@ -114,6 +115,7 @@ pub fn run() {
             commands::voice::stop_recording,
             commands::voice::is_recording,
             commands::voice::list_voices,
+            commands::voice::upload_voice_reference,
             commands::voice::list_input_devices,
             commands::voice::speak_text,
             commands::voice::stop_speaking,

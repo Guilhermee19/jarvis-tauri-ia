@@ -12,6 +12,7 @@ import {
 import { avaliarTurno, iniciarTurno, type DecisaoVad, type TurnoVad } from '@/lib/vad'
 import { useChatStore } from './chatStore'
 import { useSettingsStore } from './settingsStore'
+import { vozDaPersona } from '@/types'
 import type { Recording } from '@/types'
 
 /**
@@ -108,7 +109,7 @@ interface SensorState {
    * Mora aqui ao lado do microfone, e não no `chatStore` junto do `isSpeaking`, porque a
    * divisão é entre naturezas e não entre features: os dois são medidas do encanamento de
    * áudio, com a mesma faixa e a mesma cadência. O `isSpeaking` continua lá porque ele é
-   * uma FASE da resposta — ele começa antes do som existir, enquanto a ElevenLabs ainda
+   * uma FASE da resposta — ele começa antes do som existir, enquanto o modelo ainda
    * está sintetizando.
    */
   ttsLevel: number
@@ -210,7 +211,7 @@ export const useSensorStore = create<SensorState>((set, get) => {
    * O laço do modo conversa: amostra o medidor, e quando o VAD diz que a frase
    * acabou, encadeia transcrever → responder → falar → voltar a ouvir.
    *
-   * `ocupado` existe porque o turno leva SEGUNDOS (Whisper + Ollama + ElevenLabs) e
+   * `ocupado` existe porque o turno leva SEGUNDOS (Whisper + Ollama + Chatterbox) e
    * o timer continua disparando durante todos eles. Sem a trava, a amostra seguinte
    * tentaria fechar um turno que já está sendo fechado.
    */
@@ -408,10 +409,10 @@ export const useSensorStore = create<SensorState>((set, get) => {
       // Sem voz configurada o modo seria só o ditado automático — ele ouviria, e
       // responderia por escrito, calado. Recusar na hora do clique diz onde
       // resolver; deixar quebrar depois esconderia isso atrás de uma frase inteira.
-      if (!useSettingsStore.getState().settings.elevenLabsApiKey.trim()) {
+      if (!vozDaPersona(useSettingsStore.getState().settings).trim()) {
         set({
           dictationError:
-            'para conversar por voz, configure a chave da ElevenLabs e escolha uma voz em Diagnóstico › Voz',
+            'para conversar por voz, escolha um clipe com a sua voz em Diagnóstico › Voz — bastam uns 10 segundos falando',
         })
         return
       }

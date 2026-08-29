@@ -1,5 +1,5 @@
 import type { Recording, Voice } from '@/types'
-import { call } from './client'
+import { call, isTauriRuntime } from './client'
 
 /** Wrappers de `src-tauri/src/commands/voice.rs`. */
 
@@ -36,14 +36,52 @@ export function transcribe(): Promise<string> {
   return call<string>('transcribe')
 }
 
+/**
+ * Abre o seletor de arquivos nativo e devolve o caminho escolhido, ou `null` se
+ * cancelaram.
+ *
+ * Mora aqui, com os outros wrappers, e não solto no componente: a regra da casa é que
+ * TODO acesso ao backend passa por `lib/tauri`, e o diálogo é backend — quem o desenha é
+ * o sistema, não o React.
+ */
+export async function escolherClipeDeVoz(): Promise<string | null> {
+  if (!isTauriRuntime()) return null
+
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const escolhido = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: 'Áudio', extensions: ['wav', 'mp3'] }],
+  })
+
+  return typeof escolhido === 'string' ? escolhido : null
+}
+
+/**
+ * Os clipes de voz cadastrados no servidor local.
+ *
+ * Como o `transcribe`, a PRIMEIRA chamada pode subir o servidor e carregar o modelo —
+ * conte bem mais que alguns segundos nela.
+ */
 export function listVoices(): Promise<Voice[]> {
   return call<Voice[]>('list_voices')
 }
 
 /**
- * `voiceId` é opcional de propósito: sem ele o backend usa a voz das configurações.
- * É essa assinatura que o agente da v0.2 vai chamar — `speakText(resposta)` e pronto,
- * sem precisar saber que existe catálogo de vozes.
+ * Manda um arquivo de áudio para o servidor virar voz clonável, e devolve o nome com que
+ * ele ficou guardado lá.
+ *
+ * O nome de volta é o que importa: o servidor higieniza o nome do arquivo, então gravar o
+ * que foi escolhido no disco em vez do que ele respondeu daria uma voz que não existe.
+ */
+export function uploadVoiceReference(caminho: string): Promise<string> {
+  return call<string>('upload_voice_reference', { caminho })
+}
+
+/**
+ * `voiceId` é opcional de propósito: sem ele o backend usa o clipe da persona ativa.
+ * É essa assinatura que o resto do app usa — `speakText(resposta)` e pronto, sem precisar
+ * saber onde os clipes moram.
  */
 export function speakText(text: string, voiceId?: string): Promise<void> {
   return call<void>('speak_text', { text, voiceId: voiceId ?? null })
@@ -51,7 +89,7 @@ export function speakText(text: string, voiceId?: string): Promise<void> {
 
 /**
  * Cala a fala em andamento. Vale também durante a SÍNTESE — desligar o modo conversa
- * enquanto a ElevenLabs ainda responde não pode deixar a frase chegar e tocar depois.
+ * enquanto o modelo ainda está gerando não pode deixar a frase chegar e tocar depois.
  */
 export function stopSpeaking(): Promise<void> {
   return call<void>('stop_speaking')

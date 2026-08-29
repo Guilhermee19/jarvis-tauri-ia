@@ -61,15 +61,21 @@ export function useVoiceInput() {
    * aplicam `Math.sqrt` para tirar a fala do fundo da escala. Aplicá-la aqui esconderia
    * essa decisão de quem lê o componente.
    *
-   * O que é feito aqui é outra coisa — **igualar as duas fontes**. Medido pelo
-   * `fala_de_verdade` em quatro frases (de um sussurro a um grito), o pico do MP3 da
-   * ElevenLabs ficou entre **0,52 e 0,71**, enquanto uma voz perto do microfone encosta em
-   * 1. Sem compensar, o núcleo pulsa visivelmente menos quando o Jarvis fala do que
-   * quando ele ouve — e essa diferença não diz nada sobre o áudio, é só o encoder.
+   * O que é feito aqui é outra coisa — **igualar as duas fontes**. Uma voz perto do
+   * microfone encosta em 1; a fala sintetizada não chega lá. Sem compensar, o núcleo pulsa
+   * visivelmente menos quando o Jarvis fala do que quando ele ouve, e essa diferença não
+   * diz nada sobre o áudio.
    *
-   * O `min` não é enfeite: a frase mais alta bateu 1,18 depois da divisão.
+   * **0,28 saiu de medir**, no Chatterbox com um clipe de referência real: uma frase de 4,4 s
+   * gerada em WAV bateu pico 0,264. O valor anterior era 0,6, medido no encoder MP3 da
+   * ElevenLabs — mantido por engano, o núcleo do HUD pulsaria com menos da METADE da
+   * amplitude, e ninguém ligaria isso a uma constante de outro motor.
+   *
+   * **Depende do seu clipe.** O modelo clona o volume junto com a voz: uma referência
+   * gravada baixa gera fala baixa. Se o núcleo pulsar de menos, o número certo sai de
+   * `cargo test --lib -- --ignored --nocapture fala_de_verdade`, que imprime o pico da sua.
    */
-  const PICO_TIPICO_DA_FALA = 0.6
+  const PICO_TIPICO_DA_FALA = 0.28
   const nivelDeAudio = isSpeaking ? Math.min(1, ttsLevel / PICO_TIPICO_DA_FALA) : level
 
   return {

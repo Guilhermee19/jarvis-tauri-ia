@@ -34,7 +34,6 @@ interface SettingsFormProps {
 export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: SettingsFormProps) {
   const [apiKey, setApiKey] = useState(initial.anthropicApiKey)
   const [assistantName, setAssistantName] = useState(initial.assistantName)
-  const [elevenLabsKey, setElevenLabsKey] = useState(initial.elevenLabsApiKey)
   const [ollamaUrl, setOllamaUrl] = useState(initial.ollamaUrl)
   const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
   const [memoriaPath, setMemoriaPath] = useState(initial.memoriaPath)
@@ -80,15 +79,6 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setApiKey(event.target.value)}
         placeholder="sk-ant-…"
         hint="Com ela, ele usa o Claude para OLHAR (tela e webcam) — identifica objeto e lê texto muito melhor que o modelo local, e custa ~US$ 0,01 por pergunta com imagem. Vazia, ele olha pelo Ollama, de graça. Guardada em texto puro no arquivo de config."
-      />
-
-      <Input
-        label="API key da ElevenLabs"
-        type="password"
-        value={elevenLabsKey}
-        onChange={(event) => setElevenLabsKey(event.target.value)}
-        placeholder="sk_…"
-        hint="Usada pelo TTS. Sem ela, o teste de voz no Diagnóstico fica inerte."
       />
 
       <Input
@@ -325,11 +315,10 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         <Button
           onClick={() =>
             onSubmit({
-              // `initial` primeiro para não apagar o que o form não edita — a voz do
-              // TTS é escolhida no Diagnóstico, não aqui.
+              // `initial` primeiro para não apagar o que o form não edita — o clipe de
+              // voz é escolhido no Diagnóstico, não aqui.
               ...initial,
               anthropicApiKey: apiKey.trim(),
-              elevenLabsApiKey: elevenLabsKey.trim(),
               // Nome vazio cai no nome do TEMA escolhido, não no "Jarvis" fixo — senão
               // apagar o campo com o Ultron ativo devolveria o gatilho errado.
               assistantName: assistantName.trim() || NOME_DA_PERSONA[persona],

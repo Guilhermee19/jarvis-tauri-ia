@@ -101,20 +101,64 @@ pub async fn transcribe(
         .map_err(stringify)
 }
 
-#[tauri::command]
-pub async fn list_voices(
-    voice: State<'_, VoiceState>,
-    state: State<'_, AppState>,
-) -> Result<Vec<Voice>, String> {
-    let engine = voice
-        .tts(&state.settings().eleven_labs_api_key)
-        .map_err(stringify)?;
-    engine.voices().await.map_err(stringify)
+/// Sobe o servidor de voz se preciso e devolve a URL dele.
+///
+/// Mesmo preâmbulo do `transcribe` com o Whisper, e pelo mesmo motivo: a subida é
+/// preguiçosa, então quem chama qualquer coisa de voz é quem paga por ela estar de pé.
+async fn servidor_de_voz(
+    app: &AppHandle,
+    http: &reqwest::Client,
+    services: &Services,
+) -> Result<String, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("sem diretório de dados para achar o servidor de voz: {error}"))?;
+
+    services
+        .ensure_chatterbox(http, &data_dir)
+        .await
+        .map_err(|error| error.to_string())
 }
 
-/// `voice_id` vazio cai na voz das configurações e, se ela também estiver vazia, na
-/// primeira voz da conta. Assinatura pensada para o agente da v0.2+: ele chama
-/// `speak_text(texto, None)` e não precisa saber nada sobre catálogo de vozes.
+/// Os clipes de voz cadastrados no servidor.
+#[tauri::command]
+pub async fn list_voices(
+    app: AppHandle,
+    voice: State<'_, VoiceState>,
+    services: State<'_, Services>,
+) -> Result<Vec<Voice>, String> {
+    let http = voice.http();
+    let url = servidor_de_voz(&app, &http, &services).await?;
+
+    voice.tts(&url).voices().await.map_err(stringify)
+}
+
+/// Manda um `.wav`/`.mp3` da voz de alguém para o servidor e devolve o nome com que ele
+/// ficou guardado — é esse nome que vai para as configurações da persona.
+///
+/// O caminho vem do seletor de arquivos nativo, então é um caminho real do disco desta
+/// máquina. Ler o arquivo aqui e não do lado do servidor é o que mantém a porta aberta
+/// para ele um dia não ser local.
+#[tauri::command]
+pub async fn upload_voice_reference(
+    app: AppHandle,
+    caminho: String,
+    voice: State<'_, VoiceState>,
+    services: State<'_, Services>,
+) -> Result<String, String> {
+    let http = voice.http();
+    let url = servidor_de_voz(&app, &http, &services).await?;
+
+    voice
+        .cadastrar_voz(&url, std::path::Path::new(&caminho))
+        .await
+        .map_err(stringify)
+}
+
+/// `voice_id` vazio cai no clipe da persona ativa e, se ele também estiver vazio, no
+/// primeiro clipe cadastrado. Quem chama de fora manda `speak_text(texto, None)` e não
+/// precisa saber nada sobre onde os clipes moram.
 #[tauri::command]
 pub async fn speak_text(
     app: AppHandle,
@@ -122,11 +166,12 @@ pub async fn speak_text(
     voice_id: Option<String>,
     voice: State<'_, VoiceState>,
     state: State<'_, AppState>,
+    services: State<'_, Services>,
 ) -> Result<(), String> {
     let settings = state.settings();
-    let engine = voice
-        .tts(&settings.eleven_labs_api_key)
-        .map_err(stringify)?;
+    let http = voice.http();
+    let url = servidor_de_voz(&app, &http, &services).await?;
+    let engine = voice.tts(&url);
 
     let chosen = match voice_id.filter(|id| !id.trim().is_empty()) {
         Some(id) => id,
@@ -135,8 +180,9 @@ pub async fn speak_text(
         None => resolve_voice(engine.as_ref(), settings.voz()).await?,
     };
 
-    // Antes da síntese: mandar calar enquanto a ElevenLabs ainda responde tem que
-    // valer para o áudio que está a caminho.
+    // Antes da síntese: mandar calar enquanto o modelo ainda está gerando tem que valer
+    // para o áudio que está a caminho — e com um modelo local essa janela é bem maior do
+    // que era com a nuvem.
     let cancelar = voice.iniciar_fala();
     let audio = engine.synthesize(&text, &chosen).await.map_err(stringify)?;
 

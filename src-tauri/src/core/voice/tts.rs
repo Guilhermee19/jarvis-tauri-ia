@@ -1,14 +1,23 @@
 //! Síntese de fala.
 //!
-//! O motor é a ElevenLabs porque é HTTP puro: nada de binário nem modelo dentro do
-//! bundle, e o catálogo de vozes vem do próprio serviço (o Piper exigiria empacotar
-//! o executável por plataforma e um `.onnx` por voz).
+//! O motor é o **Chatterbox**, rodando na própria máquina: um modelo aberto da Resemble AI
+//! (licença MIT) que **clona uma voz a partir de um clipe de ~10 s**, sem treino nenhum.
+//! Quem sobe e derruba o processo é `crate::core::services`; daqui para baixo é só HTTP
+//! contra o `localhost`, do mesmo jeito que o `stt.rs` fala com o whisper-server.
 //!
-//! O preço disso é depender de rede e de crédito pago — e é exatamente por isso que
-//! o acesso passa por [`TtsEngine`]: trocar por Piper local depois é escrever outra
-//! impl, sem tocar em `commands::voice::speak_text`.
+//! Aqui morava a ElevenLabs. Ela saiu inteira, e a aposta da doc antiga se pagou: como o
+//! acesso sempre passou por [`TtsEngine`], trocar o motor não encostou em [`play`], nem
+//! nos comandos, nem nos wrappers do frontend.
+//!
+//! ## Por que um processo Python, se o resto do projeto foge disso
+//!
+//! Não há caminho puro-Rust. A única variante do Chatterbox com export ONNX é a **Turbo**,
+//! e ela **fala só inglês**; português exige a Multilingual, que só existe em PyTorch. O
+//! `ROADMAP` evitava sidecar Python em favor de crates nativas — aqui não teve como, e a
+//! troca é consciente.
 
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,13 +28,19 @@ use serde::{Deserialize, Serialize};
 use super::mic::{store_peak, LEVEL_INTERVAL};
 use super::VoiceError;
 
-const API_BASE: &str = "https://api.elevenlabs.io/v1";
-/// O `flash` no lugar do `eleven_multilingual_v2`: fala português igual e sintetiza
-/// em dezenas de milissegundos contra 1–2 s do multilíngue. Numa conversa por voz
-/// esse tempo entra INTEIRO na espera do usuário, a cada frase, e a diferença de
-/// expressividade entre os dois não paga isso. O multilíngue continua sendo a
-/// escolha certa para narração longa, onde ninguém está esperando na frente.
-const MODEL_ID: &str = "eleven_flash_v2_5";
+/// Idioma pedido ao modelo multilíngue.
+///
+/// Constante, e não configuração: o Whisper já sobe com `-l pt` fixo, os prompts são em
+/// português e as personas também. Uma voz em outro idioma não seria uma opção — seria um
+/// defeito, e um que ninguém iria procurar nas Configurações.
+const IDIOMA: &str = "pt";
+
+/// WAV, e não MP3.
+///
+/// É o formato que o servidor produz sem depender de um ffmpeg instalado, e o `rodio`
+/// decodifica os dois de qualquer jeito (a feature `wav` vem entre as padrão). Sobre
+/// loopback, os bytes a mais não custam nada.
+const FORMATO: &str = "wav";
 
 /// Um `Source` que deixa as amostras passarem e anota a maior que viu.
 ///
@@ -83,83 +98,159 @@ pub struct Voice {
 #[async_trait::async_trait]
 pub trait TtsEngine: Send + Sync {
     async fn voices(&self) -> Result<Vec<Voice>, VoiceError>;
-    /// Devolve o áudio codificado (MP3 na ElevenLabs), sem tocar: quem toca é
+    /// Devolve o áudio codificado (WAV, no Chatterbox), sem tocar: quem toca é
     /// [`play`], para que o áudio também possa ser salvo ou testado sem som.
     async fn synthesize(&self, text: &str, voice_id: &str) -> Result<Vec<u8>, VoiceError>;
 }
 
-pub struct ElevenLabs {
+/// O servidor local do Chatterbox.
+pub struct Chatterbox {
     http: reqwest::Client,
-    api_key: String,
+    /// Já sem a barra final, para as rotas serem concatenadas sem cuidado extra.
+    base: String,
 }
 
-impl ElevenLabs {
-    pub fn new(http: reqwest::Client, api_key: String) -> Self {
-        Self { http, api_key }
+impl Chatterbox {
+    pub fn new(http: reqwest::Client, base: &str) -> Self {
+        Self {
+            http,
+            base: base.trim_end_matches('/').to_owned(),
+        }
     }
-}
 
-#[async_trait::async_trait]
-impl TtsEngine for ElevenLabs {
-    async fn voices(&self) -> Result<Vec<Voice>, VoiceError> {
-        let response = self
+    fn rota(&self, caminho: &str) -> String {
+        format!("{}{caminho}", self.base)
+    }
+
+    /// Guarda um clipe de voz no servidor e devolve o nome com que ele ficou lá.
+    ///
+    /// **Fora da trait de propósito**: isto é cadastro, não síntese. Um motor que não
+    /// clonasse voz nenhuma continuaria implementando [`TtsEngine`] inteiro sem ter que
+    /// inventar o que responder aqui.
+    ///
+    /// O nome devolvido é o que vai para `ttsVoiceJarvis`/`ttsVoiceUltron` e volta depois
+    /// como `reference_audio_filename` — é a única cola entre o clipe no disco do servidor
+    /// e a configuração do app.
+    pub async fn enviar_referencia(&self, caminho: &Path) -> Result<String, VoiceError> {
+        let nome = caminho
+            .file_name()
+            .and_then(|nome| nome.to_str())
+            .ok_or_else(|| VoiceError::ClipeIlegivel("o arquivo não tem nome".to_owned()))?
+            .to_owned();
+
+        // Lido aqui e enviado como bytes: mandar só o caminho funcionaria hoje, com o
+        // servidor na mesma máquina, e quebraria no dia em que ele não estivesse.
+        let bytes =
+            std::fs::read(caminho).map_err(|erro| VoiceError::ClipeIlegivel(erro.to_string()))?;
+
+        // O campo é `files`, no plural, porque o endpoint recebe uma lista. Mandamos um.
+        let formulario = reqwest::multipart::Form::new().part(
+            "files",
+            reqwest::multipart::Part::bytes(bytes).file_name(nome.clone()),
+        );
+
+        let resposta = self
             .http
-            .get(format!("{API_BASE}/voices"))
-            .header("xi-api-key", &self.api_key)
+            .post(self.rota("/upload_reference"))
+            .multipart(formulario)
             .send()
             .await
             .map_err(network)?;
 
-        let catalog: VoiceCatalog = check(response).await?.json().await.map_err(network)?;
+        let recibo: Recibo = check(resposta).await?.json().await.map_err(network)?;
 
-        Ok(catalog
-            .voices
+        // O servidor higieniza o nome do arquivo, então o que ele guardou pode não ser o
+        // que mandamos — quem manda é a resposta dele, não o nosso `nome`.
+        let Recibo {
+            uploaded_files,
+            message,
+        } = recibo;
+
+        uploaded_files
             .into_iter()
-            .map(|voice| Voice {
-                id: voice.voice_id,
-                name: voice.name,
-                description: voice.description.or(voice.category),
+            .next()
+            .ok_or(VoiceError::ClipeIlegivel(message))
+    }
+}
+
+#[async_trait::async_trait]
+impl TtsEngine for Chatterbox {
+    /// As "vozes" são os clipes de referência que já foram enviados.
+    ///
+    /// A rota devolve uma lista crua de nomes de arquivo — sem id, sem descrição. É bem
+    /// menos do que o catálogo da ElevenLabs trazia, e é tudo o que a tela precisa.
+    async fn voices(&self) -> Result<Vec<Voice>, VoiceError> {
+        let resposta = self
+            .http
+            .get(self.rota("/get_reference_files"))
+            .send()
+            .await
+            .map_err(network)?;
+
+        let arquivos: Vec<String> = check(resposta).await?.json().await.map_err(network)?;
+
+        Ok(arquivos
+            .into_iter()
+            .map(|arquivo| Voice {
+                name: sem_extensao(&arquivo),
+                id: arquivo,
+                description: None,
             })
             .collect())
     }
 
     async fn synthesize(&self, text: &str, voice_id: &str) -> Result<Vec<u8>, VoiceError> {
-        let response = self
+        let resposta = self
             .http
-            .post(format!("{API_BASE}/text-to-speech/{voice_id}"))
-            .header("xi-api-key", &self.api_key)
-            .json(&SynthesisRequest {
+            .post(self.rota("/tts"))
+            .json(&PedidoDeFala {
                 text,
-                model_id: MODEL_ID,
+                voice_mode: "clone",
+                reference_audio_filename: voice_id,
+                language: IDIOMA,
+                output_format: FORMATO,
             })
+            // Sem timeout próprio: a primeira frase depois de abrir o app espera o modelo
+            // subir para a VRAM, e cortar a chamada no meio disso viraria um erro sem
+            // causa visível no lugar de uma demora explicável.
             .send()
             .await
             .map_err(network)?;
 
-        let audio = check(response).await?.bytes().await.map_err(network)?;
+        let audio = check(resposta).await?.bytes().await.map_err(network)?;
         Ok(audio.to_vec())
     }
 }
 
+/// Só os campos que o Jarvis decide.
+///
+/// Todo o resto (`split_text`, `chunk_size`, `seed`, `exaggeration`, `cfg_weight`) fica no
+/// padrão do servidor de propósito: são botões de laboratório, e fixá-los aqui congelaria
+/// escolhas que ninguém deste lado tem como avaliar.
 #[derive(Serialize)]
-struct SynthesisRequest<'a> {
+struct PedidoDeFala<'a> {
     text: &'a str,
-    model_id: &'a str,
+    voice_mode: &'a str,
+    reference_audio_filename: &'a str,
+    language: &'a str,
+    output_format: &'a str,
 }
 
 #[derive(Deserialize)]
-struct VoiceCatalog {
-    voices: Vec<CatalogEntry>,
+struct Recibo {
+    #[serde(default)]
+    uploaded_files: Vec<String>,
+    /// Só é lida quando `uploaded_files` vem vazia — aí ela é a explicação da recusa.
+    #[serde(default)]
+    message: String,
 }
 
-#[derive(Deserialize)]
-struct CatalogEntry {
-    voice_id: String,
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    category: Option<String>,
+/// `minha-voz.wav` vira `minha-voz`. A extensão é ruído na lista da tela.
+fn sem_extensao(arquivo: &str) -> String {
+    arquivo
+        .rsplit_once('.')
+        .map_or(arquivo, |(nome, _)| nome)
+        .to_owned()
 }
 
 /// Toca o áudio e só volta quando ele termina. Bloqueia de propósito: quem chama —
@@ -214,30 +305,24 @@ pub fn play(
     Ok(())
 }
 
-/// Erro da ElevenLabs traduzido com o corpo junto: sem ele, "401" não diz se é key
-/// errada, cota estourada ou voz inexistente.
+/// Erro do servidor com o corpo junto: sem ele, um "422" não diz se o clipe de referência
+/// sumiu do disco, se o idioma não existe no modelo carregado, ou se o texto veio vazio.
 ///
-/// Permissão faltando ganha caso próprio pelo mesmo motivo do `classify` do `mic.rs`:
-/// o texto cru diz `missing the permission voices_read`, o que é exato e não ajuda
-/// nada — a saída é marcar a permissão na key OU escolher uma voz, e nenhuma das duas
-/// está na resposta da API.
-async fn check(response: reqwest::Response) -> Result<reqwest::Response, VoiceError> {
-    let status = response.status();
+/// Truncado em 300 caracteres, como no `stt.rs`: o FastAPI responde erro de validação com
+/// um JSON longo, e o que interessa está no começo dele.
+async fn check(resposta: reqwest::Response) -> Result<reqwest::Response, VoiceError> {
+    let status = resposta.status();
     if status.is_success() {
-        return Ok(response);
+        return Ok(resposta);
     }
 
-    let body: String = response
+    let body: String = resposta
         .text()
         .await
         .unwrap_or_default()
         .chars()
         .take(300)
         .collect();
-
-    if body.contains("missing_permissions") {
-        return Err(VoiceError::TtsSemPermissao(body));
-    }
 
     Err(VoiceError::TtsRejected {
         status: status.as_u16(),
@@ -295,23 +380,102 @@ mod tests {
         (saida, f32::from_bits(pico.swap(0, Ordering::Relaxed)))
     }
 
-    /// Sintetiza uma frase de verdade e imprime a série de níveis.
+    /// O corpo do `POST /tts` é um contrato com um servidor Python que este projeto não
+    /// compila. Um campo renomeado aqui não quebra build nenhum: vira um 422 em tempo de
+    /// execução, ou — pior — um pedido aceito que ignora silenciosamente o clipe de voz e
+    /// responde com a voz padrão do modelo.
+    #[test]
+    fn o_pedido_de_fala_sai_com_os_campos_que_o_servidor_espera() {
+        let pedido = PedidoDeFala {
+            text: "oi",
+            voice_mode: "clone",
+            reference_audio_filename: "minha-voz.wav",
+            language: IDIOMA,
+            output_format: FORMATO,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&pedido).expect("json"),
+            serde_json::json!({
+                "text": "oi",
+                "voice_mode": "clone",
+                "reference_audio_filename": "minha-voz.wav",
+                "language": "pt",
+                "output_format": "wav",
+            }),
+        );
+    }
+
+    /// O nome que vale é o que o SERVIDOR devolveu, não o do arquivo que mandamos: ele
+    /// higieniza o nome, e guardar o nosso deixaria a configuração apontando para um
+    /// clipe que não existe do lado de lá.
+    #[test]
+    fn o_recibo_do_upload_diz_o_nome_que_ficou_guardado() {
+        let recibo: Recibo = serde_json::from_str(
+            r#"{"message":"ok","uploaded_files":["minha_voz.wav"],
+                "all_reference_files":["minha_voz.wav"],"errors":[]}"#,
+        )
+        .expect("recibo");
+
+        assert_eq!(recibo.uploaded_files, ["minha_voz.wav"]);
+    }
+
+    /// Recusa devolve 200 com a lista vazia e o motivo na `message` — não é erro de HTTP,
+    /// então o `check` deixa passar e quem tem que perceber é o código que lê o recibo.
+    #[test]
+    fn recibo_sem_arquivo_ainda_traz_o_motivo() {
+        let recibo: Recibo =
+            serde_json::from_str(r#"{"message":"formato não suportado","uploaded_files":[]}"#)
+                .expect("recibo");
+
+        assert!(recibo.uploaded_files.is_empty());
+        assert_eq!(recibo.message, "formato não suportado");
+    }
+
+    #[test]
+    fn a_lingueta_mostra_o_clipe_sem_a_extensao() {
+        assert_eq!(sem_extensao("minha-voz.wav"), "minha-voz");
+        assert_eq!(sem_extensao("gravacao.final.mp3"), "gravacao.final");
+        // Sem extensão não é caso comum, mas devolver vazio seria pior que devolver feio.
+        assert_eq!(sem_extensao("sem_ponto"), "sem_ponto");
+    }
+
+    /// A URL vem do `ensure_chatterbox`, que a monta com `format!` — mas nada impede
+    /// alguém de escrevê-la à mão com barra no fim, e aí toda rota viraria `//tts`.
+    #[test]
+    fn a_barra_final_da_url_nao_dobra_nas_rotas() {
+        let motor = Chatterbox::new(reqwest::Client::new(), "http://127.0.0.1:8004/");
+        assert_eq!(motor.rota("/tts"), "http://127.0.0.1:8004/tts");
+    }
+
+    /// Sintetiza uma frase de verdade, **cronometra**, e imprime a série de níveis.
     ///
-    /// Fora do `cargo test` comum porque gasta crédito da ElevenLabs, toca som na caixa e
-    /// depende de rede. **É a única forma de provar que a amplitude acompanha a fala** —
-    /// os testes de mesa acima provam que o embrulho mede, não que o que ele mede varia.
+    /// Fora do `cargo test` comum porque exige o servidor do Chatterbox de pé e toca som na
+    /// caixa. Não é um teste: é a ferramenta de medição da feature, e produz os dois
+    /// números que ninguém consegue deduzir lendo código.
+    ///
+    /// 1. **Quantos segundos até a primeira palavra.** Numa RTX 2060 com o Multilingual,
+    ///    uma frase de 52 caracteres levou **6,6 a 8,1 s** já quente — mais devagar que
+    ///    tempo real. O `stream: true` do servidor foi medido e é PIOR (8,9 s até o
+    ///    primeiro byte): ele fatia por trecho, e uma frase é um trecho só. Numa GPU
+    ///    diferente esse número muda, e é por isso que a ferramenta continua aqui.
+    /// 2. **O pico típico da fala**, que calibra o `PICO_TIPICO_DA_FALA` do
+    ///    `useVoiceInput.ts` — hoje 0,28, medido aqui. Ele depende do volume do CLIPE de
+    ///    referência, porque o modelo clona o volume junto com a voz: trocar de clipe
+    ///    pede rodar isto de novo.
     ///
     /// ```text
-    /// ELEVEN_KEY=… cargo test --lib -- --ignored --nocapture fala_de_verdade
+    /// JARVIS_TTS_VOZ=minha-voz.wav cargo test --lib -- --ignored --nocapture fala_de_verdade
     /// ```
     #[test]
     #[ignore]
     fn fala_de_verdade() {
-        let chave = std::env::var("ELEVEN_KEY").unwrap_or_default();
-        let frase = std::env::var("ELEVEN_FRASE")
+        let base = std::env::var("JARVIS_TTS_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8004".to_owned());
+        let frase = std::env::var("JARVIS_TTS_FRASE")
             .unwrap_or_else(|_| "Um, dois, três. Pausa. Quatro, cinco.".to_owned());
 
-        let motor = ElevenLabs::new(reqwest::Client::new(), chave);
+        let motor = Chatterbox::new(reqwest::Client::new(), &base);
 
         let bloco = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -319,16 +483,36 @@ mod tests {
             .expect("runtime");
 
         let audio = bloco.block_on(async {
-            let voz = match motor.voices().await {
-                Ok(vozes) => vozes.first().map(|voz| voz.id.clone()).unwrap_or_default(),
-                Err(erro) => {
-                    println!("não listou as vozes: {erro}");
-                    return None;
-                }
+            // Sem voz no ambiente, usa o primeiro clipe cadastrado — assim a ferramenta
+            // roda com uma variável a menos para quem só quer ver se está de pé.
+            let voz = match std::env::var("JARVIS_TTS_VOZ") {
+                Ok(voz) if !voz.trim().is_empty() => voz,
+                _ => match motor.voices().await {
+                    Ok(vozes) if !vozes.is_empty() => vozes[0].id.clone(),
+                    Ok(_) => {
+                        println!("nenhum clipe de referência cadastrado no servidor");
+                        return None;
+                    }
+                    Err(erro) => {
+                        println!("não listou os clipes: {erro}");
+                        return None;
+                    }
+                },
             };
 
+            println!("voz: {voz}");
+            let relogio = std::time::Instant::now();
+
             match motor.synthesize(&frase, &voz).await {
-                Ok(audio) => Some(audio),
+                Ok(audio) => {
+                    // O número que decide se esta feature vale a pena.
+                    println!(
+                        "sintetizou em {:.2} s ({} caracteres)",
+                        relogio.elapsed().as_secs_f32(),
+                        frase.chars().count()
+                    );
+                    Some(audio)
+                }
                 Err(erro) => {
                     println!("não sintetizou: {erro}");
                     None
@@ -337,7 +521,7 @@ mod tests {
         });
 
         let Some(audio) = audio else { return };
-        println!("{} bytes de MP3", audio.len());
+        println!("{} bytes de WAV", audio.len());
 
         let niveis = Arc::new(std::sync::Mutex::new(Vec::new()));
         let coletor = Arc::clone(&niveis);

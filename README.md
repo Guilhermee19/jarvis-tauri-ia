@@ -21,9 +21,11 @@ de que a frase é para ele — sem ele, conversa perto do microfone não vira co
 Configurações. Muda a cor do app inteiro, a voz e o jeito de falar, na hora e sem
 reiniciar. O nome — que é o gatilho — segue o tema até você escolher um seu.
 
-**Ele responde falando** (ElevenLabs), em qualquer caminho — o que você digita no chat
-também sai em voz alta. Basta ter a key e uma voz escolhida em Diagnóstico › Voz; sem
-isso ele fica calado, e nada mais muda.
+**Ele responde falando com a SUA voz.** O TTS é o Chatterbox rodando nesta máquina, e ele
+**clona uma voz a partir de um clipe de ~10 segundos** — escolha um `.wav` em Diagnóstico ›
+Voz e pronto, sem treino e sem conta em lugar nenhum. Vale em qualquer caminho: o que você
+digita no chat também sai em voz alta. Sem clipe escolhido ele fica calado, e nada mais
+muda.
 
 **E dá para simplesmente conversar.** O botão de ondas ao lado do microfone liga o
 _modo conversa_: o microfone fica aberto, o silêncio de 1,2 s marca o fim da sua frase,
@@ -125,7 +127,7 @@ ollama pull qwen2.5vl:3b
 ```
 
 São 3,2 GB. Sem isso o app **abre e conversa**, mas em modo simulado — o intérprete fica
-desligado. O porquê deste modelo específico está em [Os dois serviços locais](#os-dois-serviços-locais).
+desligado. O porquê deste modelo específico está em [Os três serviços locais](#os-três-serviços-locais).
 
 ### 6. whisper.cpp — opcional, só para o comando por voz
 
@@ -166,7 +168,41 @@ morre sem transcrever. `curl -L -C - --retry 10` retoma de onde parou.
 Sem essa pasta o app sobe normalmente; só o botão de microfone devolve erro (e agora ele
 **mostra** esse erro no chat, em vez de não fazer nada).
 
-### 7. Clone, instale e rode
+### 7. Chatterbox — opcional, só para ele falar
+
+O TTS **clona a sua voz** a partir de um clipe de ~10 segundos, e roda inteiro nesta
+máquina. É um servidor Python, e é o único serviço do projeto que não é um `.exe` solto.
+
+```powershell
+# O servidor exige Python 3.10. Instalar não atrapalha o que você já tem — no Windows as
+# versões convivem lado a lado.
+winget install Python.Python.3.10
+
+cd $env:APPDATA\com.jarvis.app
+git clone https://github.com/devnen/Chatterbox-TTS-Server chatterbox
+cd chatterbox
+.\start.bat
+```
+
+**Rode o `start.bat` uma vez à mão e espere terminar.** Ele monta o ambiente (`venv\`),
+instala o torch e **baixa alguns gigabytes de modelo** do Hugging Face. Depois disso o
+Jarvis sobe o servidor sozinho quando alguém falar, e o derruba ao sair.
+
+Três coisas que economizam uma tarde:
+
+- **A pasta tem que se chamar `chatterbox`**, dentro de `%APPDATA%\com.jarvis.app\` — é
+  onde `core::services` procura. O `git clone … chatterbox` do comando acima já faz isso.
+- **Escolha o modelo Multilingual** na interface do servidor (ele abre em
+  `localhost:8004`). O Turbo é mais rápido, e **fala só inglês** — com ele o Jarvis
+  responde em português com sotaque de quem não sabe português.
+- **Python 3.11+ não serve.** O projeto depende de wheels que só existem para o 3.10, e o
+  erro que aparece é de compilação de dependência, não uma mensagem dizendo isso.
+
+Sem essa pasta o app sobe normal; só a fala fica desligada, e o Diagnóstico › Voz diz o
+que falta. Depois de instalado, escolha ali um `.wav` com a sua voz — uns 10 segundos
+falando em português, sem música e sem ruído atrás.
+
+### 8. Clone, instale e rode
 
 ```powershell
 git clone <url-do-repo>
@@ -178,11 +214,14 @@ npm run tauri dev
 O primeiro `tauri dev` compila ~600 crates e leva **10–20 minutos**. Os seguintes são
 segundos. A janela abre sozinha quando terminar.
 
-### Os dois serviços locais
+### Os três serviços locais
 
-O app **sobe os dois sozinho** quando precisa, e derruba ao sair — mas os arquivos
-precisam existir. Nenhum é baixado automaticamente: são centenas de megabytes, e essa é
-uma decisão do dono da máquina.
+O app **sobe os três sozinho** quando precisa, e derruba ao sair — mas os arquivos
+precisam existir. Nenhum é baixado automaticamente: são centenas de megabytes (no caso do
+Chatterbox, gigabytes), e essa é uma decisão do dono da máquina.
+
+Juntos, eles são o motivo de o Jarvis **não depender de nenhuma API paga** para ouvir,
+pensar e responder. A última que sobrava era a ElevenLabs, e ela saiu.
 
 **Ollama** — interpreta os comandos.
 
@@ -475,7 +514,7 @@ src-tauri/src/
 │   ├── memory/           a pasta de markdown: nota.rs, busca.rs, rotinas.rs
 │   ├── system/           AGE sobre o SO: target.rs (validação) + audio.rs (COM)
 │   ├── services.rs       sobe e derruba o Ollama e o whisper-server
-│   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (ElevenLabs)
+│   ├── voice/            mic.rs (cpal), stt.rs (whisper.cpp), tts.rs (Chatterbox)
 │   ├── vision/           ENTENDE a imagem: claude.rs + ollama.rs, atrás da mesma `ver()`
 │   ├── casa.rs           ouve os aparelhos Tuya (Positivo, EKAZA) se anunciando na rede
 │   └── automation/       PERCEBE o ambiente: webcam (nokhwa) + tela (xcap)
@@ -543,7 +582,7 @@ quando o comando errado dispara. Conversa fiada não gera log; só comando.
 | `send_message`, `get_history`, `clear_history`                                                                                | `commands/chat.rs`       |
 | `get_settings`, `save_settings`                                                                                               | `commands/settings.rs`   |
 | `show_window`, `hide_window`, `toggle_window`, `minimize_window`, `toggle_maximize_window`, `is_window_maximized`, `quit_app` | `commands/system.rs`     |
-| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `speak_text`, `stop_speaking`               | `commands/voice.rs`      |
+| `start_recording`, `stop_recording`, `is_recording`, `transcribe`, `list_voices`, `upload_voice_reference`, `speak_text`, `stop_speaking` | `commands/voice.rs`      |
 | `open_webcam`, `close_webcam`, `is_webcam_open`, `capture_webcam_frame`, `capture_screenshot`                                 | `commands/automation.rs` |
 | `discover_devices`                                                                                                            | `commands/casa.rs`       |
 | `browser_open`, `browser_search`, `browser_state`, `browser_select`, `browser_close`, `browser_navigate`, `browser_history`, `browser_bounds`, `browser_external` | `commands/navegador.rs`  |
@@ -569,7 +608,7 @@ fazer sentido na wake word, que é o caso de verdade: o Rust empurra sem ningué
 
 ## Modo conversa
 
-O laço é `microfone aberto → silêncio → Whisper → agente → ElevenLabs → microfone
+O laço é `microfone aberto → silêncio → Whisper → agente → Chatterbox → microfone
 aberto`, e mora em `src/stores/sensorStore.ts`, ao lado do laço da webcam. Fica na
 store, e não num hook, porque fechar o painel de chat não é dizer "pare de me ouvir".
 
@@ -590,26 +629,38 @@ exatamente o caso que interessa, que é o silêncio parado.
 **A fala mora no `chatStore.send`, não no laço.** Toda resposta é falada — a do modo
 conversa e a do que você digitou —, porque a voz acompanha a RESPOSTA, não o caminho de
 entrada. E como o `send` só volta quando ele calou, o laço da conversa ganha de graça o
-sinal de quando pode reabrir o microfone: sem chave da ElevenLabs ele fica calado e o
-`await` passa reto.
+sinal de quando pode reabrir o microfone: sem clipe de voz ele fica calado e o `await`
+passa reto.
 
 **Só a resposta, e só ela.** O log de ação (papel `system`) vem no `loadHistory` junto e
 fica só escrito. Ninguém quer ouvir "open_site url=https://…" em voz alta — mas quer
 poder ler depois.
 
-**Sem chave, ele fica calado e sem erro.** Voz é opcional: um aviso vermelho a cada
-mensagem digitada seria ruído por algo que ninguém pediu. Quem liga o modo conversa aí
-sim recebe a recusa no clique, porque ali a voz é o ponto.
+**Sem clipe de voz, ele fica calado e sem erro.** Voz é opcional: um aviso vermelho a cada
+mensagem digitada seria ruído por algo que ninguém pediu. Quem liga o modo conversa aí sim
+recebe a recusa no clique, porque ali a voz é o ponto. E o silêncio economiza mais do que
+economizava: tentar falar sem clipe subiria o servidor inteiro — segundos de modelo
+carregando — para no fim não ter voz nenhuma para clonar.
 
 Enquanto ele fala, o microfone está fechado, então não existe eco para suprimir.
 `stop_speaking` existe porque o `sleep_until_end` do rodio não tem cancelamento: sem
 ele, desligar o modo no meio de uma resposta longa continuaria falando meia frase
 adiante, e o botão de desligar estaria mentindo.
 
-O TTS usa `eleven_flash_v2_5`, não o `eleven_multilingual_v2`. A síntese entra INTEIRA
-na espera do usuário, a cada frase, e a diferença de expressividade entre os dois não
-paga 1–2 s por resposta. Para narração longa, onde ninguém está esperando na frente, o
-multilíngue continua sendo a escolha certa.
+**A latência do TTS é o preço desta escolha, e ele é alto.** Medido numa RTX 2060 com o
+modelo Multilingual, a frase _"Sistemas online. Sou o Jarvis, e estou ouvindo você."_ (52
+caracteres, 4,4 s de áudio) levou **6,6 a 8,1 segundos** para ser sintetizada — três
+medições, já quente, sem carregamento de modelo no meio. Ou seja, ele gera **mais devagar
+que tempo real**. A ElevenLabs `flash` fazia isso em dezenas de milissegundos.
+
+**O `stream: true` do servidor NÃO resolve** — foi medido, e é pior: 8,9 s até o primeiro
+byte contra 7 s do total sem streaming. Ele fatia por trecho, e uma frase de conversa é um
+trecho só, então sobra o overhead sem o ganho. Estava documentado aqui como a saída de
+emergência; não é.
+
+A saída de verdade, se a espera incomodar, é **fatiar do lado do app**: quebrar a resposta
+em frases, tocar a primeira enquanto a segunda é sintetizada. Isso não ajuda numa resposta
+de uma frase só — mas é justamente nas respostas longas que a espera dói.
 
 ## Busca com resumo
 
@@ -1005,7 +1056,6 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
   "anthropicApiKey": "",
   "assistantName": "Jarvis",
   "persona": "jarvis",
-  "elevenLabsApiKey": "",
   "ttsVoiceJarvis": "",
   "ttsVoiceUltron": "",
   "ollamaUrl": "http://localhost:11434",
@@ -1064,6 +1114,16 @@ enquanto nenhuma delas era usada; agora duas custam dinheiro de verdade. `AppSet
   sem lista negra para manter atualizada.
 - **whisper.cpp por HTTP, não `whisper-rs`**: evita CMake + LLVM no caminho de quem clona.
   O motivo completo está nos pré-requisitos.
+- **Chatterbox por HTTP, e em Python**: é a única decisão do projeto que aceita um sidecar
+  Python em vez de uma crate nativa, e ela foi forçada. A única variante do Chatterbox com
+  export ONNX (que daria para rodar em Rust puro) é a **Turbo**, e ela fala só inglês; o
+  português exige a Multilingual, que só existe em PyTorch. Entre um sidecar e um
+  assistente com sotaque, o sidecar.
+- **`tauri-plugin-dialog`, o primeiro (e único) plugin**: o projeto não usa plugin nenhum
+  por princípio, mas não há como abrir um seletor de arquivos NATIVO sem ele — e escolher
+  o clipe da própria voz é exatamente isso. O `<input type="file">` do HTML abriria o mesmo
+  diálogo, só que esconde o caminho por segurança, e sobrariam os bytes do arquivo
+  atravessando o IPC para o Rust reencaminhar.
 - **Nenhuma crate de VAD**: o medidor de volume que já existia para desenhar a barra é o
   mesmo sinal que decide quando a frase acabou. Detalhes no [Modo conversa](#modo-conversa).
 - **`node --test` em vez de vitest/jest**: o Node roda TypeScript sozinho, e o frontend

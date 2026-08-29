@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { clearHistory, getHistory, sendMessage, speakText, stopSpeaking } from '@/lib/tauri'
 import { useSettingsStore } from './settingsStore'
+import { vozDaPersona } from '@/types'
 import type { ChatMessage } from '@/types'
 
 /**
@@ -40,16 +41,20 @@ function describeError(error: unknown): string {
 /**
  * Fala a resposta, e só volta quando ela termina.
  *
- * Sem key configurada ele fica calado e SEM ERRO: voz é opcional, e um aviso vermelho
- * a cada mensagem digitada seria ruído por uma coisa que ninguém pediu. Quem liga o
- * modo conversa aí sim recebe a recusa na hora do clique, porque ali a voz é o ponto.
+ * Sem clipe de voz cadastrado ele fica calado e SEM ERRO: voz é opcional, e um aviso
+ * vermelho a cada mensagem digitada seria ruído por uma coisa que ninguém pediu. Quem
+ * liga o modo conversa aí sim recebe a recusa na hora do clique, porque ali a voz é o
+ * ponto.
+ *
+ * Esse silêncio importa mais do que importava: sem clipe, tentar falar subiria o servidor
+ * de voz — segundos de modelo carregando — para no fim não ter voz nenhuma para clonar.
  *
  * Só a resposta é falada. O log de ação (papel `system`) chega junto no
  * `loadHistory` e fica só escrito — ninguém quer ouvir `open_site url=https://…`.
  */
 async function falar(texto: string, set: (state: Partial<ChatState>) => void, falando: boolean) {
   if (!texto.trim()) return
-  if (!useSettingsStore.getState().settings.elevenLabsApiKey.trim()) return
+  if (!vozDaPersona(useSettingsStore.getState().settings).trim()) return
 
   // Mandar uma mensagem nova enquanto ele fala a anterior CORTA a anterior. Duas
   // falas sobrepostas seriam ininteligíveis, e a resposta que interessa é a última.

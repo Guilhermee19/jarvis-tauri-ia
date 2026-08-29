@@ -97,13 +97,15 @@ pub struct AppSettings {
     pub assistant_name: String,
     /// O tema: cor do app, voz do TTS e tom da conversa. Ver [`Persona`].
     pub persona: Persona,
-    /// Mesma decisão da key da Anthropic: texto puro por enquanto.
-    pub eleven_labs_api_key: String,
-    /// Voz do TTS, **uma por persona** — o Jarvis e o Ultron não podem soar igual, e
-    /// obrigar a reconfigurar a voz a cada troca faria a troca não valer a pena.
+    /// Clipe de voz clonada, **um por persona** — o Jarvis e o Ultron não podem soar
+    /// igual, e obrigar a reconfigurar a voz a cada troca faria a troca não valer a pena.
     ///
-    /// Vazio = a primeira voz da conta, para o botão de teste funcionar assim que a key
-    /// é colada, sem passo extra de configuração.
+    /// O valor é o **nome do arquivo** guardado no servidor do Chatterbox, devolvido pelo
+    /// `upload_voice_reference`. Antes era um id de voz da ElevenLabs; a forma é a mesma
+    /// (texto opaco escolhido em Diagnóstico › Voz), o dono é que mudou.
+    ///
+    /// Vazio = o primeiro clipe cadastrado, para o botão de teste funcionar logo depois
+    /// do primeiro upload, sem passo extra.
     pub tts_voice_jarvis: String,
     pub tts_voice_ultron: String,
     /// Onde o Ollama escuta. Local por padrão; o campo existe para apontar para outra
@@ -177,7 +179,6 @@ impl Default for AppSettings {
             anthropic_api_key: String::new(),
             assistant_name: DEFAULT_ASSISTANT_NAME.to_owned(),
             persona: Persona::Jarvis,
-            eleven_labs_api_key: String::new(),
             tts_voice_jarvis: String::new(),
             tts_voice_ultron: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
@@ -211,7 +212,7 @@ impl AppSettings {
         }
     }
 
-    /// A voz do tema ATIVO. Trocar de tema troca a voz sem reconfigurar nada.
+    /// O clipe de voz do tema ATIVO. Trocar de tema troca a voz sem reconfigurar nada.
     pub fn voz(&self) -> &str {
         match self.persona {
             Persona::Jarvis => &self.tts_voice_jarvis,

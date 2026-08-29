@@ -1,9 +1,13 @@
 //! Serviços locais que o Jarvis usa e, se preciso, sobe sozinho.
 //!
-//! São dois processos fora do app: o **Ollama** (que interpreta os comandos) e o
-//! **whisper-server** (que transcreve a fala). O Ollama se instala como serviço do
-//! Windows e normalmente já está de pé; o Whisper é só um `.exe` numa pasta, e sem
-//! isto aqui o usuário teria que abrir um terminal antes de falar com o assistente.
+//! São três processos fora do app: o **Ollama** (que interpreta os comandos), o
+//! **whisper-server** (que transcreve a fala) e o **Chatterbox** (que fala). O Ollama se
+//! instala como serviço do Windows e normalmente já está de pé; os outros dois são
+//! programa numa pasta, e sem isto aqui o usuário teria que abrir um terminal antes de
+//! falar com o assistente.
+//!
+//! Os três juntos são o motivo de o Jarvis não depender de nenhuma API paga para ouvir,
+//! pensar e responder: tudo acontece nesta máquina.
 //!
 //! O ciclo é sempre o mesmo: bate na porta, e só sobe o processo se ninguém atender.
 //! Isso torna a operação idempotente e faz o app conviver com um servidor que o
@@ -32,6 +36,28 @@ const PORTA_WHISPER: u16 = 8642;
 /// necessária para subir a qualidade, ao custo de latência.
 const MODELO_WHISPER: &str = "ggml-small-q5_1.bin";
 
+/// Porta do servidor do Chatterbox — a padrão dele, a mesma que está no `config.yaml`
+/// que acompanha o projeto. Mudar aqui exige mudar lá também.
+const PORTA_CHATTERBOX: u16 = 8004;
+
+/// O que o `ensure_chatterbox` procura na pasta para decidir se está instalado.
+///
+/// O `server.py` sozinho não bastaria: ele existe assim que o repositório é clonado, e o
+/// que demora (e o que costuma faltar) é o ambiente Python com o torch dentro.
+///
+/// **`venv`, sem ponto** — é o nome que o `start.py` do servidor usa (`VENV_FOLDER`), e
+/// escrever `.venv` aqui faria o app dizer "não achei o servidor de voz" numa instalação
+/// perfeitamente correta.
+const PYTHON_DO_CHATTERBOX: &str = "venv/Scripts/python.exe";
+
+/// O carimbo que o instalador do servidor deixa quando termina — é ELE que diz "está
+/// pronto", e não a existência do interpretador.
+///
+/// A diferença não é teórica: instalar leva vários minutos, e durante todos eles o
+/// `python.exe` já existe com o ambiente pela metade. Sem este carimbo, uma tentativa de
+/// falar no meio da instalação sobe um servidor que morre no primeiro `import`.
+const CARIMBO_DE_INSTALACAO: &str = "venv/.install_complete";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error(
@@ -40,14 +66,36 @@ pub enum ServiceError {
          huggingface.co/ggerganov/whisper.cpp, e descompacte os dois nessa pasta."
     )]
     WhisperAusente(String, &'static str),
+    #[error(
+        "não achei o servidor de voz em {0}.\nClone github.com/devnen/Chatterbox-TTS-Server \
+         nessa pasta e rode `start.bat` UMA vez à mão: ele monta o ambiente Python (que \
+         exige a versão 3.10) e baixa alguns GB do modelo. Essa primeira vez é decisão do \
+         dono da máquina, não do app."
+    )]
+    ChatterboxAusente(String),
     #[error("não consegui iniciar o {servico}: {detalhe}")]
     NaoSubiu { servico: String, detalhe: String },
+    #[error(
+        "o servidor de voz ainda está sendo instalado em {0}.\nDeixe o `start.bat` \
+         terminar — ele baixa alguns GB e leva vários minutos. A pasta já existe, mas o \
+         ambiente Python está pela metade."
+    )]
+    ChatterboxIncompleto(String),
+    #[error(
+        "o {servico} subiu e morreu na hora. O erro dele não passa por aqui: rode o \
+         servidor à mão em {pasta} para ver o motivo."
+    )]
+    MorreuAoSubir { servico: String, pasta: String },
     #[error("o {0} subiu mas não respondeu a tempo — veja se outro programa está usando a porta")]
     NaoRespondeu(String),
 }
 
 pub fn whisper_url() -> String {
     format!("http://127.0.0.1:{PORTA_WHISPER}")
+}
+
+pub fn chatterbox_url() -> String {
+    format!("http://127.0.0.1:{PORTA_CHATTERBOX}")
 }
 
 /// Dono dos processos que o app subiu, para poder derrubá-los ao sair.
@@ -100,14 +148,75 @@ impl Services {
             // As DLLs (ggml, openblas) ficam ao lado do exe.
             .current_dir(&pasta);
 
-        self.spawn("whisper-server", comando)?;
+        let filho = self.spawn("whisper-server", comando)?;
 
         // Carregar o modelo leva alguns segundos na primeira vez.
-        esperar(http, &url, Duration::from_secs(60))
-            .await
-            .map_err(|()| ServiceError::NaoRespondeu("whisper-server".to_owned()))?;
+        match self.esperar(http, &url, filho, Duration::from_secs(60)).await {
+            Espera::Atendeu => Ok(url),
+            Espera::Morreu => Err(ServiceError::MorreuAoSubir {
+                servico: "whisper-server".to_owned(),
+                pasta: pasta.display().to_string(),
+            }),
+            Espera::Demorou => Err(ServiceError::NaoRespondeu("whisper-server".to_owned())),
+        }
+    }
 
-        Ok(url)
+    /// Garante que existe um servidor do Chatterbox atendendo, e devolve a URL dele.
+    ///
+    /// Mesmo ciclo do Whisper — bate na porta, sobe se ninguém atender — com duas
+    /// diferenças que vêm de ser um processo Python com um modelo grande atrás:
+    ///
+    /// - O que se executa é o **Python do ambiente virtual**, e não o do sistema. O
+    ///   servidor exige 3.10 exato, e a máquina de quem usa quase certamente tem outro.
+    /// - A espera é de **três minutos**, não de um. Importar o torch e subir meio bilhão
+    ///   de parâmetros para a VRAM não se compara a carregar um `ggml` pequeno; um limite
+    ///   curto aqui viraria "não respondeu a tempo" num servidor que estava só subindo.
+    /// - Estar instalado é o **carimbo do instalador**, não a existência do interpretador.
+    pub async fn ensure_chatterbox(
+        &self,
+        http: &reqwest::Client,
+        data_dir: &Path,
+    ) -> Result<String, ServiceError> {
+        let url = chatterbox_url();
+        if responde(http, &url).await {
+            return Ok(url);
+        }
+
+        let pasta = data_dir.join("chatterbox");
+        let python = pasta.join(PYTHON_DO_CHATTERBOX);
+        let servidor = pasta.join("server.py");
+
+        if !python.is_file() || !servidor.is_file() {
+            return Err(ServiceError::ChatterboxAusente(pasta.display().to_string()));
+        }
+
+        // Instalação pela metade tem interpretador e não tem dependência. Sem esta
+        // checagem, quem clica em "falar" enquanto o `start.bat` roda sobe um servidor que
+        // morre num `ModuleNotFoundError` — e a mensagem que sobra culpa o lugar errado.
+        if !pasta.join(CARIMBO_DE_INSTALACAO).is_file() {
+            return Err(ServiceError::ChatterboxIncompleto(
+                pasta.display().to_string(),
+            ));
+        }
+
+        let mut comando = Command::new(&python);
+        comando
+            .arg(&servidor)
+            // Pelo mesmo motivo das DLLs do Whisper: o servidor lê `config.yaml`,
+            // `voices/` e `reference_audio/` relativos ao diretório de trabalho, e de
+            // outro lugar ele sobe sem achar nem os clipes de voz.
+            .current_dir(&pasta);
+
+        let filho = self.spawn("chatterbox", comando)?;
+
+        match self.esperar(http, &url, filho, Duration::from_secs(180)).await {
+            Espera::Atendeu => Ok(url),
+            Espera::Morreu => Err(ServiceError::MorreuAoSubir {
+                servico: "servidor de voz".to_owned(),
+                pasta: pasta.display().to_string(),
+            }),
+            Espera::Demorou => Err(ServiceError::NaoRespondeu("servidor de voz".to_owned())),
+        }
     }
 
     /// Garante que o Ollama atende. Ele quase sempre já está de pé — instalar o
@@ -124,14 +233,22 @@ impl Services {
         let mut comando = Command::new("ollama");
         comando.arg("serve");
 
-        if self.spawn("ollama", comando).is_err() {
+        let Ok(filho) = self.spawn("ollama", comando) else {
             return false;
-        }
+        };
 
-        esperar(http, url, Duration::from_secs(30)).await.is_ok()
+        matches!(
+            self.esperar(http, url, filho, Duration::from_secs(30)).await,
+            Espera::Atendeu
+        )
     }
 
-    fn spawn(&self, servico: &str, mut comando: Command) -> Result<(), ServiceError> {
+    /// Sobe o processo e devolve **onde ele ficou** na lista de filhos, para o
+    /// [`Self::esperar`] poder vigiar aquele exato processo.
+    ///
+    /// O índice, e não o último da lista: dois `ensure_*` concorrentes intercalariam os
+    /// `push`, e vigiar "o último" faria um esperar pela morte do outro.
+    fn spawn(&self, servico: &str, mut comando: Command) -> Result<usize, ServiceError> {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -143,8 +260,48 @@ impl Services {
             detalhe: error.to_string(),
         })?;
 
-        lock(&self.filhos).push(filho);
-        Ok(())
+        let mut filhos = lock(&self.filhos);
+        filhos.push(filho);
+
+        Ok(filhos.len() - 1)
+    }
+
+    /// Espera o serviço atender, **desistindo cedo se o processo morrer**.
+    ///
+    /// Sem o `try_wait` no meio, um servidor que morre no primeiro `import` deixa o app
+    /// parado o timeout inteiro para no fim dizer "não respondeu a tempo" — o que é
+    /// verdade, e manda procurar exatamente no lugar errado (a porta, e não o processo).
+    async fn esperar(
+        &self,
+        http: &reqwest::Client,
+        url: &str,
+        filho: usize,
+        limite: Duration,
+    ) -> Espera {
+        let comeco = std::time::Instant::now();
+
+        while comeco.elapsed() < limite {
+            if responde(http, url).await {
+                return Espera::Atendeu;
+            }
+
+            if self.morreu(filho) {
+                return Espera::Morreu;
+            }
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+
+        Espera::Demorou
+    }
+
+    /// `true` quando aquele processo já terminou. Erro ao consultar conta como vivo: se
+    /// nem dá para perguntar, esperar o timeout é o palpite menos errado.
+    fn morreu(&self, filho: usize) -> bool {
+        lock(&self.filhos)
+            .get_mut(filho)
+            .and_then(|filho| filho.try_wait().ok().flatten())
+            .is_some()
     }
 
     /// Derruba o que subimos. Chamado quando o app encerra de verdade.
@@ -170,15 +327,10 @@ async fn responde(http: &reqwest::Client, url: &str) -> bool {
         .is_ok()
 }
 
-async fn esperar(http: &reqwest::Client, url: &str, limite: Duration) -> Result<(), ()> {
-    let comeco = std::time::Instant::now();
-
-    while comeco.elapsed() < limite {
-        if responde(http, url).await {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-
-    Err(())
+/// Como terminou a espera por um serviço. Três casos e não um `bool` porque "não
+/// atendeu" e "morreu" mandam procurar em lugares diferentes.
+enum Espera {
+    Atendeu,
+    Morreu,
+    Demorou,
 }

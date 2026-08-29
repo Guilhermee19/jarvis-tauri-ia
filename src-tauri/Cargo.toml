@@ -23,6 +23,11 @@ tauri-build = { version = "2", features = [] }
 # "Unstable" aqui quer dizer que a API pode mudar entre versões menores do Tauri, não que
 # ela seja experimental em produção — é o mesmo webview que a janela principal usa.
 tauri = { version = "2", features = ["tray-icon", "unstable"] }
+# O PRIMEIRO plugin do projeto, e a exceção é consciente: não existe jeito de abrir um
+# seletor de arquivos NATIVO sem ele, e escolher o clipe da própria voz é exatamente isso.
+# O `<input type="file">` do HTML abriria o mesmo diálogo, mas esconde o caminho por
+# segurança — sobrariam os bytes atravessando o IPC para o Rust reencaminhar.
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

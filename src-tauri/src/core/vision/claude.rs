@@ -1,7 +1,7 @@
 //! Visão pela Messages API da Anthropic.
 //!
 //! HTTP cru e não SDK porque não existe SDK oficial em Rust — e porque é o padrão da
-//! casa: Ollama, ElevenLabs, Brave e Spotify já são `reqwest` direto.
+//! casa: Ollama, Chatterbox, Brave e Spotify já são `reqwest` direto.
 //!
 //! Todo erro daqui é engolido pelo `super::ver`, que cai no modelo local. Por isso as
 //! mensagens são de diagnóstico (vão para o stderr), não texto de tela.

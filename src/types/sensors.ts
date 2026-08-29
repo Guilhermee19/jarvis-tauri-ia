@@ -14,7 +14,13 @@ export interface Recording {
   sampleCount: number
 }
 
-/** Voz do catálogo da ElevenLabs. */
+/**
+ * Um clipe de voz cadastrado no servidor local — o que o Chatterbox clona.
+ *
+ * O `id` é o nome do arquivo no servidor, que é também o que vai para
+ * `ttsVoiceJarvis`/`ttsVoiceUltron`. O `name` é o mesmo sem a extensão, e `description`
+ * hoje é sempre `null`: o servidor não guarda metadado nenhum sobre os clipes.
+ */
 export interface Voice {
   id: string
   name: string
