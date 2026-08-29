@@ -127,6 +127,38 @@ pub enum ServiceError {
     NaoRespondeu(String),
 }
 
+/// Quantas threads dar ao Whisper.
+///
+/// **Medido nesta máquina** (Ryzen 7 5700X, 8 núcleos / 16 threads, áudio de 18,5 s):
+///
+/// | threads | tempo |
+/// | --- | --- |
+/// | 4 (o valor antigo, fixo) | 2,29 s |
+/// | **8** | **1,66 s** |
+/// | 16 | 2,38 s |
+///
+/// Ou seja: subir até os núcleos FÍSICOS ganha 27%, e passar deles perde tudo de volta.
+/// Transcrição é computação pura, e duas threads disputando a mesma unidade de execução
+/// custam mais em troca de contexto do que rendem.
+///
+/// O teto de 8 não é a contagem desta máquina virando regra: é onde o `small` para de
+/// escalar. Numa máquina de 4 núcleos isto devolve 4, que era o valor fixo de antes — ele
+/// tinha sido escrito para o laptop de 4 núcleos onde o projeto nasceu.
+fn threads_do_whisper() -> usize {
+    std::thread::available_parallelism()
+        .map(|total| threads_para(total.get()))
+        .unwrap_or(4)
+}
+
+/// A conta separada do sistema, para poder ser testada sem depender da máquina.
+///
+/// Divide por dois para estimar os núcleos físicos a partir dos lógicos, com **piso de 4**:
+/// numa máquina de 4 núcleos sem hyperthreading a metade seria 2, o que é pior que o valor
+/// fixo que existia antes — a otimização não pode piorar hardware nenhum.
+fn threads_para(logicos: usize) -> usize {
+    (logicos / 2).clamp(4, 8)
+}
+
 pub fn whisper_url() -> String {
     format!("http://127.0.0.1:{PORTA_WHISPER}")
 }
@@ -183,7 +215,7 @@ impl Services {
             // Fixar o idioma: sem isto o Whisper detecta pelos primeiros segundos e,
             // em comando curto, às vezes chuta espanhol.
             .args(["-l", "pt"])
-            .args(["-t", "4"])
+            .args(["-t", &threads_do_whisper().to_string()])
             .args(["--host", "127.0.0.1"])
             .args(["--port", &PORTA_WHISPER.to_string()])
             // As DLLs (ggml, openblas) ficam ao lado do exe.
@@ -425,10 +457,30 @@ async fn responde(http: &reqwest::Client, url: &str) -> bool {
         .is_ok()
 }
 
+
 /// Como terminou a espera por um serviço. Três casos e não um `bool` porque "não
 /// atendeu" e "morreu" mandam procurar em lugares diferentes.
 enum Espera {
     Atendeu,
     Morreu,
     Demorou,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::threads_para;
+
+    /// A regra de threads do Whisper, nos três formatos de máquina que importam.
+    #[test]
+    fn as_threads_seguem_os_nucleos_fisicos_sem_nunca_piorar() {
+        // Esta máquina: 8 núcleos / 16 threads. Medido: 8 é o melhor, 16 é pior que 4.
+        assert_eq!(threads_para(16), 8);
+        // O laptop de 4 núcleos / 8 threads onde o projeto nasceu — devolve o mesmo 4 que
+        // estava fixo no código, então a mudança não altera nada lá.
+        assert_eq!(threads_para(8), 4);
+        // Sem hyperthreading, a metade daria 2. O piso impede a otimização de piorar.
+        assert_eq!(threads_para(4), 4);
+        // Máquina enorme: o `small` não escala além disso, e mais threads só disputam.
+        assert_eq!(threads_para(64), 8);
+    }
 }

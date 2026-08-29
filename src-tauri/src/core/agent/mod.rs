@@ -119,6 +119,20 @@ pub struct Outcome {
     pub reply: String,
     /// `Some` quando o comando só se completa do lado da UI.
     pub ui: Option<AcaoDeUi>,
+    /// `Some` quando ainda falta o Jarvis ANOTAR o que aprendeu nesta troca.
+    ///
+    /// Sai daqui em vez de acontecer dentro do [`handle`] porque **medimos**: destilar o
+    /// assunto e escrever a nota custaram 1,29 s de um turno de 4,79 s — 27% do tempo —, e
+    /// o usuário esperava por isso calado, antes de ouvir a resposta que já estava pronta.
+    ///
+    /// Quem executa é a fronteira (`commands::chat`), depois de a resposta já ter saído.
+    pub manutencao: Option<Manutencao>,
+}
+
+/// O material bruto para o Jarvis anotar o que aprendeu, depois de já ter respondido.
+pub struct Manutencao {
+    pub dito: String,
+    pub resposta: String,
 }
 
 pub async fn handle(
@@ -137,6 +151,7 @@ pub async fn handle(
             trace: None,
             reply: crate::core::chat::mock_reply_text(&settings.assistant_name, dito),
             ui: None,
+            manutencao: None,
         });
     }
 
@@ -153,9 +168,21 @@ pub async fn handle(
 
     let mut log = Log::novo(dito, model, &acao, pensou, settings.log_detalhado);
     let mut ui = None;
+    // Preenchido só no caminho de CONVERSA: é o único que gera nota. Comando de PC e casa
+    // não ensinam nada que valha uma nota, e o `destilar` já os descartava.
+    let mut manutencao = None;
 
     let reply = match &acao {
-        Intent::Reply {} => conversar(http, settings, memoria, dito, &mut log).await?,
+        Intent::Reply {} => {
+            // A resposta sai agora; as notas ficam para depois dela. O `resposta` é
+            // preenchido no fim do `handle`, quando o texto final já existe.
+            manutencao = Some(Manutencao {
+                dito: dito.to_owned(),
+                resposta: String::new(),
+            });
+
+            conversar(http, settings, memoria, dito).await?
+        }
 
         // Pergunta sobre o mundo: dá uma olhada na internet, GUARDA o que achou, e
         // responde conversando. A aba do navegador só abre quando ele mandou pesquisar
@@ -418,10 +445,17 @@ pub async fn handle(
         }
     };
 
+    // A troca só é anotável depois de a resposta existir — daí o preenchimento aqui, e
+    // não lá dentro do braço da conversa.
+    if let Some(servico) = manutencao.as_mut() {
+        servico.resposta.clone_from(&reply);
+    }
+
     Ok(Outcome {
         trace: log.render(),
         reply,
         ui,
+        manutencao,
     })
 }
 
@@ -433,11 +467,7 @@ async fn conversar(
     settings: &AppSettings,
     memoria: &Memoria,
     dito: &str,
-    log: &mut Log,
 ) -> Result<String, AgentError> {
-    let url = &settings.ollama_url;
-    let model = &settings.ollama_model;
-
     // O tema entra SÓ na conversa, e por causa do tom. O roteador e a busca recebem
     // apenas o nome: classificar um verbo e resumir uma busca não mudam com o jeito de
     // falar — e mexer no prompt do roteador é o que quebra o app.
@@ -450,9 +480,38 @@ async fn conversar(
     )
     .await?;
 
-    destilar(http, settings, memoria, dito, &resposta, log).await;
-    talvez_resumir(http, settings, memoria).await;
     Ok(resposta)
+}
+
+/// Anota o que a troca ensinou: destila o assunto, reescreve a nota, e resume se for hora.
+///
+/// **Roda DEPOIS de o usuário já ter a resposta**, e é essa a única diferença em relação a
+/// como isto funcionava antes. Nada aqui muda o que ele ouve — são as duas a quatro
+/// chamadas ao Ollama que mantêm a memória, e fazê-lo esperar por elas era 27% do turno.
+///
+/// Best-effort do começo ao fim, como já era: perder uma nota é recuperável ("lembra
+/// que...", que passa pelo roteador), travar a resposta não.
+pub async fn manter_memoria(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    memoria: &Memoria,
+    servico: &Manutencao,
+) {
+    // O log de memória ficava no `trace` da resposta. Agora que isto roda depois, ele não
+    // tem para onde ir — e um `Log` de mentira aqui é mais honesto que fingir que as linhas
+    // ainda cabem naquela caixa, que já foi entregue.
+    let mut log = Log::mudo();
+
+    destilar(
+        http,
+        settings,
+        memoria,
+        &servico.dito,
+        &servico.resposta,
+        &mut log,
+    )
+    .await;
+    talvez_resumir(http, settings, memoria).await;
 }
 
 /// Entende do que a troca tratou e escreve a nota de conhecimento sobre aquele assunto.
@@ -996,6 +1055,18 @@ impl Log {
         }
     }
 
+    /// Um log que ninguém vai ler, para o caminho que roda depois da resposta.
+    ///
+    /// A alternativa seria `Option<&mut Log>` espalhado por `destilar` e amigos, para
+    /// ganhar linhas que já não têm onde aparecer.
+    fn mudo() -> Self {
+        Self {
+            linhas: Vec::new(),
+            houve_algo: false,
+            sempre: false,
+        }
+    }
+
     fn acao(&mut self, acao: &Intent) {
         self.linhas
             .push(format!("AÇÃO       {} · {}", verbo(acao), argumentos(acao)));
@@ -1130,6 +1201,169 @@ mod tests {
             resposta.contains("onde está na rede"),
             "tem que separar 'não conheço' de 'não sei onde está': {resposta}"
         );
+    }
+
+    /// Cronometra um turno inteiro, etapa por etapa, e diz onde o tempo REALMENTE vai.
+    ///
+    /// Não é um teste: é a ferramenta de medição da latência, no molde do `fala_de_verdade`
+    /// e do `bench_filtros`. Existe porque, das ~7 etapas de um turno, só uma tinha número
+    /// — e otimizar sem medir é escolher o alvo pelo palpite.
+    ///
+    /// Ela reproduz o caminho de uma frase de CONVERSA (`Intent::Reply`), que é o mais caro:
+    /// transcrever, rotear, responder, destilar o assunto e escrever a nota. As três últimas
+    /// são as que o usuário espera hoje sem precisar.
+    ///
+    /// Precisa de um WAV de fala. O padrão é o que o próprio app deixou na última gravação;
+    /// `JARVIS_TURNO_WAV` aponta para outro.
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture turno_de_verdade
+    /// ```
+    #[test]
+    #[ignore]
+    fn turno_de_verdade() {
+        use std::collections::BTreeMap;
+        use std::time::Instant;
+
+        let wav = std::env::var("JARVIS_TURNO_WAV").unwrap_or_else(|_| {
+            let cache = std::env::var("LOCALAPPDATA").unwrap_or_default();
+            format!("{cache}\\com.jarvis.app\\ultima-gravacao.wav")
+        });
+
+        let settings = AppSettings {
+            ollama_url: std::env::var("JARVIS_OLLAMA")
+                .unwrap_or_else(|_| "http://localhost:11434".to_owned()),
+            ollama_model: std::env::var("JARVIS_MODELO")
+                .unwrap_or_else(|_| "qwen2.5vl:3b".to_owned()),
+            ..AppSettings::default()
+        };
+
+        let whisper = std::env::var("JARVIS_WHISPER")
+            .unwrap_or_else(|_| crate::core::services::whisper_url());
+
+        let http = crate::core::agent::intent::client();
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        bloco.block_on(async {
+            let total = Instant::now();
+            let mut etapas: Vec<(&str, f32)> = Vec::new();
+
+            // ---- 1. ouvir -------------------------------------------------
+            let relogio = Instant::now();
+            let dito = match crate::core::voice::transcribe(
+                &http,
+                &whisper,
+                std::path::Path::new(&wav),
+            )
+            .await
+            {
+                Ok(texto) => texto,
+                Err(erro) => {
+                    println!("transcrição falhou: {erro}");
+                    println!("(aponte JARVIS_TURNO_WAV para um WAV com fala, ou grave um em Diagnóstico › Microfone)");
+                    return;
+                }
+            };
+            etapas.push(("ouvir (whisper)", relogio.elapsed().as_secs_f32()));
+            println!("ouviu: {dito:?}\n");
+
+            // ---- 2. rotear ------------------------------------------------
+            let relogio = Instant::now();
+            let acao = match intent::interpret(
+                &http,
+                &settings.ollama_url,
+                &settings.ollama_model,
+                &settings.assistant_name,
+                &BTreeMap::new(),
+                &dito,
+            )
+            .await
+            {
+                Ok(acao) => acao,
+                Err(erro) => {
+                    println!("interpretação falhou: {erro}");
+                    return;
+                }
+            };
+            etapas.push(("rotear (interpret)", relogio.elapsed().as_secs_f32()));
+            println!("roteou: {acao:?}\n");
+
+            // ---- 3. responder ---------------------------------------------
+            let relogio = Instant::now();
+            let resposta = match converse::responder(&http, &settings, "", &[], &dito).await {
+                Ok(resposta) => resposta,
+                Err(erro) => {
+                    println!("resposta falhou: {erro}");
+                    return;
+                }
+            };
+            let respondeu = relogio.elapsed().as_secs_f32();
+            etapas.push(("responder (o que ele fala)", respondeu));
+            println!("respondeu ({} caracteres): {resposta}\n", resposta.chars().count());
+
+            // ---- 4 e 5. a manutenção de memória, que hoje vem ANTES da fala ----
+            let troca = format!("Usuário: {dito}\nAssistente: {resposta}");
+
+            let relogio = Instant::now();
+            let assunto = converse::destilar_assunto(
+                &http,
+                &settings.ollama_url,
+                &settings.ollama_model,
+                &[],
+                &troca,
+            )
+            .await;
+            etapas.push(("destilar assunto", relogio.elapsed().as_secs_f32()));
+
+            if let Ok(Some(assunto)) = assunto {
+                let relogio = Instant::now();
+                let _ = converse::escrever_nota(
+                    &http,
+                    &settings.ollama_url,
+                    &settings.ollama_model,
+                    &assunto,
+                    "",
+                    &troca,
+                    &[],
+                )
+                .await;
+                etapas.push(("escrever nota", relogio.elapsed().as_secs_f32()));
+            }
+
+            // ---- o veredito -----------------------------------------------
+            let soma: f32 = etapas.iter().map(|(_, s)| s).sum();
+            println!("{:-<52}", "");
+            for (nome, segundos) in &etapas {
+                let fatia = (segundos / soma * 40.0) as usize;
+                println!(
+                    "{nome:<26} {segundos:>6.2} s  {}",
+                    "#".repeat(fatia.max(1))
+                );
+            }
+            println!("{:-<52}", "");
+            println!("soma das etapas            {soma:>6.2} s");
+            println!("turno inteiro              {:>6.2} s", total.elapsed().as_secs_f32());
+
+            // A divisão que importa: o que o usuário espera antes de ouvir, e o que o
+            // Jarvis faz depois, sozinho. As duas últimas etapas saíram do caminho crítico
+            // — `manter_memoria` roda em `spawn` DEPOIS de a resposta já ter saído.
+            let de_fundo: f32 = etapas
+                .iter()
+                .filter(|(nome, _)| nome.starts_with("destilar") || nome.starts_with("escrever"))
+                .map(|(_, s)| s)
+                .sum();
+            let espera = soma - de_fundo;
+
+            println!("
+espera do usuário          {espera:>6.2} s  <- até a fala começar");
+            println!(
+                "em segundo plano           {de_fundo:>6.2} s  ({:.0}% do trabalho, e ele já não espera por isso)",
+                de_fundo / soma * 100.0
+            );
+        });
     }
 
     /// Manda o comando na casa de verdade, com o chaveiro real. Fora do `cargo test`

@@ -675,6 +675,43 @@ fazer sentido na wake word, que é o caso de verdade: o Rust empurra sem ningué
 
 ---
 
+## Onde o tempo do turno vai
+
+Medido pelo `turno_de_verdade` (`cargo test --lib -- --ignored --nocapture turno_de_verdade`),
+nesta máquina (Ryzen 7 5700X, RTX 2060), com uma pergunta falada de 3,4 s:
+
+```
+ouvir (whisper)              1.50 s
+rotear (interpret)           0.77 s
+responder (o que ele fala)   1.34 s
+destilar assunto             0.41 s   ← segundo plano
+escrever nota                1.34 s   ← segundo plano
+---------------------------------------------
+espera do usuário            3.60 s   ← até a fala começar
+em segundo plano             1.75 s   (33%)
+```
+
+**Duas coisas mudaram por causa dessa medição**, e nenhuma delas era o que se suspeitava:
+
+**O Whisper usava um quarto do processador.** Ele subia com `-t 4` fixo, herdado do laptop
+de 4 núcleos onde o projeto nasceu. Medido aqui: 4 threads = 2,29 s, **8 threads = 1,66 s**,
+16 threads = 2,38 s. Passar dos núcleos FÍSICOS perde tudo de volta — transcrição é
+computação pura, e duas threads na mesma unidade de execução brigam. Hoje o número sai de
+`threads_do_whisper()`, com piso de 4 para não piorar máquina nenhuma.
+
+**O Jarvis anotava antes de responder.** Destilar o assunto e reescrever a nota são duas
+chamadas ao Ollama que não mudam uma vírgula do que ele vai falar — e o usuário esperava
+por elas, calado. Hoje `manter_memoria` roda num `spawn` depois de a resposta já ter saído.
+O `spawn` mora em `commands/chat.rs` e não no `core` porque a tarefa precisa ser `'static`,
+e o que o `core` recebe são referências emprestadas do estado do Tauri.
+
+**O que NÃO era o gargalo:** o TTS. Ele é 0,15 s — o elo mais rápido da corrente. Trocar o
+motor de voz (foi cogitado o MeloTTS) otimizaria 3% do turno, e o MeloTTS nem fala português.
+
+Ainda na frente do usuário: os 1,34 s do `responder`, que só terminam no último token porque
+todas as chamadas ao Ollama usam `"stream": false`. Streamar e fatiar por frase faria a fala
+começar na primeira frase em vez de na última.
+
 ## Modo conversa
 
 O laço é `microfone aberto → silêncio → Whisper → agente → Chatterbox → microfone

@@ -330,6 +330,28 @@ nenhum `Mutex` do módulo é segurado durante uma chamada ao Tauri.
 
 ---
 
+### 🟡 Latência do turno — **medida, duas correções feitas** (fora da numeração original)
+
+Das ~7 etapas de um turno de voz, **só uma tinha número**. O `turno_de_verdade`
+(`core/agent/mod.rs`) cronometra todas, no molde do `fala_de_verdade`.
+
+- ✅ **Whisper com os núcleos físicos.** Ele subia com `-t 4` fixo, do laptop de 4 núcleos
+  onde o projeto nasceu. Medido: 4 → 2,29 s, **8 → 1,66 s**, 16 → 2,38 s. Passar dos
+  núcleos físicos perde o ganho inteiro
+- ✅ **Anotar deixou de vir antes de responder.** Destilar o assunto e reescrever a nota são
+  duas chamadas ao Ollama que não mudam a resposta, e valiam 33% do trabalho do turno. Hoje
+  rodam em `spawn` depois de a fala já ter começado
+- ⬜ **Streaming do Ollama, fatiado por frase.** É o que sobra na frente do usuário: 1,34 s
+  de `responder` que só terminam no último token, porque as **sete** chamadas ao Ollama do
+  projeto usam `"stream": false`
+- ⬜ Build CUDA do Whisper — troca de arquivos, sem código
+
+**O TTS nunca foi o gargalo.** A 0,15 s ele é o elo mais rápido; trocar de motor (foi
+cogitado o MeloTTS, que além disso não fala português) otimizaria 3% do turno. Medir antes
+foi o que evitou gastar a leva no lugar errado.
+
+---
+
 ### 🚀 Depois do v1.0 (ideias de expansão)
 
 - ✅ ~~Spotify~~ — já feito: tocar faixa nomeada, com o widget de "tocando agora"

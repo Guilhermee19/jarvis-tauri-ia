@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::core::agent::{self, AgentError};
 use crate::core::automation::AutomationState;
@@ -77,6 +77,26 @@ pub async fn send_message(
 
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);
     memoria.push_message(reply.clone());
+
+    // **A resposta sai primeiro; o Jarvis anota depois.**
+    //
+    // Destilar o assunto e reescrever a nota são de duas a três chamadas ao Ollama, e
+    // foram medidas em 1,29 s de um turno de 4,79 s — 27% do tempo, que o usuário passava
+    // esperando calado por um trabalho que não muda uma vírgula do que ele vai ouvir.
+    //
+    // O `spawn` mora AQUI, e não no `core`: a tarefa precisa ser `'static`, e o que o
+    // `core` recebe são referências emprestadas do estado do Tauri. Aqui há `AppHandle`,
+    // e de dentro dela dá para pegar o estado de novo.
+    if let Some(servico) = outcome.manutencao {
+        let app = app.clone();
+        let http = http.clone();
+        let settings = settings.clone();
+
+        tauri::async_runtime::spawn(async move {
+            let memoria = app.state::<Memoria>();
+            crate::core::agent::manter_memoria(&http, &settings, &memoria, &servico).await;
+        });
+    }
 
     Ok(ChatResponse::new(reply))
 }
