@@ -1,3 +1,4 @@
+export { useCamerasStore } from './camerasStore'
 export { useCasaStore } from './casaStore'
 export { useDesempenhoStore } from './desempenhoStore'
 export { abaAtiva, useNavegadorStore } from './navegadorStore'

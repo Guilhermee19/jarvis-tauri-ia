@@ -35,6 +35,11 @@ use crate::config::AppSettings;
 pub enum Fonte {
     Tela,
     Webcam,
+    /// Uma câmera de segurança da casa. **Variante unitária, sem o nome da câmera
+    /// dentro**: o nome viaja no `Intent`, e pôr um `String` aqui custaria o `Copy` de
+    /// que o [`Fonte::resolver`] depende — para guardar um dado que este módulo não usa.
+    /// O que ele precisa saber é só o que muda o prompt: que a imagem é de vigilância.
+    Camera,
     /// "o que é isso?" não diz onde olhar. Quem decide é [`Fonte::resolver`].
     Auto,
 }
@@ -56,6 +61,11 @@ impl Fonte {
         match self {
             Self::Webcam | Self::Auto => "a imagem da webcam",
             Self::Tela => "esta captura da tela do computador",
+            // Dizer que é vigilância muda o que o modelo procura: numa webcam ele
+            // descreve o objeto em primeiro plano, e aqui o que interessa é quem entrou
+            // na cena. Sem isto, "tem alguém na garagem?" era respondido com a marca do
+            // portão.
+            Self::Camera => "esta imagem de uma câmera de segurança da casa",
         }
     }
 }
@@ -228,6 +238,21 @@ mod tests {
         // Pedir a tela com a câmera ligada continua sendo a tela.
         assert_eq!(Fonte::Tela.resolver(true), Fonte::Tela);
         assert_eq!(Fonte::Webcam.resolver(false), Fonte::Webcam);
+
+        // A câmera de segurança é sempre explícita — ela nunca sai de um `Auto`, e
+        // ligar a webcam não pode desviar uma pergunta sobre a garagem.
+        assert_eq!(Fonte::Camera.resolver(true), Fonte::Camera);
+        assert_eq!(Fonte::Camera.resolver(false), Fonte::Camera);
+    }
+
+    /// O prompt tem que dizer que é vigilância: sem isso o modelo descreve o objeto em
+    /// primeiro plano em vez de dizer quem entrou na cena.
+    #[test]
+    fn o_prompt_da_camera_fala_em_seguranca() {
+        let vigilancia = prompt("tem alguém aí?", Fonte::Camera);
+
+        assert!(vigilancia.contains("câmera de segurança"));
+        assert!(!vigilancia.contains("webcam"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::core::agent::{self, AgentError};
 use crate::core::automation::AutomationState;
+use crate::core::cameras::Catalogo;
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
 use crate::core::memory::Memoria;
@@ -31,6 +32,7 @@ pub async fn send_message(
     services: State<'_, Services>,
     automation: State<'_, AutomationState>,
     chaveiro: State<'_, Chaveiro>,
+    catalogo: State<'_, Catalogo>,
     localizador: State<'_, Localizador>,
 ) -> Result<ChatResponse, String> {
     let content = content.trim().to_owned();
@@ -56,6 +58,7 @@ pub async fn send_message(
         memoria.inner(),
         automation.inner(),
         chaveiro.inner(),
+        catalogo.inner(),
         localizador.inner(),
         &content,
     )

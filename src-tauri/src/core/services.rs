@@ -126,6 +126,13 @@ pub enum ServiceError {
     )]
     ChatterboxIncompleto(String),
     #[error(
+        "não achei o go2rtc em {0}.\nBaixe o `go2rtc_win64.zip` de \
+         github.com/AlexxIT/go2rtc/releases e descompacte o executável nessa pasta. \
+         Ele é um arquivo só, sem instalador — é o que traduz o vídeo das câmeras \
+         para um formato que o app consegue mostrar."
+    )]
+    Go2rtcAusente(String),
+    #[error(
         "o {servico} subiu e morreu na hora. O motivo está em {pasta}\\servico.log."
     )]
     MorreuAoSubir { servico: String, pasta: String },
@@ -176,6 +183,18 @@ pub fn chatterbox_url() -> String {
 pub fn piper_url() -> String {
     format!("http://127.0.0.1:{PORTA_PIPER}")
 }
+
+/// O executável do go2rtc dentro da pasta dele.
+///
+/// O nome que vem no zip oficial. Windows-only como o resto do app.
+const EXECUTAVEL_DO_GO2RTC: &str = "go2rtc.exe";
+
+/// O nome alternativo, que é como o arquivo sai do release quando baixado direto.
+///
+/// Duas tentativas porque renomear um executável baixado é justamente o passo que se
+/// esquece, e o erro resultante ("não achei o go2rtc") mandaria procurar um arquivo que
+/// está lá na frente do usuário.
+const EXECUTAVEL_DO_GO2RTC_ALT: &str = "go2rtc_win64.exe";
 
 /// Dono dos processos que o app subiu, para poder derrubá-los ao sair.
 ///
@@ -352,6 +371,67 @@ impl Services {
                 pasta: pasta.display().to_string(),
             }),
             Espera::Demorou => Err(ServiceError::NaoRespondeu("Piper".to_owned())),
+        }
+    }
+
+    /// Garante que o go2rtc atende, e devolve a URL dele.
+    ///
+    /// **Reescreve a configuração antes de subir**, e é o que separa este dos outros
+    /// serviços: os demais têm config estática, e o go2rtc tem uma lista de câmeras que
+    /// muda a cada cadastro. Gerar o YAML aqui é o que faz uma câmera nova aparecer sem
+    /// ninguém editar arquivo.
+    ///
+    /// A escrita acontece mesmo quando o serviço já está de pé, e isso é de propósito:
+    /// o arquivo passa a valer na próxima subida, e a alternativa (escrever só quando
+    /// spawna) deixaria a configuração velha para sempre em quem nunca fecha o app.
+    pub async fn ensure_go2rtc(
+        &self,
+        http: &reqwest::Client,
+        data_dir: &Path,
+        cameras: &[crate::core::cameras::Camera],
+    ) -> Result<String, ServiceError> {
+        let url = crate::core::cameras::go2rtc::url();
+        let pasta = data_dir.join("go2rtc");
+
+        let config =
+            crate::core::cameras::go2rtc::escrever_config(&pasta, cameras).map_err(|erro| {
+                ServiceError::NaoSubiu {
+                    servico: "go2rtc".to_owned(),
+                    detalhe: erro.to_string(),
+                }
+            })?;
+
+        if responde(http, &url).await {
+            return Ok(url);
+        }
+
+        let executavel = [EXECUTAVEL_DO_GO2RTC, EXECUTAVEL_DO_GO2RTC_ALT]
+            .iter()
+            .map(|nome| pasta.join(nome))
+            .find(|caminho| caminho.is_file())
+            .ok_or_else(|| ServiceError::Go2rtcAusente(pasta.display().to_string()))?;
+
+        let mut comando = Command::new(&executavel);
+        // `-config` explícito: sem ele o go2rtc procura o YAML no diretório de trabalho,
+        // que não é necessariamente o dele.
+        comando.arg("-config").arg(&config).current_dir(&pasta);
+
+        let filho = self.spawn("go2rtc", comando, Some(&pasta))?;
+
+        // 15 s e não os 30 dos servidores de voz: o go2rtc é um binário Go que abre a
+        // porta em menos de um segundo. Ele NÃO conecta nas câmeras na subida — isso é
+        // preguiçoso, no primeiro quadro pedido —, então uma câmera offline não segura
+        // esta espera.
+        match self
+            .esperar(http, &url, filho, Duration::from_secs(15))
+            .await
+        {
+            Espera::Atendeu => Ok(url),
+            Espera::Morreu => Err(ServiceError::MorreuAoSubir {
+                servico: "go2rtc".to_owned(),
+                pasta: pasta.display().to_string(),
+            }),
+            Espera::Demorou => Err(ServiceError::NaoRespondeu("go2rtc".to_owned())),
         }
     }
 

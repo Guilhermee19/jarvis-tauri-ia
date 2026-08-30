@@ -2,8 +2,20 @@
 
 import { useEffect } from 'react'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { JarvisEvent, onJarvisEvent, type MudouDeEndereco, type UiAction } from '@/lib/tauri'
-import { useNavegadorStore, useNowPlayingStore, useSensorStore } from '@/stores'
+import {
+  JarvisEvent,
+  onJarvisEvent,
+  type AlertaDeCamera,
+  type MudouDeEndereco,
+  type UiAction,
+} from '@/lib/tauri'
+import {
+  useCamerasStore,
+  useJanelaStore,
+  useNavegadorStore,
+  useNowPlayingStore,
+  useSensorStore,
+} from '@/stores'
 
 /**
  * Assina os eventos de sensor uma vez só, no shell da janela.
@@ -20,6 +32,10 @@ export function useSensorEvents() {
   const abrirSite = useNavegadorStore((state) => state.abrirSite)
   const anotarEndereco = useNavegadorStore((state) => state.anotarEndereco)
   const pesquisar = useNavegadorStore((state) => state.pesquisar)
+  const abrirJanela = useJanelaStore((state) => state.abrir)
+  const fecharJanela = useJanelaStore((state) => state.fechar)
+  const focarCamera = useCamerasStore((state) => state.focar)
+  const registrarAlerta = useCamerasStore((state) => state.registrarAlerta)
 
   useEffect(() => {
     const pendentes: UnlistenFn[] = []
@@ -48,6 +64,10 @@ export function useSensorEvents() {
       onJarvisEvent<string>(JarvisEvent.BrowserNewTab, (url) => void abrirSite(url)),
     )
 
+    // Movimento numa câmera vigiada. Chega raro por construção — o Rust já descartou os
+    // quadros parados e já perguntou ao modelo se havia alguém.
+    assinar(onJarvisEvent<AlertaDeCamera>(JarvisEvent.CameraAlert, registrarAlerta))
+
     // O agente pedindo à UI. "abre a webcam" cai no MESMO caminho do botão da barra
     // de ícones — é isso que mantém o botão aceso e o preview rodando.
     assinar(
@@ -58,6 +78,16 @@ export function useSensorEvents() {
             break
           case 'webcam-off':
             void setWebcam(false)
+            break
+          // "mostra a garagem" abre a janelinha JÁ na câmera certa. A ordem importa: o
+          // foco é posto antes de abrir, senão a janela aparece na grade e salta para o
+          // foco um quadro depois, que se lê como defeito.
+          case 'camera-on':
+            focarCamera(acao.camera)
+            abrirJanela('cameras')
+            break
+          case 'camera-off':
+            fecharJanela('cameras')
             break
           case 'tocando':
             mostrarFaixa(acao.faixa)
@@ -79,5 +109,17 @@ export function useSensorEvents() {
       cancelled = true
       pendentes.forEach((fn) => fn())
     }
-  }, [setMicLevel, setTtsLevel, setWebcam, mostrarFaixa, abrirSite, pesquisar, anotarEndereco])
+  }, [
+    setMicLevel,
+    setTtsLevel,
+    setWebcam,
+    mostrarFaixa,
+    abrirSite,
+    pesquisar,
+    anotarEndereco,
+    abrirJanela,
+    fecharJanela,
+    focarCamera,
+    registrarAlerta,
+  ])
 }

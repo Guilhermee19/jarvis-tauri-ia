@@ -29,6 +29,14 @@ export const JarvisEvent = {
    * da câmera é o `sensorStore`, não o Rust. Emitido por `commands/chat.rs`.
    */
   UiAction: 'jarvis://ui-action',
+  /**
+   * Movimento numa câmera vigiada, já filtrado pelo modelo de visão.
+   *
+   * Chega raramente por construção: o Rust só acorda o modelo quando a diferença entre
+   * dois quadros estoura o limiar, e só emite quando ele confirma que havia gente,
+   * animal ou veículo. Emitido por `commands/cameras.rs`.
+   */
+  CameraAlert: 'jarvis://camera-alert',
 } as const
 
 /** Uma faixa do Spotify. Espelha `core::music::Faixa`. */
@@ -46,6 +54,17 @@ export interface Faixa {
  * serializado com tag externa — por isso o `tipo` discrimina e só uma das variantes
  * carrega dados.
  */
+/** Carga do {@link JarvisEvent.CameraAlert}. Espelha `commands::cameras::Alerta`. */
+export interface AlertaDeCamera {
+  /** O id, para saber qual cartão destacar. */
+  camera: string
+  /** O nome falado — é o que a pessoa lê. */
+  nome: string
+  /** O que o modelo disse ter visto. */
+  resposta: string
+  quando: number
+}
+
 /** Carga do {@link JarvisEvent.BrowserUrl}. Espelha `MudouDeEndereco` no Rust. */
 export interface MudouDeEndereco {
   id: string
@@ -55,6 +74,9 @@ export interface MudouDeEndereco {
 export type UiAction =
   | { tipo: 'webcam-on' }
   | { tipo: 'webcam-off' }
+  /** `camera` é o **id** da câmera, já resolvido pelo catálogo no Rust — não o nome falado. */
+  | { tipo: 'camera-on'; camera: string }
+  | { tipo: 'camera-off' }
   | { tipo: 'tocando'; faixa: Faixa }
   | { tipo: 'abrir-site'; url: string }
   | { tipo: 'pesquisar'; query: string }

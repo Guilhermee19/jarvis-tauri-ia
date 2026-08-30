@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::AgentError;
+use crate::core::cameras;
 use crate::core::vision;
 
 /// O que o modelo pode pedir.
@@ -94,6 +95,47 @@ pub enum Intent {
         #[serde(default = "onde_der")]
         fonte: vision::Fonte,
     },
+    /// "mostra a garagem", "abre a câmera do portão". Uma câmera de SEGURANÇA da casa,
+    /// que tem nome e fica numa janela própria.
+    ///
+    /// **Verbo separado do [`Intent::WebcamOn`], e não um campo `qual` nele.** São dois
+    /// aparelhos diferentes com um nome só em português: a webcam do computador não tem
+    /// nome, e a câmera da garagem só existe pelo nome. Juntá-los num verbo faria "liga
+    /// a câmera" ter que escolher entre eles por um campo opcional — que é exatamente o
+    /// desenho que falhou em `weather`/`weather_at` e em `smart_home`.
+    ///
+    /// Como o preview é da UI (mesma razão do `webcam_on`), isto vira uma
+    /// [`super::AcaoDeUi`].
+    CameraOn {
+        /// O nome que ele falou. Quem casa "garagem" com a câmera certa é o catálogo,
+        /// que conhece os nomes de verdade e este prompt não. Pode vir vazio quando ele
+        /// só disse "mostra a câmera" — com uma câmera só cadastrada, isso basta.
+        #[serde(default)]
+        camera: String,
+    },
+    /// "fecha as câmeras". Chaves vazias, como o [`Intent::VolumeMute`].
+    CameraOff {},
+    /// "tem alguém na garagem?", "o carro está na frente?". Olha a câmera de segurança e
+    /// responde — o [`Intent::Look`] da câmera de rede.
+    ///
+    /// Separado do `look` pelo mesmo motivo do `camera_on`: `fonte` é um enum fechado de
+    /// lugares fixos (tela, webcam), e uma câmera de segurança é um NOME, que não cabe
+    /// naquele enum sem transformá-lo em texto livre.
+    LookCamera {
+        #[serde(default)]
+        camera: String,
+    },
+    /// "vira a câmera pra esquerda", "olha mais pra cima".
+    ///
+    /// **Um verbo com `direcao`, e não quatro verbos**, ao contrário de
+    /// `volume_up`/`volume_down` — e a diferença é o schema: `direcao` é um enum FECHADO
+    /// de quatro valores, então a gramática não deixa o modelo inventar. O que forçou
+    /// verbos separados nos outros casos foi campo de texto livre, que não é este caso.
+    CameraMove {
+        #[serde(default)]
+        camera: String,
+        direcao: cameras::onvif::Direcao,
+    },
     /// "lembra que eu acordo 6h30". O caminho EXPLÍCITO da memória, e o confiável — a
     /// extração automática em `converse` é best-effort.
     Remember {
@@ -164,7 +206,7 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 23] = [
+const ACOES: [&str; 27] = [
     "smart_home",
     "smart_color",
     "smart_bright",
@@ -174,6 +216,10 @@ const ACOES: [&str; 23] = [
     "webcam_on",
     "webcam_off",
     "look",
+    "camera_on",
+    "camera_off",
+    "look_camera",
+    "camera_move",
     "open_site",
     "open_app",
     "volume_up",
@@ -215,6 +261,11 @@ pub fn schema() -> serde_json::Value {
             "nivel":    { "type": "integer" },
             "ligar":    { "type": "boolean" },
             "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
+            "camera":   { "type": "string" },
+            // Enum FECHADO, e é o que permite `camera_move` ser um verbo só em vez de
+            // quatro: a gramática derivada do schema não deixa o modelo emitir outra
+            // coisa, então não há campo livre para ele errar.
+            "direcao":  { "type": "string", "enum": ["esquerda", "direita", "cima", "baixo"] },
             "steps":    { "type": "integer" },
             "level":    { "type": "integer" }
         },
@@ -361,8 +412,17 @@ play_music        TOCAR uma música específica que ele nomeou. `query` = artist
 weather           tempo, chuva ou temperatura ONDE ELE ESTÁ. Sem argumento nenhum.
 weather_at        tempo, chuva ou temperatura numa CIDADE que ele nomeou na frase.
                   `local` = só o nome da cidade, copiado da frase dele.
-webcam_on         ligar a câmera na tela.
-webcam_off        desligar a câmera.
+webcam_on         ligar a câmera DO COMPUTADOR (a webcam, a que aponta para ele).
+webcam_off        desligar a câmera do computador.
+camera_on         mostrar uma câmera de SEGURANÇA da casa, que tem NOME DE LUGAR
+                  (garagem, portão, quintal, sala, frente, fundos). `camera` = o nome do
+                  lugar como ele falou. Se ele disser só \"a câmera\" sem lugar nenhum,
+                  deixe `camera` vazio.
+camera_off        fechar as câmeras de segurança.
+look_camera       OLHAR uma câmera de segurança e responder sobre ela — \"tem alguém
+                  na garagem?\", \"o carro está na frente?\". `camera` = o nome do lugar.
+camera_move       VIRAR uma câmera de segurança. `direcao` = esquerda, direita, cima ou
+                  baixo. `camera` = o nome do lugar, se ele disser.
 look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
                   \"webcam\" quando ele aponta algo para a câmera ou fala do que está
                   segurando; \"tela\" quando ele fala do que está NA TELA, numa janela,
@@ -391,6 +451,12 @@ erro que você pode cometer.
 Perguntas se dividem em duas: sobre o MUNDO (fatos, pessoas, coisas, notícias) vai para
 web_search; sobre ELE ou sobre vocês dois vai para reply, porque a resposta está na
 memória e não na internet.
+
+\"câmera\" também se divide em duas, e são aparelhos diferentes:
+- Tem NOME DE LUGAR junto (garagem, portão, quintal, sala, frente, fundos, rua) ou fala
+  de vigiar a casa -> é câmera de SEGURANÇA: camera_on, look_camera, camera_move.
+- Não tem lugar nenhum, ou fala do que ELE está segurando/mostrando -> é a WEBCAM do
+  computador: webcam_on, webcam_off, look.
 
 \"abre o X\" também se divide em duas, e errar aqui não abre nada:
 - X é um SITE ou serviço da web (youtube, gmail, netflix, globo, chatgpt, instagram)
@@ -421,6 +487,14 @@ Exemplos de COMANDO:
 \"coloca uma música do Djavan\"       -> {{\"action\":\"play_music\",\"query\":\"Djavan\"}}
 \"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
 \"desliga a câmera\"                  -> {{\"action\":\"webcam_off\"}}
+\"mostra a garagem\"                  -> {{\"action\":\"camera_on\",\"camera\":\"garagem\"}}
+\"abre a câmera do portão\"           -> {{\"action\":\"camera_on\",\"camera\":\"portão\"}}
+\"me mostra as câmeras\"              -> {{\"action\":\"camera_on\",\"camera\":\"\"}}
+\"fecha as câmeras\"                  -> {{\"action\":\"camera_off\"}}
+\"tem alguém na garagem?\"            -> {{\"action\":\"look_camera\",\"camera\":\"garagem\"}}
+\"o carro tá na frente?\"             -> {{\"action\":\"look_camera\",\"camera\":\"frente\"}}
+\"vira a câmera pra esquerda\"        -> {{\"action\":\"camera_move\",\"camera\":\"\",\"direcao\":\"esquerda\"}}
+\"olha mais pra cima no quintal\"     -> {{\"action\":\"camera_move\",\"camera\":\"quintal\",\"direcao\":\"cima\"}}
 \"o que é isso?\"                     -> {{\"action\":\"look\",\"fonte\":\"auto\"}}
 \"que objeto é esse na minha mão\"    -> {{\"action\":\"look\",\"fonte\":\"webcam\"}}
 \"que mouse é esse?\"                 -> {{\"action\":\"look\",\"fonte\":\"webcam\"}}
@@ -600,6 +674,28 @@ mod tests {
                     fonte: vision::Fonte::Auto,
                 },
             ),
+            // Sem `camera`: é o que sai de "me mostra as câmeras", e o default vazio tem
+            // que segurar — quem resolve "vazio com uma câmera só" é o catálogo.
+            (
+                r#"{"action":"camera_on"}"#,
+                Intent::CameraOn {
+                    camera: String::new(),
+                },
+            ),
+            (r#"{"action":"camera_off"}"#, Intent::CameraOff {}),
+            (
+                r#"{"action":"look_camera","camera":"garagem"}"#,
+                Intent::LookCamera {
+                    camera: "garagem".to_owned(),
+                },
+            ),
+            (
+                r#"{"action":"camera_move","camera":"quintal","direcao":"esquerda"}"#,
+                Intent::CameraMove {
+                    camera: "quintal".to_owned(),
+                    direcao: cameras::onvif::Direcao::Esquerda,
+                },
+            ),
             (r#"{"action":"reply"}"#, Intent::Reply {}),
         ];
 
@@ -756,6 +852,71 @@ mod tests {
                     match saida {
                         Ok(acao) => println!("{frase:<42} -> {acao:?}"),
                         Err(erro) => println!("{frase:<42} -> ERRO {erro}"),
+                    }
+                }
+            });
+    }
+
+    /// O mesmo, para os verbos de câmera — e principalmente para o que eles podem
+    /// QUEBRAR.
+    ///
+    /// Duas coisas se medem aqui, e a segunda é a que mais importa:
+    ///
+    /// 1. Os verbos novos são aprendíveis — "mostra a garagem" vira `camera_on`, e não
+    ///    `webcam_on` nem `open_app`.
+    /// 2. **O campo `camera` não vaza.** É o risco que este módulo documenta em dois
+    ///    lugares: um campo declarado é um campo que a gramática deixa emitir, e o modelo
+    ///    prefere emitir a omitir. As frases do fim não falam de câmera nenhuma, e
+    ///    qualquer `camera` preenchido nelas é o sintoma de que a lição foi violada.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture as_cameras_sao_aprendiveis`
+    #[test]
+    #[ignore]
+    fn as_cameras_sao_aprendiveis() {
+        let frases = [
+            // Devem virar os verbos de câmera de segurança.
+            "mostra a garagem",
+            "abre a câmera do portão",
+            "me mostra as câmeras",
+            "fecha as câmeras",
+            "tem alguém na garagem?",
+            "o carro tá na frente?",
+            "vira a câmera pra esquerda",
+            "olha mais pra cima no quintal",
+            // A fronteira com a WEBCAM: sem lugar nenhum, é a câmera do computador.
+            "liga a câmera",
+            "desliga a câmera",
+            "que mouse é esse?",
+            // As armadilhas: nada disso é câmera, e nenhuma pode sair com `camera`
+            // preenchido nem virar um verbo de câmera.
+            "que horas são?",
+            "abaixa o volume",
+            "como está o tempo?",
+            "abre o youtube",
+            "apaga a luz da cozinha",
+            "tô cansado hoje",
+        ];
+
+        let http = client();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                for frase in frases {
+                    let saida = interpret(
+                        &http,
+                        "http://localhost:11434",
+                        "qwen2.5vl:3b",
+                        "Jarvis",
+                        &BTreeMap::new(),
+                        frase,
+                    )
+                    .await;
+
+                    match saida {
+                        Ok(acao) => println!("{frase:<34} -> {acao:?}"),
+                        Err(erro) => println!("{frase:<34} -> ERRO {erro}"),
                     }
                 }
             });

@@ -34,6 +34,7 @@ const ESPERA_MS = 500
 export type JanelaId =
   | 'chat'
   | 'casa'
+  | 'cameras'
   | 'desempenho'
   | 'navegador'
   | 'conhecimento'

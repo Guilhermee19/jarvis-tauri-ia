@@ -6,6 +6,11 @@
  * **A conta passou de 15**, que era o limite combinado para trocar por `lucide-react` de
  * uma vez. Fica como dívida real: o próximo ícone que entrar aqui é o gatilho, e não mais
  * um "quando der".
+ *
+ * O gatilho FOI puxado pelo {@link VigilanciaIcon}, e a troca não aconteceu junto de
+ * propósito: ela mexe em todos os componentes que importam daqui, e misturá-la com a
+ * feature de câmeras faria um diff onde nenhuma das duas coisas dá para revisar. É a
+ * próxima tarefa deste arquivo, sozinha.
  */
 
 interface IconProps {
@@ -131,6 +136,25 @@ export function CameraIcon(props: IconProps) {
     <Svg {...props}>
       <path d="M3.5 8.5h3l1.4-2h7.2l1.4 2h3v10h-16Z" />
       <circle cx="11.5" cy="13" r="3.2" />
+    </Svg>
+  )
+}
+
+/**
+ * Câmera de vigilância — a da casa, montada na parede.
+ *
+ * Desenho deliberadamente diferente do {@link CameraIcon}, que é a webcam: os dois
+ * botões ficam na mesma barra, e dois pictogramas parecidos ali fariam o usuário abrir a
+ * webcam querendo ver a garagem. O corpo inclinado e o suporte são o que se lê de
+ * relance como "câmera de segurança".
+ */
+export function VigilanciaIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.4 9.1 14.6 6.1a1 1 0 0 1 1.23.71l.8 3a1 1 0 0 1-.71 1.22l-11.2 3a1 1 0 0 1-1.23-.71l-.8-3a1 1 0 0 1 .71-1.22Z" />
+      <path d="m17.2 8.5 3.3-1.5v5.2l-3.3-1.5" />
+      <path d="M8.4 13.9 10 19.4" />
+      <path d="M7 20h6" />
     </Svg>
   )
 }

@@ -4,6 +4,7 @@ import { ChatWindow } from '@/components/chat/ChatWindow'
 import { HomeScreen } from '@/components/home/HomeScreen'
 import { NowPlayingWidget } from '@/components/music/NowPlayingWidget'
 import { WebcamStage } from '@/components/home/WebcamStage'
+import { CamerasWindow } from '@/components/cameras/CamerasWindow'
 import { CasaWindow } from '@/components/casa/CasaWindow'
 import { DesempenhoWindow } from '@/components/desempenho/DesempenhoWindow'
 import { ConhecimentoWindow } from '@/components/conhecimento/ConhecimentoWindow'
@@ -45,6 +46,7 @@ export default function HomePage() {
         <HomeScreen />
         <ChatWindow />
         <CasaWindow />
+        <CamerasWindow />
         <DesempenhoWindow />
         <NavegadorWindow />
         <ConhecimentoWindow />

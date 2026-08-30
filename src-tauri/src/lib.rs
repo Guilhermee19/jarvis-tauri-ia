@@ -18,6 +18,7 @@ use tauri::Manager;
 
 use crate::config::AppSettings;
 use crate::core::automation::AutomationState;
+use crate::core::cameras::Catalogo;
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::memory::Memoria;
 use crate::core::services::Services;
@@ -83,6 +84,14 @@ pub fn run() {
             // de importar reescreve o arquivo inteiro, o que ninguém quer que aconteça
             // com o `settings.json`.
             app.manage(Chaveiro::new(&config_dir));
+            // As câmeras de segurança, pela mesma razão do chaveiro: é dado que o app
+            // precisa para funcionar, não preferência escolhida numa tela. Nada sobe
+            // aqui — o go2rtc só nasce quando o painel de câmeras abre.
+            app.manage(Catalogo::new(&config_dir));
+            // A trava do laço de vigilância. Ele nasce no primeiro `start_cameras` e
+            // vive daí em diante — vigilância que só funciona com o painel aberto não
+            // seria vigilância.
+            app.manage(crate::core::cameras::vigia::Sentinela::new());
 
             tray::build(app.handle())?;
             Ok(())
@@ -136,6 +145,15 @@ pub fn run() {
             commands::casa::set_device_hidden,
             commands::casa::ir_keys,
             commands::casa::send_ir_key,
+            commands::cameras::list_cameras,
+            commands::cameras::save_camera,
+            commands::cameras::remove_camera,
+            commands::cameras::start_cameras,
+            commands::cameras::camera_snapshot,
+            commands::cameras::probe_camera,
+            commands::cameras::move_camera,
+            commands::cameras::camera_subnets,
+            commands::cameras::scan_cameras,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,

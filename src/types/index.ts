@@ -11,6 +11,14 @@ export type {
   Tecla,
   Varredura,
 } from './casa'
+export type {
+  Achado,
+  Camera,
+  CamerasLigadas,
+  Direcao,
+  Sondagem,
+  TipoDeCamera,
+} from './cameras'
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'
 export type { Metricas } from './desempenho'
 export type { Aba, AreaDoNavegador, EstadoDoNavegador } from './navegador'

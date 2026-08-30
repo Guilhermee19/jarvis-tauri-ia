@@ -9,6 +9,7 @@ import {
   HouseIcon,
   MicIcon,
   SettingsIcon,
+  VigilanciaIcon,
 } from '@/components/ui/icons'
 import { cn } from '@/lib/utils'
 import { useChatStore, useJanelaStore, useSensorStore, type JanelaId } from '@/stores'
@@ -34,6 +35,7 @@ interface NavItem<Id> {
 const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'chat', label: 'Conversa', Icon: ChatIcon },
   { id: 'casa', label: 'Casa', Icon: HouseIcon },
+  { id: 'cameras', label: 'Câmeras', Icon: VigilanciaIcon },
   { id: 'desempenho', label: 'Desempenho', Icon: GaugeIcon },
   { id: 'navegador', label: 'Navegador', Icon: GlobeIcon },
   { id: 'conhecimento', label: 'Conhecimento', Icon: GrafoIcon },

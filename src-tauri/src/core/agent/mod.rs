@@ -27,6 +27,7 @@ use intent::Intent;
 
 use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
+use crate::core::cameras::{self, Catalogo};
 use crate::core::casa::chaveiro::{Busca, Chaveiro};
 use crate::core::lugar::Localizador;
 use crate::core::tempo;
@@ -96,6 +97,13 @@ pub enum AgentError {
 pub enum AcaoDeUi {
     WebcamOn,
     WebcamOff,
+    /// Abre a janela de câmeras já mostrando uma delas.
+    ///
+    /// Leva o **id** e não o nome falado: quem casou "garagem" com a câmera certa foi o
+    /// catálogo, aqui no Rust, e mandar o nome cru obrigaria a UI a repetir esse
+    /// casamento com uma lista que ela conhece pior.
+    CameraOn { camera: String },
+    CameraOff,
     /// Abre o widget de "tocando agora" com a faixa que acabou de começar.
     Tocando {
         faixa: music::Faixa,
@@ -135,12 +143,17 @@ pub struct Manutencao {
     pub resposta: String,
 }
 
+// Nove parâmetros pelo mesmo motivo do `send_message`: cada capacidade que o agente
+// alcança entra como um `&` próprio, e agrupá-las numa struct só para agradar o lint
+// criaria um tipo que existe por causa do lint.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle(
     http: &reqwest::Client,
     settings: &AppSettings,
     memoria: &Memoria,
     automation: &AutomationState,
     chaveiro: &Chaveiro,
+    catalogo: &Catalogo,
     localizador: &Localizador,
     dito: &str,
 ) -> Result<Outcome, AgentError> {
@@ -278,6 +291,105 @@ pub async fn handle(
                 "Ligando a câmera.".to_owned()
             } else {
                 "Câmera desligada.".to_owned()
+            }
+        }
+
+        // As câmeras de segurança. Como a webcam, a janela é da UI: o agente resolve
+        // QUAL câmera (que é a parte que só o catálogo sabe fazer) e pede.
+        Intent::CameraOn { camera } => {
+            log.acao(&acao);
+
+            match catalogo.achar_por_nome(camera) {
+                cameras::Busca::Uma(achada) => {
+                    ui = Some(AcaoDeUi::CameraOn {
+                        camera: achada.id.clone(),
+                    });
+
+                    memoria.registrar_acao(Acao {
+                        quando: Utc::now().timestamp_millis(),
+                        acao: verbo(&acao),
+                        alvo: argumentos(&acao),
+                        ok: true,
+                    });
+
+                    format!("Mostrando a {}.", achada.nome)
+                }
+                // Frase, e não erro: a tela mostraria "Comando falhou" no lugar de algo
+                // que ensina o que fazer. Mesma política da casa inteligente.
+                cameras::Busca::Nenhuma => nenhuma_camera(catalogo, camera),
+                cameras::Busca::Varias(nomes) => {
+                    format!("Tenho mais de uma com esse nome: {}. Qual delas?", nomes.join(", "))
+                }
+            }
+        }
+
+        Intent::CameraOff {} => {
+            log.acao(&acao);
+            ui = Some(AcaoDeUi::CameraOff);
+
+            "Fechando as câmeras.".to_owned()
+        }
+
+        // "tem alguém na garagem?" — o `look` da câmera de rede. A imagem vem do go2rtc,
+        // já em JPEG, e daí em diante é o mesmo caminho da webcam.
+        Intent::LookCamera { camera } => {
+            log.acao(&acao);
+
+            match catalogo.achar_por_nome(camera) {
+                cameras::Busca::Uma(achada) => {
+                    let relogio = Instant::now();
+                    let resultado =
+                        olhar_camera(http, settings, memoria, &achada, dito, &mut log).await;
+                    log.desfecho(
+                        resultado.as_ref().err().map(ToString::to_string),
+                        relogio.elapsed().as_millis(),
+                    );
+
+                    memoria.registrar_acao(Acao {
+                        quando: Utc::now().timestamp_millis(),
+                        acao: verbo(&acao),
+                        alvo: argumentos(&acao),
+                        ok: resultado.is_ok(),
+                    });
+
+                    resultado?
+                }
+                cameras::Busca::Nenhuma => nenhuma_camera(catalogo, camera),
+                cameras::Busca::Varias(nomes) => {
+                    format!("Em qual delas? Tenho {}.", nomes.join(", "))
+                }
+            }
+        }
+
+        Intent::CameraMove { camera, direcao } => {
+            log.acao(&acao);
+
+            match catalogo.achar_por_nome(camera) {
+                cameras::Busca::Uma(achada) => {
+                    let resultado = crate::commands::cameras::mover(http, &achada, *direcao).await;
+
+                    memoria.registrar_acao(Acao {
+                        quando: Utc::now().timestamp_millis(),
+                        acao: verbo(&acao),
+                        alvo: argumentos(&acao),
+                        ok: resultado.is_ok(),
+                    });
+
+                    match resultado {
+                        Ok(()) => format!(
+                            "Virei a {} para a {}.",
+                            achada.nome,
+                            direcao.como_texto()
+                        ),
+                        // A recusa da câmera sem PTZ já vem escrita e explica o motivo —
+                        // repetir a frase aqui daria duas redações da mesma causa.
+                        Err(erro) => erro,
+                    }
+                }
+                cameras::Busca::Nenhuma => nenhuma_camera(catalogo, camera),
+                cameras::Busca::Varias(nomes) => {
+                    format!("Qual delas eu viro? Tenho {}.", nomes.join(", "))
+                }
             }
         }
 
@@ -582,6 +694,72 @@ const LARGURA_DA_TELA: u32 = 1568;
 /// quem decide é o modelo de visão: ele devolve `buscar` preenchido quando identificou a
 /// coisa mas a resposta está fora da imagem (a data dos ingressos não está no cartaz).
 /// Vazio, a imagem já respondeu e não se gasta uma ida à internet.
+/// A frase para quando o nome dito não casou com câmera nenhuma.
+///
+/// Duas redações porque as causas são diferentes e as correções também: sem nenhuma
+/// câmera cadastrada, o que falta é o cadastro; com câmeras cadastradas, o que falhou
+/// foi o nome — e dizer QUAIS existem é o que transforma o erro em instrução.
+fn nenhuma_camera(catalogo: &Catalogo, pedida: &str) -> String {
+    if catalogo.vazio() {
+        return "Não tenho câmera nenhuma cadastrada ainda. Adicione uma no painel de \
+                câmeras, com o endereço dela na rede."
+            .to_owned();
+    }
+
+    let nomes: Vec<String> = catalogo
+        .todas()
+        .into_iter()
+        .map(|camera| camera.nome)
+        .collect();
+
+    let pedida = pedida.trim();
+    if pedida.is_empty() {
+        return format!("Qual câmera? Tenho {}.", nomes.join(", "));
+    }
+
+    format!("Não tenho nenhuma câmera chamada \"{pedida}\". Tenho {}.", nomes.join(", "))
+}
+
+/// Olha uma câmera de segurança e responde a pergunta.
+///
+/// Gêmeo do [`olhar`], e separado dele de propósito: a origem da imagem é outra (o
+/// go2rtc, não o `nokhwa`) e não há `Fonte` a resolver — quem escolhe a câmera é o
+/// catálogo, antes de chegar aqui. O que os dois compartilham é o que importa: daqui
+/// para a frente é [`vision::ver`] igual, com o mesmo par modelo-local/Claude e o mesmo
+/// campo `buscar`.
+async fn olhar_camera(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    memoria: &Memoria,
+    camera: &cameras::Camera,
+    pergunta: &str,
+    log: &mut Log,
+) -> Result<String, AgentError> {
+    let imagem = cameras::go2rtc::frame_data_url(http, &camera.id)
+        .await
+        .map_err(|erro| AgentError::SemCamera(erro.to_string()))?;
+
+    let visao = vision::ver(
+        http,
+        settings,
+        &vision::Imagem::do_data_url(&imagem),
+        pergunta,
+        vision::Fonte::Camera,
+    )
+    .await?;
+
+    let termo = visao.buscar.trim();
+    if termo.is_empty() {
+        return Ok(visao.resposta);
+    }
+
+    // Mesmo desfecho do [`olhar`]: o modelo identificou a coisa, mas a resposta está
+    // fora da imagem. Vale para o modelo de um carro parado na frente tanto quanto para
+    // um cartaz na webcam.
+    let consulta = format!("{termo} {}", pergunta.trim());
+    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), log).await)
+}
+
 async fn olhar(
     http: &reqwest::Client,
     settings: &AppSettings,
@@ -604,6 +782,18 @@ async fn olhar(
             .map_err(|erro| AgentError::SemCamera(erro.to_string()))?,
         vision::Fonte::Tela => automation::capture_screen(None, Some(LARGURA_DA_TELA))
             .map_err(|erro| AgentError::SemTela(erro.to_string()))?,
+        // Câmera de rede não passa por aqui: ela não tem dispositivo local para abrir, e
+        // quem a atende é o [`olhar_camera`], que já recebeu a câmera resolvida. Só se
+        // chega neste braço com um `Intent::Look { fonte: "camera" }` — que o schema não
+        // deixa o modelo emitir, porque `fonte` é um enum de três valores e este não
+        // está entre eles. É erro em vez de `unreachable!`: uma frase estranha do modelo
+        // não pode derrubar o app.
+        vision::Fonte::Camera => {
+            return Err(AgentError::SemCamera(
+                "para olhar uma câmera de segurança eu preciso saber qual — diga o nome dela"
+                    .to_owned(),
+            ))
+        }
     };
 
     let visao = vision::ver(
@@ -791,6 +981,10 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::WebcamOn {}
         | Intent::WebcamOff {}
         | Intent::Look { .. }
+        | Intent::CameraOn { .. }
+        | Intent::CameraOff {}
+        | Intent::LookCamera { .. }
+        | Intent::CameraMove { .. }
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. }
