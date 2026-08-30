@@ -20,6 +20,7 @@ export type {
   TipoDeCamera,
 } from './cameras'
 export type { ChatMessage, ChatResponse, ChatRole } from './chat'
+export type { PessoaConhecida, QuemEsta } from './rostos'
 export type { Metricas } from './desempenho'
 export type { Aba, AreaDoNavegador, EstadoDoNavegador } from './navegador'
 export type { AppSettings, MotorDeVoz, Persona } from './settings'

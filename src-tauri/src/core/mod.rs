@@ -11,6 +11,7 @@ pub mod casa;
 pub mod chat;
 pub mod memory;
 pub mod music;
+pub mod rostos;
 pub mod search;
 pub mod lugar;
 pub mod services;

@@ -16,6 +16,7 @@ import { TitleBar } from '@/components/tray-window/TitleBar'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useNowPlaying } from '@/hooks/useNowPlaying'
 import { usePersona } from '@/hooks/usePersona'
+import { useSaudacao } from '@/hooks/useSaudacao'
 import { useSensorEvents } from '@/hooks/useSensorEvents'
 import { useTrayEvents } from '@/hooks/useTrayEvents'
 
@@ -25,6 +26,9 @@ export default function HomePage() {
   useTrayEvents()
   useSensorEvents()
   useNowPlaying()
+  // Depois do `useSensorEvents`: a saudação pode pedir o cadastro de um rosto, e quem
+  // escuta esse pedido é o hook de eventos — que precisa já estar assinado.
+  useSaudacao()
 
   return (
     // Sem `bg-base` aqui de propósito: o fundo do `main` seria pintado por cima

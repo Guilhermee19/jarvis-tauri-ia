@@ -9,8 +9,10 @@ import {
   type MudouDeEndereco,
   type UiAction,
 } from '@/lib/tauri'
+import { cadastrarRosto } from './useSaudacao'
 import {
   useCamerasStore,
+  useChatStore,
   useJanelaStore,
   useNavegadorStore,
   useNowPlayingStore,
@@ -36,6 +38,7 @@ export function useSensorEvents() {
   const fecharJanela = useJanelaStore((state) => state.fechar)
   const focarCamera = useCamerasStore((state) => state.focar)
   const registrarAlerta = useCamerasStore((state) => state.registrarAlerta)
+  const anunciar = useChatStore((state) => state.anunciar)
 
   useEffect(() => {
     const pendentes: UnlistenFn[] = []
@@ -89,6 +92,12 @@ export function useSensorEvents() {
           case 'camera-off':
             fecharJanela('cameras')
             break
+          // "eu sou o Guilherme". A câmera é da UI, então é ela que tira a foto — e o
+          // resultado volta como fala, porque quem perguntou "quem é você?" espera uma
+          // confirmação, não um silêncio.
+          case 'cadastrar-rosto':
+            void cadastrarRosto(acao.nome).then(anunciar)
+            break
           case 'tocando':
             mostrarFaixa(acao.faixa)
             break
@@ -121,5 +130,6 @@ export function useSensorEvents() {
     fecharJanela,
     focarCamera,
     registrarAlerta,
+    anunciar,
   ])
 }

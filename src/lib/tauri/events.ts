@@ -77,6 +77,8 @@ export type UiAction =
   /** `camera` é o **id** da câmera, já resolvido pelo catálogo no Rust — não o nome falado. */
   | { tipo: 'camera-on'; camera: string }
   | { tipo: 'camera-off' }
+  /** Guarda o rosto de quem está na webcam agora sob este nome ("eu sou o Guilherme"). */
+  | { tipo: 'cadastrar-rosto'; nome: string }
   | { tipo: 'tocando'; faixa: Faixa }
   | { tipo: 'abrir-site'; url: string }
   | { tipo: 'pesquisar'; query: string }

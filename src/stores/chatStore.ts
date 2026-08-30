@@ -1,5 +1,12 @@
 import { create } from 'zustand'
-import { clearHistory, getHistory, sendMessage, speakText, stopSpeaking } from '@/lib/tauri'
+import {
+  announce,
+  clearHistory,
+  getHistory,
+  sendMessage,
+  speakText,
+  stopSpeaking,
+} from '@/lib/tauri'
 import { useSettingsStore } from './settingsStore'
 import { vozDaPersona } from '@/types'
 import type { ChatMessage } from '@/types'
@@ -31,6 +38,15 @@ interface ChatState {
    * Devolve o texto da resposta, ou string vazia se nada foi enviado ou algo falhou.
    */
   send: (content: string) => Promise<string>
+  /**
+   * O Jarvis dizendo algo por iniciativa própria — hoje, a saudação de quando o app abre.
+   *
+   * Diferente do {@link ChatState.send} em duas coisas: não há mensagem do usuário antes,
+   * e não passa pelo agente (não há o que interpretar numa frase que o app compôs). O que
+   * ele compartilha é o que importa: a frase é gravada no backend e falada com a mesma
+   * voz, pelo mesmo caminho — sem isso, a saudação soaria de outro jeito que o resto.
+   */
+  anunciar: (texto: string) => Promise<void>
   clear: () => Promise<void>
 }
 
@@ -116,6 +132,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isTyping: false, error: describeError(error) })
       return ''
     }
+  },
+
+  anunciar: async (texto: string) => {
+    const frase = texto.trim()
+    if (!frase) return
+
+    try {
+      await announce(frase)
+      await get().loadHistory()
+    } catch (error) {
+      // A gravação falhou, mas a fala ainda vale: ouvir "bom dia, Guilherme" sem a linha
+      // na conversa é melhor que um erro vermelho na abertura do app.
+      set({ error: describeError(error) })
+    }
+
+    // Depois do `loadHistory`, pela mesma razão do `send`: a frase aparece escrita e
+    // ENTÃO ele começa a falar.
+    await falar(frase, set, get().isSpeaking)
   },
 
   clear: async () => {

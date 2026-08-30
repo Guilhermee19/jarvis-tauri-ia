@@ -19,6 +19,26 @@ use crate::state::AppState;
 /// desligar a câmera. Escutado por `src/hooks/useSensorEvents.ts`.
 const UI_ACTION_EVENT: &str = "jarvis://ui-action";
 
+/// Põe uma fala do Jarvis no histórico, sem ter havido pergunta.
+///
+/// Existe para a saudação de quando o app abre — a única coisa que ele diz por conta
+/// própria. **Vai para a `Memoria` e não só para a tela**: o histórico mora no backend, e
+/// uma mensagem empurrada só no frontend sumiria no `loadHistory` seguinte, deixando a
+/// conversa começar com a resposta do usuário a uma pergunta que não está mais lá.
+///
+/// Não passa pelo agente de propósito: não há nada a interpretar numa frase que o próprio
+/// app compôs, e mandá-la ao roteador gastaria uma chamada ao modelo para nada.
+#[tauri::command]
+pub fn announce(content: String, memoria: State<'_, Memoria>) -> Result<(), String> {
+    let content = content.trim().to_owned();
+    if content.is_empty() {
+        return Err("mensagem vazia".to_owned());
+    }
+
+    memoria.push_message(ChatMessage::new(Role::Assistant, content));
+    Ok(())
+}
+
 #[tauri::command]
 // Oito parâmetros porque no Tauri a lista de argumentos É o mecanismo de injeção: cada
 // `State` que o comando precisa entra como um parâmetro, e agrupá-los numa struct só

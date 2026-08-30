@@ -18,3 +18,14 @@ export function getHistory(): Promise<ChatMessage[]> {
 export function clearHistory(): Promise<void> {
   return call<void>('clear_history')
 }
+
+/**
+ * Põe uma fala do Jarvis no histórico, sem ter havido pergunta.
+ *
+ * É a saudação de quando o app abre — a única coisa que ele diz por conta própria. Vai
+ * para o backend e não só para a tela: uma mensagem empurrada apenas no frontend sumiria
+ * no `getHistory` seguinte.
+ */
+export function announce(content: string): Promise<void> {
+  return call<void>('announce', { content })
+}

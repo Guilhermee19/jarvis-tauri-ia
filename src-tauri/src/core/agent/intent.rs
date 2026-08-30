@@ -145,6 +145,20 @@ pub enum Intent {
     Forget {
         about: String,
     },
+    /// "eu sou o Guilherme", "sou a Ana", "meu nome é Bruno".
+    ///
+    /// Guarda o ROSTO de quem está na webcam sob esse nome, para o Jarvis saudar pelo
+    /// nome na próxima abertura. É a resposta natural ao "não te reconheci, quem é você?"
+    /// que ele faz quando vê alguém desconhecido — mas funciona a qualquer momento, e é
+    /// por isso que é um verbo e não um modo de conversa: um estado "esperando o nome"
+    /// prenderia a próxima frase mesmo quando ela fosse sobre outra coisa.
+    ///
+    /// **Campo `pessoa`, e não `name`.** O `name` do [`Intent::OpenApp`] quer dizer "nome
+    /// de um programa"; um campo com dois significados é o tipo de ambiguidade que um 3B
+    /// resolve errado — a mesma lição que separou `aparelho` de `target`.
+    SouEu {
+        pessoa: String,
+    },
     /// "meu jogo é o steam", "quando eu falar trabalho abre o code". O que faz o
     /// roteador melhorar com o uso.
     Alias {
@@ -206,7 +220,8 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 27] = [
+const ACOES: [&str; 28] = [
+    "sou_eu",
     "smart_home",
     "smart_color",
     "smart_bright",
@@ -262,6 +277,7 @@ pub fn schema() -> serde_json::Value {
             "ligar":    { "type": "boolean" },
             "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
             "camera":   { "type": "string" },
+            "pessoa":   { "type": "string" },
             // Enum FECHADO, e é o que permite `camera_move` ser um verbo só em vez de
             // quatro: a gramática derivada do schema não deixa o modelo emitir outra
             // coisa, então não há campo livre para ele errar.
@@ -361,8 +377,50 @@ pub async fn interpret(
 
     // Dois parses: o JSON da API traz o JSON da ação como STRING dentro de `content`.
     let texto = pedir(http, url, model, &corpo).await?;
-    serde_json::from_str(texto.trim())
-        .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))
+    let acao: Intent = serde_json::from_str(texto.trim())
+        .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))?;
+
+    Ok(sem_confundir_pergunta(acao, frase))
+}
+
+/// Desfaz o único erro do roteador que o prompt não consegue corrigir.
+///
+/// **Medido contra o 3B**: "quem é o Guilherme?" sai como `sou_eu` mesmo com a regra
+/// escrita e um exemplo idêntico entre os poucos exemplos do prompt. Ele vê um nome
+/// próprio ao lado do verbo "ser" e casa com o padrão, sem pesar o "quem" nem o "?".
+///
+/// Insistir no prompt sairia caro: cada frase acrescentada ali desloca o balanço de
+/// comando contra conversa que o [`system_prompt`] documenta. E o custo do erro é alto —
+/// `sou_eu` GRAVA o rosto de quem está na webcam sob aquele nome, então uma pergunta
+/// sobre outra pessoa registraria você com o nome errado, calado.
+///
+/// Vale só para o `sou_eu`: é o único verbo cuja frase característica ("sou o X") é
+/// gramaticalmente idêntica à de uma pergunta sobre um terceiro. Os outros não têm esse
+/// gêmeo, e uma regra geral de "pergunta vira reply" quebraria o `look_camera` ("tem
+/// alguém na garagem?"), que é uma pergunta de verdade.
+fn sem_confundir_pergunta(acao: Intent, frase: &str) -> Intent {
+    match &acao {
+        Intent::SouEu { .. } if e_pergunta(frase) => Intent::Reply {},
+        _ => acao,
+    }
+}
+
+/// Se a frase pergunta em vez de afirmar.
+///
+/// O ponto de interrogação sozinho não basta: quem fala com o assistente por voz não
+/// pontua, e o Whisper nem sempre põe. Por isso o pronome interrogativo no COMEÇO conta
+/// igual — e só no começo, porque "sou o Bruno, quem é você?" é uma apresentação.
+fn e_pergunta(frase: &str) -> bool {
+    let limpa = crate::core::memory::normalizar(frase);
+    let limpa = limpa.trim();
+
+    if frase.trim_end().ends_with('?') {
+        return true;
+    }
+
+    ["quem ", "qual ", "quais "]
+        .iter()
+        .any(|pronome| limpa.starts_with(pronome))
 }
 
 fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
@@ -430,6 +488,10 @@ look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
                   Tempo, chuva e temperatura NÃO são web_search — são weather, mesmo com
                   cidade no meio da frase.
+sou_eu            ele está DIZENDO QUEM ELE É — \"eu sou o Guilherme\", \"sou a Ana\",
+                  \"meu nome é Bruno\". `pessoa` = só o primeiro nome, sem \"eu sou\".
+                  Serve para eu guardar o rosto dele. NÃO use quando ele fala de
+                  OUTRA pessoa (\"o Bruno chegou\") — isso é reply.
 remember          ele MANDOU guardar algo. `fact` = o que guardar, em terceira pessoa.
 forget            ele mandou esquecer algo. `about` = o assunto a apagar.
 smart_home        LIGAR ou DESLIGAR um aparelho da casa (luz, lâmpada, tomada).
@@ -452,11 +514,17 @@ Perguntas se dividem em duas: sobre o MUNDO (fatos, pessoas, coisas, notícias) 
 web_search; sobre ELE ou sobre vocês dois vai para reply, porque a resposta está na
 memória e não na internet.
 
-\"câmera\" também se divide em duas, e são aparelhos diferentes:
-- Tem NOME DE LUGAR junto (garagem, portão, quintal, sala, frente, fundos, rua) ou fala
-  de vigiar a casa -> é câmera de SEGURANÇA: camera_on, look_camera, camera_move.
-- Não tem lugar nenhum, ou fala do que ELE está segurando/mostrando -> é a WEBCAM do
-  computador: webcam_on, webcam_off, look.
+\"câmera\" também se divide em duas, e são aparelhos diferentes. **Olhe o VERBO primeiro:**
+- \"LIGAR\" ou \"DESLIGAR\" a câmera -> é sempre a WEBCAM do computador: webcam_on,
+  webcam_off. Ninguém liga uma câmera de segurança, ela já está ligada.
+- \"MOSTRAR\", \"ABRIR\", \"VER\" + nome de LUGAR (garagem, portão, quintal, sala, frente,
+  fundos, rua) ou a palavra no PLURAL (\"as câmeras\") -> é câmera de SEGURANÇA:
+  camera_on, look_camera, camera_move.
+- Falar do que ELE está segurando ou mostrando -> WEBCAM: look.
+
+sou_eu é só quando ele AFIRMA quem ELE é: a frase começa com \"eu sou\", \"sou\" ou
+\"meu nome é\". PERGUNTA com \"quem\" nunca é sou_eu — \"quem é o Guilherme?\" é reply,
+e falar de outra pessoa (\"o Bruno chegou\") também.
 
 \"abre o X\" também se divide em duas, e errar aqui não abre nada:
 - X é um SITE ou serviço da web (youtube, gmail, netflix, globo, chatgpt, instagram)
@@ -490,6 +558,8 @@ Exemplos de COMANDO:
 \"mostra a garagem\"                  -> {{\"action\":\"camera_on\",\"camera\":\"garagem\"}}
 \"abre a câmera do portão\"           -> {{\"action\":\"camera_on\",\"camera\":\"portão\"}}
 \"me mostra as câmeras\"              -> {{\"action\":\"camera_on\",\"camera\":\"\"}}
+\"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
+\"quem é o Guilherme?\"               -> {{\"action\":\"reply\"}}
 \"fecha as câmeras\"                  -> {{\"action\":\"camera_off\"}}
 \"tem alguém na garagem?\"            -> {{\"action\":\"look_camera\",\"camera\":\"garagem\"}}
 \"o carro tá na frente?\"             -> {{\"action\":\"look_camera\",\"camera\":\"frente\"}}
@@ -501,6 +571,8 @@ Exemplos de COMANDO:
 \"o que tem na minha tela?\"          -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
 \"que erro é esse aí na tela\"        -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
 \"lê isso pra mim\"                   -> {{\"action\":\"look\",\"fonte\":\"tela\"}}
+\"eu sou o Guilherme\"                -> {{\"action\":\"sou_eu\",\"pessoa\":\"Guilherme\"}}
+\"meu nome é Ana\"                    -> {{\"action\":\"sou_eu\",\"pessoa\":\"Ana\"}}
 \"lembra que eu acordo 6h30\"         -> {{\"action\":\"remember\",\"fact\":\"Acorda 6h30.\"}}
 \"esquece a academia\"                -> {{\"action\":\"forget\",\"about\":\"academia\"}}
 \"meu jogo é o steam\"                -> {{\"action\":\"alias\",\"nickname\":\"meu jogo\",\"target\":\"steam\"}}
@@ -623,7 +695,6 @@ mod tests {
                     local: "Lisboa".to_owned(),
                 },
             ),
-
             (
                 r#"{"action":"remember","fact":"Acorda 6h30."}"#,
                 Intent::Remember {
@@ -694,6 +765,12 @@ mod tests {
                 Intent::CameraMove {
                     camera: "quintal".to_owned(),
                     direcao: cameras::onvif::Direcao::Esquerda,
+                },
+            ),
+            (
+                r#"{"action":"sou_eu","pessoa":"Guilherme"}"#,
+                Intent::SouEu {
+                    pessoa: "Guilherme".to_owned(),
                 },
             ),
             (r#"{"action":"reply"}"#, Intent::Reply {}),
@@ -887,6 +964,15 @@ mod tests {
             "liga a câmera",
             "desliga a câmera",
             "que mouse é esse?",
+            // Apresentar-se: vira `sou_eu`, para o rosto ser guardado.
+            "eu sou o Guilherme",
+            "meu nome é Ana",
+            "sou o Bruno",
+            // A fronteira do `sou_eu`: falar de OUTRA pessoa não é se apresentar, e
+            // guardar o rosto de quem está na câmera com o nome de um terceiro é o erro
+            // mais confuso que essa feature pode cometer.
+            "o Bruno chegou",
+            "quem é o Guilherme?",
             // As armadilhas: nada disso é câmera, e nenhuma pode sair com `camera`
             // preenchido nem virar um verbo de câmera.
             "que horas são?",
@@ -920,6 +1006,69 @@ mod tests {
                     }
                 }
             });
+    }
+
+    /// O guarda contra o único erro que o prompt não corrigiu — e o custo dele é gravar
+    /// o rosto de quem está na webcam sob o nome de outra pessoa, calado.
+    #[test]
+    fn pergunta_sobre_alguem_nao_vira_apresentacao() {
+        let sou_eu = || Intent::SouEu {
+            pessoa: "Guilherme".to_owned(),
+        };
+
+        // O caso medido: o 3B devolve `sou_eu` para isto mesmo com exemplo no prompt.
+        assert_eq!(
+            sem_confundir_pergunta(sou_eu(), "quem é o Guilherme?"),
+            Intent::Reply {}
+        );
+        // Sem pontuação, que é como a voz chega depois do Whisper.
+        assert_eq!(
+            sem_confundir_pergunta(sou_eu(), "quem e o Guilherme"),
+            Intent::Reply {}
+        );
+
+        // A apresentação de verdade passa intacta.
+        assert_eq!(
+            sem_confundir_pergunta(sou_eu(), "eu sou o Guilherme"),
+            sou_eu()
+        );
+        assert_eq!(
+            sem_confundir_pergunta(sou_eu(), "meu nome é Guilherme"),
+            sou_eu()
+        );
+    }
+
+    /// Uma pergunta que segue a apresentação não pode anular o cadastro: o "quem" só
+    /// conta no COMEÇO da frase.
+    #[test]
+    fn pronome_no_meio_da_frase_nao_conta() {
+        let acao = Intent::SouEu {
+            pessoa: "Bruno".to_owned(),
+        };
+
+        assert_eq!(
+            sem_confundir_pergunta(acao.clone(), "sou o Bruno, e você quem é"),
+            acao
+        );
+    }
+
+    /// O guarda vale SÓ para o `sou_eu`. Uma regra geral de "pergunta vira reply"
+    /// quebraria o `look_camera`, cuja frase típica é justamente uma pergunta.
+    #[test]
+    fn o_guarda_nao_encosta_nos_outros_verbos() {
+        let olhar = Intent::LookCamera {
+            camera: "garagem".to_owned(),
+        };
+        assert_eq!(
+            sem_confundir_pergunta(olhar.clone(), "tem alguém na garagem?"),
+            olhar
+        );
+
+        let tempo = Intent::Weather {};
+        assert_eq!(
+            sem_confundir_pergunta(tempo.clone(), "qual o tempo hoje?"),
+            tempo
+        );
     }
 
     /// O laço de aprendizado: sem os apelidos no prompt, o roteador não tem como saber

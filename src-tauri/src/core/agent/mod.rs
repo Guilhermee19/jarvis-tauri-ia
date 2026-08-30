@@ -104,6 +104,12 @@ pub enum AcaoDeUi {
     /// casamento com uma lista que ela conhece pior.
     CameraOn { camera: String },
     CameraOff,
+    /// Guarda o rosto de quem está na webcam AGORA sob este nome.
+    ///
+    /// Pedido à UI pela mesma razão da webcam: quem é dono da câmera é ela. E há uma
+    /// segunda razão aqui — o cadastro precisa de uma foto TIRADA NA HORA, e a UI é quem
+    /// sabe se o preview já está aberto (aproveita o quadro) ou se precisa acender a luz.
+    CadastrarRosto { nome: String },
     /// Abre o widget de "tocando agora" com a faixa que acabou de começar.
     Tocando {
         faixa: music::Faixa,
@@ -291,6 +297,30 @@ pub async fn handle(
                 "Ligando a câmera.".to_owned()
             } else {
                 "Câmera desligada.".to_owned()
+            }
+        }
+
+        // "eu sou o Guilherme". O rosto é guardado pela UI, que é dona da câmera — aqui
+        // se resolve só o nome e a frase de volta.
+        Intent::SouEu { pessoa } => {
+            log.acao(&acao);
+
+            let nome = pessoa.trim();
+            if nome.is_empty() {
+                "Não peguei o nome. Pode repetir?".to_owned()
+            } else {
+                ui = Some(AcaoDeUi::CadastrarRosto {
+                    nome: nome.to_owned(),
+                });
+
+                memoria.registrar_acao(Acao {
+                    quando: Utc::now().timestamp_millis(),
+                    acao: verbo(&acao),
+                    alvo: argumentos(&acao),
+                    ok: true,
+                });
+
+                format!("Prazer, {nome}. Vou lembrar do seu rosto.")
             }
         }
 
@@ -985,6 +1015,7 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::CameraOff {}
         | Intent::LookCamera { .. }
         | Intent::CameraMove { .. }
+        | Intent::SouEu { .. }
         | Intent::Remember { .. }
         | Intent::Forget { .. }
         | Intent::Alias { .. }

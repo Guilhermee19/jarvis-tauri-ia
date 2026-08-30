@@ -60,6 +60,22 @@ sha2 = "0.10"
 # Só o `sleep` do polling de serviço. Já vem no lock (reqwest, tauri) — declarar não
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
 tokio = { version = "1", features = ["time"] }
+# **Reconhecimento facial**, para o Jarvis saber QUEM está na frente da webcam.
+#
+# O modelo de visão que ele já usa não serve para isto: um VLM descreve a cena ("um homem
+# de camiseta escura") mas não carrega identidades, e responde "é a mesma pessoa?" com
+# confiança e sem consistência — o modo de falha caro seria chamar você pelo nome errado.
+# Reconhecer rosto é outra técnica: detectar, recortar alinhado, e transformar num vetor
+# de 128 números que se compara por distância. É o que o Windows Hello faz.
+#
+# **Versões pregadas com `=`, e o motivo é o mesmo da `tuya-rs` logo acima.** O `ort` a
+# partir do rc.10 exige rustc 1.81, e do rc.13 exige 1.88; o rc.9 pede 1.70 e cabe no
+# 1.77.2 que este projeto declara. O `ort-sys` precisa do pino JUNTO: sem ele o Cargo
+# resolve o rc.13 mesmo com o `ort` preso no rc.9, e o build script daquela versão não
+# compila com o `ureq` atual (`tls_config` não existe mais) — o erro sai em `ort-sys`, que
+# é o último lugar onde alguém procuraria.
+ort = { version = "=2.0.0-rc.9", features = ["download-binaries"] }
+ort-sys = "=2.0.0-rc.9"
 
 [dev-dependencies]
 # Só para as ferramentas `#[ignore]` que conversam com a nuvem: elas precisam de um

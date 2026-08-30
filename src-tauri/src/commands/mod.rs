@@ -10,6 +10,7 @@ pub mod casa;
 pub mod conhecimento;
 pub mod chat;
 pub mod navegador;
+pub mod rostos;
 pub mod settings;
 pub mod system;
 pub mod voice;

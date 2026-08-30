@@ -92,6 +92,11 @@ pub fn run() {
             // vive daí em diante — vigilância que só funciona com o painel aberto não
             // seria vigilância.
             app.manage(crate::core::cameras::vigia::Sentinela::new());
+            // Quem ele conhece de rosto, e os modelos que fazem esse reconhecimento.
+            // Os modelos NÃO são carregados aqui: são 37 MB que só quem usa a saudação
+            // deve pagar, e a primeira pergunta é que os traz para a memória.
+            app.manage(crate::core::rostos::Conhecidos::new(&config_dir));
+            app.manage(crate::core::rostos::Reconhecedor::new());
 
             tray::build(app.handle())?;
             Ok(())
@@ -101,6 +106,7 @@ pub fn run() {
             commands::chat::send_message,
             commands::chat::get_history,
             commands::chat::clear_history,
+            commands::chat::announce,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::system::show_window,
@@ -154,6 +160,10 @@ pub fn run() {
             commands::cameras::move_camera,
             commands::cameras::camera_subnets,
             commands::cameras::scan_cameras,
+            commands::rostos::who_is_there,
+            commands::rostos::enroll_face,
+            commands::rostos::list_people,
+            commands::rostos::forget_person,
             commands::automation::open_webcam,
             commands::automation::close_webcam,
             commands::automation::is_webcam_open,
