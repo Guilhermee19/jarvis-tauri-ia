@@ -96,11 +96,6 @@ pub async fn importar(
         return Err(NuvemError::SemCredencial);
     }
 
-    let semente = semente.trim();
-    if semente.is_empty() {
-        return Err(NuvemError::SemSemente);
-    }
-
     let base = base(regiao);
 
     #[derive(Deserialize)]
@@ -147,10 +142,16 @@ pub async fn importar(
 
     // A semente da PRÓPRIA conta é melhor que a da rede: um aparelho que o projeto
     // acabou de listar está garantidamente visível para ele.
-    let semente = associados
-        .first()
-        .map(|cru| cru.id.clone())
-        .unwrap_or_else(|| semente.to_owned());
+    // Sem semente nenhuma o caminho de recurso não existe, e o erro é aqui e não na
+    // entrada: o caminho bom não precisa de id de ninguém, e barrar antes dele impedia
+    // importar de um PC fora da rede da casa — justamente onde só a nuvem responde.
+    let semente = match associados.first() {
+        Some(cru) => cru.id.clone(),
+        None => match semente.trim() {
+            "" => return Err(NuvemError::SemSemente),
+            id => id.to_owned(),
+        },
+    };
 
     #[derive(Deserialize)]
     struct Dono {

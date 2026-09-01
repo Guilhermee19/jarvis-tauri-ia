@@ -386,8 +386,10 @@ export const useCasaStore = create<CasaState>((set, get) => ({
       // sempre — o botão manual continua ali para quando você tiver resolvido.
       if (get().importFalhou) return
 
-      // Todo mundo já tem nome: não há o que buscar.
-      if (get().aparelhos.every((aparelho) => aparelho.nome !== null)) return
+      // Todo mundo já tem nome: não há o que buscar. Lista vazia não conta: aí a nuvem é
+      // a única fonte que sobrou, e é justamente quando mais precisa rodar.
+      const conhecidos = get().aparelhos
+      if (conhecidos.length > 0 && conhecidos.every((aparelho) => aparelho.nome !== null)) return
     }
 
     set({ importando: true, erro: null })

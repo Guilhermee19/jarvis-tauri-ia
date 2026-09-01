@@ -50,9 +50,6 @@ export function CasaPanel() {
     return pararRonda
   }, [iniciarRonda, pararRonda])
 
-  // Só faz sentido oferecer a importação quando há a quem dar nome: a busca na nuvem
-  // parte de um id que a varredura viu.
-  const podeImportar = aparelhos.some((aparelho) => !aparelho.id.startsWith('desconhecido@'))
   // Dois motivos diferentes para não ter nome, e só um deles a importação resolve. O
   // `desconhecido@` é um aparelho cujo anúncio não abriu: ele não tem id de Tuya, então a
   // nuvem nunca vai saber quem é. Os outros existem lá e podem estar sem nome LÁ também.
@@ -97,20 +94,18 @@ export function CasaPanel() {
           Tuya (e aí ela para de tentar sozinha, para não repetir o mesmo erro a cada
           30 s), e quando você pareia um aparelho de novo — o que TROCA a chave dele sem
           que nada na tela mude. */}
-      {podeImportar ? (
-        <button
-          type="button"
-          onClick={() => void importar()}
-          disabled={importando}
-          className="text-muted hover:text-content self-start text-[11px] underline underline-offset-2 disabled:opacity-50"
-        >
-          {importando
-            ? 'Falando com a Tuya…'
-            : semNome > 0
-              ? `Importar nome e chave de ${semNome === 1 ? 'um aparelho' : `${semNome} aparelhos`}`
-              : 'Reimportar nomes e chaves da nuvem'}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={() => void importar()}
+        disabled={importando}
+        className="text-muted hover:text-content self-start text-[11px] underline underline-offset-2 disabled:opacity-50"
+      >
+        {importando
+          ? 'Falando com a Tuya…'
+          : semNome > 0
+            ? `Importar nome e chave de ${semNome === 1 ? 'um aparelho' : `${semNome} aparelhos`}`
+            : 'Reimportar nomes e chaves da nuvem'}
+      </button>
 
       {/* Sem isto, importar não dá sinal nenhum quando não há nome novo para trazer — e
           um botão que parece não fazer nada é indistinguível de um botão quebrado. */}
