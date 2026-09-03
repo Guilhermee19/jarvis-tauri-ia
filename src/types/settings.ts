@@ -80,6 +80,14 @@ export interface AppSettings {
   ollamaUrl: string
   /** Modelo que interpreta, conversa E enxerga. Vazio DESLIGA o intérprete. */
   ollamaModel: string
+  /**
+   * Modelo que RESPONDE com o resultado da busca. Vazio usa o mesmo de cima.
+   *
+   * O principal precisa ser multimodal (ele também enxerga a webcam), e o que cabe nisso é
+   * pequeno — pequeno o bastante para completar a resposta com o que "lembra" mesmo com a
+   * fonte na frente. Resumir busca não precisa de visão, então pode usar um maior aqui.
+   */
+  ollamaModelBusca: string
   /** Pasta da memória em markdown. Vazio = `memoria/` no projeto. */
   memoriaPath: string
   /** Chave do Brave Search. Vazio = Wikipedia (sem chave, mas só enciclopédia). */
@@ -170,6 +178,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cidade: '',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'qwen2.5vl:3b',
+  ollamaModelBusca: '',
   memoriaPath: '',
   braveApiKey: '',
   spotifyClientId: '',

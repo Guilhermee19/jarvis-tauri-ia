@@ -876,6 +876,27 @@ manchetes na frente, perguntado "quanto está a Bitcoin hoje?", os dois recusam 
 certos, porque manchete não é cotação. Preço quer o caminho do `tempo.rs`: verbo próprio,
 API de verdade, frase montada em Rust.
 
+**A pergunta só chega na busca se o roteador mandar, e ele desviava justo onde não devia.**
+De 12 perguntas sobre o mundo, três iam para `reply` e a resposta saía da cabeça do modelo,
+velha e sem fonte: "quando lança o gta 6?", "quem é o presidente da argentina?" e "como
+funciona um motor elétrico?" — as três onde ele ACHA que sabe. O prompt do roteador ganhou
+a regra "VOCÊ NÃO SABE FATOS DO MUNDO (…) mesmo que você ache que sabe a resposta" e três
+exemplos do mesmo feitio: passou a **12/12**, com a bateria de comando e conversa intacta
+(15/16 antes e depois, mesmo caso único).
+
+**E aí aparece o limite do modelo pequeno.** Com as fontes na frente — duas manchetes
+citando Milei —, perguntado quem é o presidente da Argentina, o `qwen2.5vl:3b` completou a
+resposta com o que lembrava em **8 de 8 tentativas**, uma delas afirmando "Alberto
+Fernández", que CONTRADIZ a fonte. Três prompts diferentes foram testados: o mais severo
+trocou a invenção por mudez ("Não achou.") em quase tudo, que é outro jeito de não
+responder. Com os mesmos trechos, o `mistral` respondeu "no momento atual, é Milei" e o
+`llama3` admitiu que os trechos não diziam o cargo.
+
+Daí o campo **"Modelo que responde a busca"**: o principal precisa ser multimodal (é ele
+que enxerga a webcam) e por isso é pequeno; resumir busca não precisa de visão. Vazio usa o
+principal, que é o comportamento de sempre — preenchido, os dois ficam carregados, e isso
+custa VRAM.
+
 **Sem a chave, ele admite que não sabe.** Um teste com temperatura 0.2 devolveu uma
 receita de pão de queijo inventada, com tempo de forno que não estava em trecho nenhum.
 A 0, e com a regra "se pedirem passo a passo e os trechos só tiverem informação geral,

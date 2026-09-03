@@ -1,10 +1,10 @@
 ---
 tipo: fato
-atualizado: 2026-08-29
+atualizado: 2026-09-03
 ---
 
-Stan Lee, um escritor, editor, publicitário, produtor, diretor e empresário norte-americano, desempenhou papéis-chave na indústria das histórias em quadrinhos e nos cinemas da Marvel Comics. Ele foi editor-chefe e presidente da Marvel Comics antes de deixar a empresa para se tornar presidente emérito da editora, bem como um membro do conselho editorial.
+Stan Lee (1922-2018) era uma figura-chave na indústria do entretenimento norte-americano, especialmente dentro dos quadrinhos e no mundo dos filmes da Marvel Comics. Ele foi o editor-chefe originalmente da revista "Marvel Comics" que teve grande influência na criação e popularização de personagens icônicos como Homem-Aranha e Capitão América.
 
-Lee é mais conhecido por fazer várias aparições em filmes do Universo Cinematográfico Marvel, sendo sua última aparição no filme Vingadores: Ultimato, de 2019. Ele também teve grande influência na criação dos personagens populares da Marvel, especialmente a série "Homem-Aranha" e outros ícones culturais da era Marvel.
+Além disso, Stan Lee era conhecido por seu papel como produtor em muitas aparições cinematográficas das histórias em quadrinhos da Marvel, sendo particularmente ativo nos anos 70. Além dessa contribuição direta para a cultura pop através do cinema, também desempenhou papéis importantes no desenvolvimento da identidade visual e narrativa desses universos.
 
-A vida pessoal e profissional de Stan Lee foi marcada pela dedicação aos seus trabalhos e pelas aparições em diversos filmes da Marvel, sendo uma presença constante nas telonas durante quase meio século de carreira cinematográfica para a companhia.
+Ele deixou um legado significativo não só nas produções de quadrinhos da Marvel, mas também pelo fato de ter sido um importante ponte entre os mundos da arte gráfica e as telonas durante quase meio século de carreira.

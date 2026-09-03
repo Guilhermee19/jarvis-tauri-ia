@@ -618,11 +618,19 @@ fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
 /// ele degrada sozinho: cada feature nova (música, webcam, visão) chega com exemplos de
 /// COMANDO e nenhum de CONVERSA, e a razão sobe sem ninguém decidir isso. A 6:1 ele
 /// pausou a música de um usuário no meio de um desabafo. Ao mexer aqui, **conte os dois
-/// lados antes de reescrever regra nenhuma** — hoje são 25 comandos, 4 perguntas sobre
-/// o mundo e 17 conversas (~1,5:1), e as conversas incluem de propósito frases que
+/// lados antes de reescrever regra nenhuma** — hoje são 25 comandos, 7 perguntas sobre
+/// o mundo e 17 conversas, e as conversas incluem de propósito frases que
 /// CITAM tela e objeto sem pedir para olhar, que são os falsos amigos do `look` — e
 /// agora também frases que CITAM uma luz sem mandar mexer nela, que são os do
 /// `smart_home`. Reclamar de lâmpada queimada é o caso mais provável de todos.
+///
+/// **"VOCÊ NÃO SABE FATOS DO MUNDO" está aí porque o 3B só desviava da busca quando
+/// ACHAVA que sabia.** Medido: de 12 perguntas sobre o mundo, três iam para `reply` —
+/// "quando lança o gta 6?", "quem é o presidente da argentina?" e "como funciona um motor
+/// elétrico?" —, e a resposta saía da cabeça dele, velha e sem fonte. Com a regra e três
+/// exemplos do mesmo feitio, ficou **12/12**, e a bateria de comando e conversa não se
+/// mexeu (15/16 antes e depois, com o mesmo único caso — "quem sou eu?" virando `sou_eu`,
+/// que o [`sem_confundir_pergunta`] corrige depois, no Rust).
 fn system_prompt(assistant_name: &str, apelidos: &BTreeMap<String, String>) -> String {
     let mut prompt = format!(
         "Você é o roteador de comandos do {assistant_name}, um assistente de desktop Windows.
@@ -685,6 +693,11 @@ erro que você pode cometer.
 Perguntas se dividem em duas: sobre o MUNDO (fatos, pessoas, coisas, notícias) vai para
 web_search; sobre ELE ou sobre vocês dois vai para reply, porque a resposta está na
 memória e não na internet.
+
+VOCÊ NÃO SABE FATOS DO MUNDO. O que você aprendeu está velho e pode ter mudado: preço,
+cargo, data de lançamento, resultado de jogo, quem ganhou, quantos são. Toda pergunta
+sobre o mundo vai para web_search MESMO QUE VOCÊ ACHE QUE SABE A RESPOSTA. Responder de
+cabeça é o segundo pior erro que você pode cometer.
 
 \"câmera\" também se divide em duas, e são aparelhos diferentes. **Olhe o VERBO primeiro:**
 - \"LIGAR\" ou \"DESLIGAR\" a câmera -> é sempre a WEBCAM do computador: webcam_on,
@@ -759,6 +772,9 @@ Exemplos de PERGUNTA SOBRE O MUNDO — vão para web_search:
 \"quem descobriu o brasil?\"          -> {{\"action\":\"web_search\",\"query\":\"descobrimento do brasil\"}}
 \"o que é rust?\"                     -> {{\"action\":\"web_search\",\"query\":\"rust linguagem de programação\"}}
 \"como faz pão de queijo\"            -> {{\"action\":\"web_search\",\"query\":\"receita de pão de queijo\"}}
+\"quem é o presidente da argentina?\" -> {{\"action\":\"web_search\",\"query\":\"presidente da argentina\"}}
+\"quando lança o gta 6?\"             -> {{\"action\":\"web_search\",\"query\":\"data de lançamento gta 6\"}}
+\"como funciona um motor elétrico?\"  -> {{\"action\":\"web_search\",\"query\":\"como funciona motor elétrico\"}}
 
 Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objeto:
 \"po enquanto nada, quero é ir pra casa pra poder jogar\" -> {{\"action\":\"reply\"}}

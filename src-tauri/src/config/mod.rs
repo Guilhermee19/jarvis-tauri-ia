@@ -172,6 +172,24 @@ pub struct AppSettings {
     /// respostas simuladas — é a saída de emergência, no mesmo padrão do
     /// `tts_voice_id`, sem precisar de um booleano só para isso.
     pub ollama_model: String,
+    /// Modelo que RESPONDE com o resultado da busca. Vazio usa o mesmo de cima.
+    ///
+    /// **Existe porque foi medido.** O modelo principal precisa ser multimodal (ele também
+    /// é quem enxerga a webcam), e o que cabia nesse requisito era um 3B — que completa a
+    /// resposta com o que "lembra" mesmo com a fonte na frente. Perguntado quem é o
+    /// presidente da Argentina, com duas manchetes citando Milei nos trechos, o
+    /// `qwen2.5vl:3b` inventou detalhe em **8 de 8 tentativas** (inclusive "Alberto
+    /// Fernández", que contradiz a fonte). Com os mesmos trechos, o `mistral` respondeu
+    /// "no momento atual, é Milei" e o `llama3` admitiu que os trechos não diziam o cargo.
+    ///
+    /// Três prompts diferentes foram testados antes disto e nenhum resolveu: o mais
+    /// severo trocou a invenção por mudez, que é outro jeito de não responder. O gargalo
+    /// é o tamanho do modelo, e resumir busca não precisa de visão — então dá para usar
+    /// um maior AQUI sem trocar o principal.
+    ///
+    /// Custa VRAM: os dois ficam carregados ao mesmo tempo (com `keep_alive` de 2 h). Num
+    /// cartão de 4 GB não cabe, e é por isso que o padrão é vazio.
+    pub ollama_model_busca: String,
     /// Pasta da memória (markdown, formato Obsidian). Vazio = a pasta `memoria/` do
     /// projeto em desenvolvimento, ou a de dados do usuário num app instalado.
     pub memoria_path: String,
@@ -244,6 +262,7 @@ impl Default for AppSettings {
             cidade: String::new(),
             ollama_url: DEFAULT_OLLAMA_URL.to_owned(),
             ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
+            ollama_model_busca: String::new(),
             memoria_path: String::new(),
             brave_api_key: String::new(),
             spotify_client_id: String::new(),
@@ -289,6 +308,20 @@ impl AppSettings {
         }
     }
 
+    /// Qual modelo responde com o resultado da busca: o de busca, se houver, senão o
+    /// principal.
+    ///
+    /// Mesmo formato do [`Self::voz`]: quem chama pergunta uma coisa e recebe uma string,
+    /// e o cruzamento fica todo aqui. "Vazio = o padrão" é a convenção da casa.
+    pub fn modelo_de_busca(&self) -> &str {
+        let escolhido = self.ollama_model_busca.trim();
+        if escolhido.is_empty() {
+            &self.ollama_model
+        } else {
+            escolhido
+        }
+    }
+
     /// O par de credenciais da Tuya, ou `None` se falta alguma.
     ///
     /// Um lado só não serve para nada — mesma decisão do [`Self::webcam_target`]: meio
@@ -308,6 +341,29 @@ impl AppSettings {
 
 #[cfg(test)]
 mod tests {
+    /// Vazio é o caso comum e tem que continuar caindo no modelo principal — senão a busca
+    /// tentaria responder com um modelo chamado "", e o Ollama devolveria 404 num caminho
+    /// que hoje funciona sem configurar nada.
+    #[test]
+    fn o_modelo_da_busca_cai_no_principal_quando_vazio() {
+        let mut settings = AppSettings {
+            ollama_model: "qwen2.5vl:3b".to_owned(),
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.modelo_de_busca(), "qwen2.5vl:3b");
+
+        settings.ollama_model_busca = "   ".to_owned();
+        assert_eq!(
+            settings.modelo_de_busca(),
+            "qwen2.5vl:3b",
+            "só espaço é vazio"
+        );
+
+        settings.ollama_model_busca = "mistral".to_owned();
+        assert_eq!(settings.modelo_de_busca(), "mistral");
+    }
+
     /// O nome custa uma conexão perdida por IPv6 em toda conexão nova. O endereço não —
     /// e é o mesmo lugar.
     #[test]

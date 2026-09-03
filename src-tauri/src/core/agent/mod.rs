@@ -943,10 +943,13 @@ async fn pesquisar_e_responder(
     memoria.aprender(consulta, &converse::nota_da_busca(&achados));
     log.memoria('+', &crate::core::memory::slug(consulta));
 
+    // O único ponto do app que pode usar um modelo diferente do principal — e o porquê,
+    // com os números, está no `AppSettings::ollama_model_busca`. Resumir busca é o
+    // trabalho onde o 3B mais erra, e o único que não precisa de visão.
     let resposta = converse::responder_com_busca(
         http,
         &settings.ollama_url,
-        &settings.ollama_model,
+        settings.modelo_de_busca(),
         &settings.assistant_name,
         pergunta,
         &achados,

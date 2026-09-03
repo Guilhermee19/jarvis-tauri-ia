@@ -37,6 +37,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [cidade, setCidade] = useState(initial.cidade)
   const [ollamaUrl, setOllamaUrl] = useState(initial.ollamaUrl)
   const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
+  const [ollamaModelBusca, setOllamaModelBusca] = useState(initial.ollamaModelBusca)
   const [memoriaPath, setMemoriaPath] = useState(initial.memoriaPath)
   const [braveKey, setBraveKey] = useState(initial.braveApiKey)
   const [spotifyId, setSpotifyId] = useState(initial.spotifyClientId)
@@ -104,6 +105,14 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         onChange={(event) => setOllamaModel(event.target.value)}
         placeholder={DEFAULT_SETTINGS.ollamaModel}
         hint="Baixe com `ollama pull qwen2.5vl:3b`. Precisa ser multimodal para o `o que é isso?` funcionar. Vazio desliga o intérprete."
+      />
+
+      <Input
+        label="Modelo que responde a busca"
+        value={ollamaModelBusca}
+        onChange={(event) => setOllamaModelBusca(event.target.value)}
+        placeholder="usa o do intérprete"
+        hint="Um modelo maior só para resumir o que a busca achou — não precisa enxergar. Medido: com as fontes na frente, o qwen2.5vl:3b completou a resposta com informação velha em 8 de 8 tentativas; o `mistral` e o `llama3` ficaram no que estava escrito. Custa VRAM, porque os dois ficam carregados."
       />
 
       <Input
@@ -337,6 +346,8 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               // Sem fallback aqui de propósito: vazio é uma escolha válida (desliga
               // o intérprete), diferente do nome e da URL.
               ollamaModel: ollamaModel.trim(),
+              // Vazio = usa o do intérprete, que é o comportamento de sempre.
+              ollamaModelBusca: ollamaModelBusca.trim(),
               // Vazio também é válido: cai na pasta padrão.
               memoriaPath: memoriaPath.trim(),
               braveApiKey: braveKey.trim(),
