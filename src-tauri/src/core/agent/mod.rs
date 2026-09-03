@@ -244,7 +244,8 @@ pub async fn handle(
             });
             memoria.atualizar_rotinas();
 
-            pesquisar_e_responder(http, settings, memoria, query, &mut log).await
+            // O `dito` inteiro, e não o `query`: quem responde precisa da PERGUNTA.
+            pesquisar_e_responder(http, settings, memoria, query, dito, &mut log).await
         }
 
         // Tocar uma música nomeada. Sobe o Spotify se estiver fechado — o `spotify:`
@@ -816,7 +817,7 @@ async fn olhar_camera(
     // fora da imagem. Vale para o modelo de um carro parado na frente tanto quanto para
     // um cartaz na webcam.
     let consulta = format!("{termo} {}", pergunta.trim());
-    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), log).await)
+    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), pergunta, log).await)
 }
 
 async fn olhar(
@@ -875,7 +876,7 @@ async fn olhar(
     // ingressos", onde a resposta só existe na busca. A imagem identificou a coisa; o
     // resto é o caminho normal de pergunta sobre o mundo, com as fontes e a nota.
     let consulta = format!("{termo} {}", pergunta.trim());
-    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), log).await)
+    Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), pergunta, log).await)
 }
 
 /// Frases que pedem a aba do navegador. O resto é pergunta no meio da conversa, e
@@ -893,11 +894,22 @@ fn pediu_a_aba(dito: &str) -> bool {
 ///
 /// Nunca devolve `Err`: sem internet, dizer isso na conversa é melhor que derrubar a
 /// mensagem inteira com um erro de IPC.
+///
+/// **Responde com a pergunta que foi feita, não com o termo pesquisado.**
+///
+/// Os dois são coisas diferentes e confundi-los custou uma resposta errada de verdade:
+/// "quanto está a Bitcoin hoje?" vira `bitcoin preço` no roteador, e era ESSE termo que
+/// chegava ao modelo como PERGUNTA. "Bitcoin preço" não é uma pergunta — é um assunto —,
+/// e o modelo respondeu o que se responde a um assunto: explicou o que é a Bitcoin.
+///
+/// O termo continua sendo o que vai para o buscador e o que nomeia a nota. A pergunta é o
+/// que decide o que dizer com o que voltou.
 async fn pesquisar_e_responder(
     http: &reqwest::Client,
     settings: &AppSettings,
     memoria: &Memoria,
     consulta: &str,
+    pergunta: &str,
     log: &mut Log,
 ) -> String {
     let fonte = search::fonte(&settings.brave_api_key);
@@ -923,7 +935,7 @@ async fn pesquisar_e_responder(
         &settings.ollama_url,
         &settings.ollama_model,
         &settings.assistant_name,
-        consulta,
+        pergunta,
         &achados,
     )
     .await;
