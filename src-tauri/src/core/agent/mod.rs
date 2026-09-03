@@ -149,6 +149,17 @@ pub struct Manutencao {
     pub resposta: String,
 }
 
+/// Cada frase da resposta, entregue enquanto o modelo ainda escreve o resto.
+///
+/// **É por aqui que a fala começa antes do fim.** Quem chama o [`handle`] recebe as frases
+/// na ordem em que foram escritas e faz com elas o que só ele sabe fazer: `commands::chat`
+/// manda para o motor de voz e para a tela. O `core` não conhece nem um nem outro.
+///
+/// Toda resposta passa por aqui, não só a de conversa: comando de PC devolve uma frase
+/// fixa, que sai inteira numa chamada só. Assim quem escuta não precisa saber qual caminho
+/// o agente tomou para saber o que falar.
+pub type AoFalar<'a> = &'a (dyn Fn(&str) + Sync);
+
 // Nove parâmetros pelo mesmo motivo do `send_message`: cada capacidade que o agente
 // alcança entra como um `&` próprio, e agrupá-las numa struct só para agradar o lint
 // criaria um tipo que existe por causa do lint.
@@ -162,13 +173,17 @@ pub async fn handle(
     catalogo: &Catalogo,
     localizador: &Localizador,
     dito: &str,
+    ao_falar: AoFalar<'_>,
 ) -> Result<Outcome, AgentError> {
     // Modelo vazio desliga o intérprete e volta ao mock. É a saída de emergência sem
     // precisar de um booleano — mesmo padrão do `tts_voice_id` ("vazio = padrão").
     if settings.ollama_model.trim().is_empty() {
+        let reply = crate::core::chat::mock_reply_text(&settings.assistant_name, dito);
+        ao_falar(&reply);
+
         return Ok(Outcome {
             trace: None,
-            reply: crate::core::chat::mock_reply_text(&settings.assistant_name, dito),
+            reply,
             ui: None,
             manutencao: None,
         });
@@ -191,6 +206,11 @@ pub async fn handle(
     // não ensinam nada que valha uma nota, e o `destilar` já os descartava.
     let mut manutencao = None;
 
+    // O caminho de conversa é o único que entrega a resposta em pedaços — os outros
+    // devolvem uma frase pronta, que sai inteira lá embaixo. Sem esta marca, a conversa
+    // seria falada duas vezes.
+    let mut ja_falou = false;
+
     let reply = match &acao {
         Intent::Reply {} => {
             // A resposta sai agora; as notas ficam para depois dela. O `resposta` é
@@ -200,7 +220,8 @@ pub async fn handle(
                 resposta: String::new(),
             });
 
-            conversar(http, settings, memoria, dito).await?
+            ja_falou = true;
+            conversar(http, settings, memoria, dito, ao_falar).await?
         }
 
         // Pergunta sobre o mundo: dá uma olhada na internet, GUARDA o que achou, e
@@ -593,6 +614,12 @@ pub async fn handle(
         servico.resposta.clone_from(&reply);
     }
 
+    // Comando e busca chegam aqui com o texto inteiro na mão: falam de uma vez, que é o
+    // que sempre fizeram. Só a conversa é que já foi saindo pelo caminho.
+    if !ja_falou {
+        ao_falar(&reply);
+    }
+
     Ok(Outcome {
         trace: log.render(),
         reply,
@@ -609,6 +636,7 @@ async fn conversar(
     settings: &AppSettings,
     memoria: &Memoria,
     dito: &str,
+    ao_falar: AoFalar<'_>,
 ) -> Result<String, AgentError> {
     // O tema entra SÓ na conversa, e por causa do tom. O roteador e a busca recebem
     // apenas o nome: classificar um verbo e resumir uma busca não mudam com o jeito de
@@ -619,6 +647,7 @@ async fn conversar(
         &memoria.contexto(dito),
         &memoria.recentes(converse::JANELA),
         dito,
+        ao_falar,
     )
     .await?;
 
@@ -1517,8 +1546,22 @@ mod tests {
             println!("roteou: {acao:?}\n");
 
             // ---- 3. responder ---------------------------------------------
+            //
+            // Duas medidas, e a diferença entre elas é a feature: quanto o modelo levou
+            // para escrever TUDO, e quanto levou até a PRIMEIRA frase — que é quando a
+            // boca abre, e portanto o único número que o usuário sente.
             let relogio = Instant::now();
-            let resposta = match converse::responder(&http, &settings, "", &[], &dito).await {
+            let primeira = std::sync::Mutex::new(None::<f32>);
+
+            let resposta = match converse::responder(&http, &settings, "", &[], &dito, &|frase| {
+                let mut primeira = primeira.lock().expect("mutex");
+                if primeira.is_none() {
+                    *primeira = Some(relogio.elapsed().as_secs_f32());
+                    println!("primeira frase: {frase:?}");
+                }
+            })
+            .await
+            {
                 Ok(resposta) => resposta,
                 Err(erro) => {
                     println!("resposta falhou: {erro}");
@@ -1526,8 +1569,12 @@ mod tests {
                 }
             };
             let respondeu = relogio.elapsed().as_secs_f32();
-            etapas.push(("responder (o que ele fala)", respondeu));
-            println!("respondeu ({} caracteres): {resposta}\n", resposta.chars().count());
+            let ate_falar = primeira.lock().expect("mutex").unwrap_or(respondeu);
+            etapas.push(("responder (o que ele fala)", ate_falar));
+            println!(
+                "respondeu ({} caracteres) em {respondeu:.2} s, mas começou a falar em {ate_falar:.2} s: {resposta}\n",
+                resposta.chars().count()
+            );
 
             // ---- 4 e 5. a manutenção de memória, que hoje vem ANTES da fala ----
             let troca = format!("Usuário: {dito}\nAssistente: {resposta}");

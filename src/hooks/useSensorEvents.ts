@@ -7,6 +7,7 @@ import {
   onJarvisEvent,
   type AlertaDeCamera,
   type MudouDeEndereco,
+  type PedacoDaResposta,
   type UiAction,
 } from '@/lib/tauri'
 import { cadastrarRosto } from './useSaudacao'
@@ -39,6 +40,7 @@ export function useSensorEvents() {
   const focarCamera = useCamerasStore((state) => state.focar)
   const registrarAlerta = useCamerasStore((state) => state.registrarAlerta)
   const anunciar = useChatStore((state) => state.anunciar)
+  const receberFrase = useChatStore((state) => state.receberFrase)
 
   useEffect(() => {
     const pendentes: UnlistenFn[] = []
@@ -55,6 +57,14 @@ export function useSensorEvents() {
     assinar(onJarvisEvent<number>(JarvisEvent.MicLevel, setMicLevel))
     assinar(onJarvisEvent<number>(JarvisEvent.TtsLevel, setTtsLevel))
 
+    // A resposta chegando frase a frase, no mesmo passo em que ele a fala. A bolha
+    // cresce daqui; quem toca o áudio é o Rust, que é onde as frases nascem.
+    assinar(
+      onJarvisEvent<PedacoDaResposta>(JarvisEvent.ReplyChunk, (pedaco) =>
+        receberFrase(pedaco.turno, pedaco.frase),
+      ),
+    )
+
     // O navegador se mexendo por conta própria. Os dois vêm de callbacks do webview, que
     // rodam na thread principal do Tauri: por isso eles AVISAM em vez de agir — criar uma
     // aba lá dentro trava o app. Quem age é a store, daqui, por comando `async`.
@@ -63,9 +73,7 @@ export function useSensorEvents() {
         anotarEndereco(mudou.id, mudou.url),
       ),
     )
-    assinar(
-      onJarvisEvent<string>(JarvisEvent.BrowserNewTab, (url) => void abrirSite(url)),
-    )
+    assinar(onJarvisEvent<string>(JarvisEvent.BrowserNewTab, (url) => void abrirSite(url)))
 
     // Movimento numa câmera vigiada. Chega raro por construção — o Rust já descartou os
     // quadros parados e já perguntou ao modelo se havia alguém.
@@ -131,5 +139,6 @@ export function useSensorEvents() {
     focarCamera,
     registrarAlerta,
     anunciar,
+    receberFrase,
   ])
 }

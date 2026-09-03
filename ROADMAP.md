@@ -113,7 +113,8 @@
 - ✅ Prompt de sistema definindo a personalidade — e viraram **duas** (Jarvis e Ultron)
 - ✅ Histórico persistido localmente
 - ✅ A resposta é falada automaticamente, reaproveitando o TTS da v0.1.5
-- ⬜ Streaming da resposta na UI — a resposta ainda aparece de uma vez
+- ✅ Streaming da resposta na UI — a bolha cresce frase a frase, no mesmo passo da fala
+  (`jarvis://reply-chunk`)
 
 **Entrega:** você digita, ele responde com texto **e** em voz, já com uma "cara" própria.
 
@@ -301,9 +302,10 @@ a saída foi outro motor.
   `.mp3` no lugar do id e a fala sairia com a voz errada, sem erro nenhum
 - ✅ O `PICO_TIPICO_DA_FALA` do HUD passou a seguir o motor: 1,0 no Piper (que normaliza) e
   0,28 no Chatterbox. Um número só faria o núcleo saturar num e ficar parado no outro
-- ⬜ Fatiar a resposta por frase e tocar a primeira enquanto a segunda é gerada. Medido:
-  corta **85%** da espera numa resposta longa. Ficou desnecessário com o Piper, e volta a
-  fazer sentido se alguém usar o Chatterbox no dia a dia
+- ✅ Fatiar a resposta por frase e tocar a primeira enquanto a segunda é gerada. Medido:
+  corta **85%** da espera numa resposta longa. Feito junto com o streaming do Ollama, e é
+  ele que devolve o Chatterbox para uma conversa: os sete segundos por frase deixam de ser
+  silêncio entre elas
 - ⬜ Treinar a voz do dono DENTRO do Piper (~1300 frases, ~8 h de gravação). É o único
   caminho conhecido para ter voz própria E resposta instantânea
 
@@ -341,9 +343,11 @@ Das ~7 etapas de um turno de voz, **só uma tinha número**. O `turno_de_verdade
 - ✅ **Anotar deixou de vir antes de responder.** Destilar o assunto e reescrever a nota são
   duas chamadas ao Ollama que não mudam a resposta, e valiam 33% do trabalho do turno. Hoje
   rodam em `spawn` depois de a fala já ter começado
-- ⬜ **Streaming do Ollama, fatiado por frase.** É o que sobra na frente do usuário: 1,34 s
-  de `responder` que só terminam no último token, porque as **sete** chamadas ao Ollama do
-  projeto usam `"stream": false`
+- ✅ **Streaming do Ollama, fatiado por frase.** Era o que sobrava na frente do usuário:
+  1,34 s de `responder` que só terminavam no último token. Hoje aquela chamada — a única
+  das sete — vai com `"stream": true`, `converse::fim_de_frase` corta a resposta em frases,
+  e a fila de `commands/voice.rs` sintetiza uma à frente enquanto a atual toca. A espera
+  passou de "a resposta inteira" para "a primeira frase dela"
 - ⬜ Build CUDA do Whisper — troca de arquivos, sem código
 
 **O TTS nunca foi o gargalo.** A 0,15 s ele é o elo mais rápido; trocar de motor (foi

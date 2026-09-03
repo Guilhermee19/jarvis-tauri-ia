@@ -691,7 +691,7 @@ espera do usuário            3.60 s   ← até a fala começar
 em segundo plano             1.75 s   (33%)
 ```
 
-**Duas coisas mudaram por causa dessa medição**, e nenhuma delas era o que se suspeitava:
+**Três coisas mudaram por causa dessa medição**, e nenhuma delas era o que se suspeitava:
 
 **O Whisper usava um quarto do processador.** Ele subia com `-t 4` fixo, herdado do laptop
 de 4 núcleos onde o projeto nasceu. Medido aqui: 4 threads = 2,29 s, **8 threads = 1,66 s**,
@@ -708,9 +708,24 @@ e o que o `core` recebe são referências emprestadas do estado do Tauri.
 **O que NÃO era o gargalo:** o TTS. Ele é 0,15 s — o elo mais rápido da corrente. Trocar o
 motor de voz (foi cogitado o MeloTTS) otimizaria 3% do turno, e o MeloTTS nem fala português.
 
-Ainda na frente do usuário: os 1,34 s do `responder`, que só terminam no último token porque
-todas as chamadas ao Ollama usam `"stream": false`. Streamar e fatiar por frase faria a fala
-começar na primeira frase em vez de na última.
+**A resposta só existia depois do último token.** Os 1,34 s do `responder` eram espera pura:
+o texto ficava pronto de uma vez e só então virava fala. Hoje aquela chamada — a única das
+sete — vai com `"stream": true`, e `converse::responder` entrega cada frase assim que ela
+fecha. O `fim_de_frase` corta em `.`, `!`, `?` e quebra de linha, **com o caractere seguinte
+já na mão** (sem isso o ponto de "3.5" fecharia uma frase) e com um piso de 12 caracteres,
+que é o que segura "Sr." e "Dr.".
+
+Quem toca é a fila de `commands/voice.rs`, e ela **sintetiza uma frase à frente**: enquanto
+uma toca, a próxima já está sendo gerada. Sem isso, cada troca de frase custaria uma síntese
+inteira de silêncio — 0,2 s no Piper, e os sete segundos do Chatterbox, que é o que sempre o
+tirou de uma conversa.
+
+A mesma frase vai por evento (`jarvis://reply-chunk`) para a tela, carimbada com o turno:
+interromper uma resposta corta a FALA, mas o texto velho ainda chega do modelo por alguns
+segundos, e sem o carimbo ele entraria na bolha da pergunta nova.
+
+O que sobra na frente do usuário deixou de ser a resposta inteira e passou a ser a primeira
+frase dela.
 
 ## Modo conversa
 
@@ -732,11 +747,15 @@ reagindo à mudança do valor. Em silêncio o pico chega `0` repetido, e o zusta
 notifica quem seleciona um valor igual ao anterior — reagir à mudança perderia
 exatamente o caso que interessa, que é o silêncio parado.
 
-**A fala mora no `chatStore.send`, não no laço.** Toda resposta é falada — a do modo
-conversa e a do que você digitou —, porque a voz acompanha a RESPOSTA, não o caminho de
-entrada. E como o `send` só volta quando ele calou, o laço da conversa ganha de graça o
-sinal de quando pode reabrir o microfone: sem clipe de voz ele fica calado e o `await`
-passa reto.
+**A fala é do turno, não do laço.** Toda resposta é falada — a do modo conversa e a do que
+você digitou —, porque a voz acompanha a RESPOSTA, não o caminho de entrada. E como o
+`send` só volta quando ele calou, o laço da conversa ganha de graça o sinal de quando pode
+reabrir o microfone: sem clipe de voz ele fica calado e o `await` passa reto.
+
+**Quem fala é o Rust**, desde que a resposta passou a sair frase a frase: elas nascem no
+`converse::responder` e vão direto para a fila de voz, sem uma ida e volta pelo frontend por
+frase. O `chatStore` continua dono do `isSpeaking` e do estado da conversa — e o
+`speak_text` continua sendo o caminho da saudação, que sai pronta de uma vez.
 
 **Só a resposta, e só ela.** O log de ação (papel `system`) vem no `loadHistory` junto e
 fica só escrito. Ninguém quer ouvir "open_site url=https://…" em voz alta — mas quer

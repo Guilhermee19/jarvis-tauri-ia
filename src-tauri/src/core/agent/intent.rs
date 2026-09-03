@@ -306,14 +306,28 @@ pub fn client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-/// POST cru ao `/api/chat`, devolvendo o `message.content`. Compartilhado com
-/// `converse`, para os erros do Ollama serem traduzidos num lugar só.
-pub(crate) async fn pedir(
+/// O envelope do `/api/chat`. Vale para a resposta inteira e para cada pedaço do
+/// fluxo — o Ollama usa a MESMA forma nos dois, e é isso que deixa [`pedir`] e
+/// [`pedir_em_fluxo`] compartilharem o parse.
+#[derive(Deserialize)]
+struct Envelope {
+    message: Mensagem,
+}
+
+#[derive(Deserialize)]
+struct Mensagem {
+    content: String,
+}
+
+/// O POST e a tradução dos erros, sem ler o corpo. Existe porque as duas formas de
+/// pedir — de uma vez e em fluxo — diferem só na LEITURA, e um 404 tem que continuar
+/// virando "esse modelo não está baixado" nas duas.
+async fn postar(
     http: &reqwest::Client,
     url: &str,
     model: &str,
     corpo: &serde_json::Value,
-) -> Result<String, AgentError> {
+) -> Result<reqwest::Response, AgentError> {
     let endpoint = format!("{}/api/chat", url.trim_end_matches('/'));
     let resposta = http
         .post(&endpoint)
@@ -336,14 +350,18 @@ pub(crate) async fn pedir(
         });
     }
 
-    #[derive(Deserialize)]
-    struct Envelope {
-        message: Mensagem,
-    }
-    #[derive(Deserialize)]
-    struct Mensagem {
-        content: String,
-    }
+    Ok(resposta)
+}
+
+/// POST cru ao `/api/chat`, devolvendo o `message.content`. Compartilhado com
+/// `converse`, para os erros do Ollama serem traduzidos num lugar só.
+pub(crate) async fn pedir(
+    http: &reqwest::Client,
+    url: &str,
+    model: &str,
+    corpo: &serde_json::Value,
+) -> Result<String, AgentError> {
+    let resposta = postar(http, url, model, corpo).await?;
 
     let envelope: Envelope = resposta
         .json()
@@ -351,6 +369,80 @@ pub(crate) async fn pedir(
         .map_err(|error| rede(error, url, model))?;
 
     Ok(envelope.message.content)
+}
+
+/// O mesmo pedido, lido **enquanto o modelo escreve**: cada pedaço de texto passa por
+/// `ao_pedaco` assim que chega da rede, e o texto inteiro volta no fim.
+///
+/// É o que permite falar a primeira frase antes do último token. Com `"stream": true` o
+/// Ollama responde **NDJSON** — um objeto por linha, no mesmo formato do [`Envelope`],
+/// com a última trazendo `done: true` e conteúdo vazio.
+///
+/// A montagem é por BYTE e não por texto: um pedaço da rede pode cortar um caractere
+/// acentuado no meio, e "não" não pode virar "n?o" na fala. Só a linha inteira, já
+/// terminada em `\n`, é decodificada — aí o UTF-8 está sempre completo.
+///
+/// Linha que não casa com o envelope é ignorada de propósito: o corpo de erro do Ollama
+/// só aparece com HTTP de erro, que o [`postar`] já pegou antes de chegar aqui.
+pub(crate) async fn pedir_em_fluxo(
+    http: &reqwest::Client,
+    url: &str,
+    model: &str,
+    corpo: &serde_json::Value,
+    mut ao_pedaco: impl FnMut(&str),
+) -> Result<String, AgentError> {
+    let mut resposta = postar(http, url, model, corpo).await?;
+
+    let mut inteiro = String::new();
+    let mut sobra: Vec<u8> = Vec::new();
+
+    while let Some(bytes) = resposta
+        .chunk()
+        .await
+        .map_err(|error| rede(error, url, model))?
+    {
+        sobra.extend_from_slice(&bytes);
+
+        for texto in colher(&mut sobra) {
+            inteiro.push_str(&texto);
+            ao_pedaco(&texto);
+        }
+    }
+
+    // A última linha pode vir sem o `\n` do fim. O `colher` só corta em quebra, então sem
+    // isto o fecho da resposta se perderia — e com ele a última frase da fala.
+    if let Some(texto) = conteudo(&sobra) {
+        inteiro.push_str(&texto);
+        ao_pedaco(&texto);
+    }
+
+    Ok(inteiro)
+}
+
+/// Tira do buffer as linhas COMPLETAS e devolve o texto de cada uma, na ordem.
+///
+/// O que sobra fica no buffer para o pedaço seguinte da rede juntar — é aí que mora a
+/// linha cortada no meio, que é o caso normal e não a exceção.
+fn colher(sobra: &mut Vec<u8>) -> Vec<String> {
+    let mut pedacos = Vec::new();
+
+    while let Some(quebra) = sobra.iter().position(|byte| *byte == b'\n') {
+        let linha: Vec<u8> = sobra.drain(..=quebra).collect();
+        if let Some(texto) = conteudo(&linha) {
+            pedacos.push(texto);
+        }
+    }
+
+    pedacos
+}
+
+/// O texto de uma linha do NDJSON, ou `None` se ela não traz conteúdo.
+///
+/// São dois os casos de `None`, e os dois são normais: a linha final do fluxo, que vem com
+/// `done: true` e conteúdo vazio, e qualquer linha que não case com o [`Envelope`].
+fn conteudo(linha: &[u8]) -> Option<String> {
+    let envelope: Envelope = serde_json::from_slice(linha).ok()?;
+    (!envelope.message.content.is_empty()).then_some(envelope.message.content)
 }
 
 /// Manda a frase ao Ollama e devolve a ação.
@@ -1083,5 +1175,48 @@ mod tests {
 
         assert!(com.contains("APELIDOS QUE ELE JÁ ENSINOU"));
         assert!(com.contains("\"meu jogo\" = steam"));
+    }
+
+    /// Uma resposta em fluxo do Ollama, como ela sai do `/api/chat` com `"stream": true`.
+    const FLUXO: &str = r#"{"message":{"role":"assistant","content":"Bom dia"},"done":false}
+{"message":{"role":"assistant","content":", Guilherme"},"done":false}
+{"message":{"role":"assistant","content":". Está tudo em ordem."},"done":false}
+{"message":{"role":"assistant","content":""},"done":true,"total_duration":1}
+"#;
+
+    /// **A rede não respeita linha.** Um pedaço pode acabar no meio do JSON, no meio de uma
+    /// palavra, e — o caso que estraga tudo — no meio de um caractere acentuado: os dois
+    /// bytes de "ó" chegam separados. Só a linha inteira é decodificada, e é isso que
+    /// impede "Está" de virar "Est?".
+    ///
+    /// O teste corta o fluxo byte a byte, que é o pior corte possível, e cobra o mesmo
+    /// texto que sairia se ele tivesse chegado de uma vez.
+    #[test]
+    fn o_fluxo_remonta_as_linhas_cortadas_pela_rede() {
+        let mut sobra: Vec<u8> = Vec::new();
+        let mut pedacos: Vec<String> = Vec::new();
+
+        for byte in FLUXO.as_bytes() {
+            sobra.push(*byte);
+            pedacos.extend(colher(&mut sobra));
+        }
+
+        assert_eq!(pedacos, ["Bom dia", ", Guilherme", ". Está tudo em ordem."]);
+        assert!(sobra.is_empty(), "o buffer não pode segurar linha completa");
+    }
+
+    /// A linha final do fluxo vem com `done: true` e conteúdo vazio — não é pedaço de fala,
+    /// e emiti-la faria uma frase vazia ir parar na fila do motor de voz.
+    #[test]
+    fn a_linha_de_fecho_nao_vira_fala() {
+        assert_eq!(conteudo(br#"{"message":{"content":""},"done":true}"#), None);
+        assert_eq!(
+            conteudo(br#"{"message":{"content":"oi"},"done":false}"#).as_deref(),
+            Some("oi")
+        );
+
+        // Linha que não é envelope nenhum não pode derrubar o turno: some, e o resto do
+        // fluxo continua.
+        assert_eq!(conteudo(b"nao e json"), None);
     }
 }

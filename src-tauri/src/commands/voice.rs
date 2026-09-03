@@ -199,16 +199,120 @@ pub async fn speak_text(
     let cancelar = voice.iniciar_fala();
     let audio = engine.synthesize(&text, &chosen).await.map_err(stringify)?;
 
-    // `play` bloqueia até o fim da fala. Fora do executor async isso travaria o
-    // runtime do Tauri e, com ele, todos os outros comandos.
+    tocar(app, audio, cancelar).await
+}
+
+/// Toca um áudio já sintetizado e publica o nível para a UI enquanto ele sai.
+///
+/// `play` bloqueia até o fim da fala. Fora do executor async isso travaria o runtime do
+/// Tauri e, com ele, todos os outros comandos — daí o `spawn_blocking`.
+async fn tocar(
+    app: AppHandle,
+    audio: Vec<u8>,
+    cancelar: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         play(audio, cancelar, |level| {
             let _ = app.emit(TTS_LEVEL_EVENT, level);
         })
     })
-        .await
-        .map_err(|error| format!("a thread de áudio falhou: {error}"))?
-        .map_err(stringify)
+    .await
+    .map_err(|error| format!("a thread de áudio falhou: {error}"))?
+    .map_err(stringify)
+}
+
+/// Fala uma resposta que ainda está sendo escrita, frase a frase, na ordem em que elas
+/// chegam.
+///
+/// **É o que faz o Jarvis começar a falar antes do último token.** O agente entrega cada
+/// frase assim que ela fecha (`core::agent::AoFalar`); aqui elas viram áudio e som.
+///
+/// **Sintetiza uma frase à frente.** Enquanto a frase atual toca, a próxima já está sendo
+/// gerada — sem isso, cada troca de frase custaria uma síntese inteira de silêncio: 0,2 s
+/// no Piper, e sete segundos no Chatterbox, que é o que sempre o tirou de uma conversa.
+///
+/// Sem voz escolhida ele fica calado e sem erro, como o resto do app: voz é opcional, e
+/// tentar falar sem clipe subiria o servidor inteiro para no fim não ter o que clonar.
+///
+/// Nada aqui devolve erro para a tela. Uma frase que não sintetizou vira uma frase não
+/// falada — o texto dela já está escrito na conversa, e derrubar o turno inteiro por causa
+/// do áudio seria pior do que ficar mudo.
+pub(crate) async fn falar_em_fila(
+    app: AppHandle,
+    mut frases: tokio::sync::mpsc::UnboundedReceiver<String>,
+) {
+    let settings = app.state::<AppState>().settings();
+    let voz = settings.voz().to_owned();
+    if voz.trim().is_empty() {
+        return;
+    }
+
+    let voice = app.state::<VoiceState>();
+    let http = voice.http();
+    let services = app.state::<Services>();
+
+    let url = match servidor_de_voz(&app, &http, &services, settings.tts_engine).await {
+        Ok(url) => url,
+        Err(erro) => {
+            eprintln!("[jarvis] fala: {erro}");
+            return;
+        }
+    };
+
+    // Um motor para o turno inteiro, e não um por frase: é um `Box<dyn>` sobre o mesmo
+    // pool de conexões, e refazê-lo a cada frase não compraria nada.
+    let engine: std::sync::Arc<Box<dyn crate::core::voice::TtsEngine>> =
+        std::sync::Arc::new(voice.tts(settings.tts_engine, &url));
+
+    // UMA bandeira para a resposta inteira. Zerá-la a cada frase — que é o que
+    // `iniciar_fala` faz — apagaria um "cala a boca" dado entre duas delas.
+    //
+    // E ela só é zerada quando a PRIMEIRA frase chega, não quando a fila abre. A fila abre
+    // junto com a pergunta, e a fala que está sendo cortada ainda nem teve tempo de ver a
+    // ordem — o `play` só olha a bandeira a cada 50 ms. Zerar aqui a ressuscitaria por
+    // cima da resposta nova, com as duas falando ao mesmo tempo.
+    let mut bandeira: Option<std::sync::Arc<std::sync::atomic::AtomicBool>> = None;
+
+    let mut tocando: Option<tauri::async_runtime::JoinHandle<Result<(), String>>> = None;
+
+    while let Some(frase) = frases.recv().await {
+        let cancelar = std::sync::Arc::clone(bandeira.get_or_insert_with(|| voice.iniciar_fala()));
+
+        if cancelar.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+
+        // A síntese começa AQUI, antes de esperar a frase anterior calar: é esta ordem, e
+        // só ela, que sobrepõe gerar e tocar.
+        let sintese = {
+            let engine = std::sync::Arc::clone(&engine);
+            let voz = voz.clone();
+            tauri::async_runtime::spawn(async move { engine.synthesize(&frase, &voz).await })
+        };
+
+        if let Some(anterior) = tocando.take() {
+            let _ = anterior.await;
+        }
+
+        match sintese.await {
+            Ok(Ok(audio)) => {
+                tocando = Some(tauri::async_runtime::spawn(tocar(
+                    app.clone(),
+                    audio,
+                    cancelar,
+                )));
+            }
+            Ok(Err(erro)) => eprintln!("[jarvis] fala: {erro}"),
+            Err(erro) => eprintln!("[jarvis] fala: a síntese não terminou: {erro}"),
+        }
+    }
+
+    // A última frase ainda está tocando quando o modelo já calou. Esperar por ela é o que
+    // faz `send_message` só voltar quando o Jarvis termina — e é nesse retorno que o modo
+    // conversa reabre o microfone.
+    if let Some(ultima) = tocando {
+        let _ = ultima.await;
+    }
 }
 
 /// Cala a fala em andamento. Síncrono e sem erro de propósito: é o que o botão de

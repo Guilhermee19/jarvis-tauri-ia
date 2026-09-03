@@ -59,7 +59,10 @@ hmac = "0.12"
 sha2 = "0.10"
 # Só o `sleep` do polling de serviço. Já vem no lock (reqwest, tauri) — declarar não
 # acrescenta compilação, e evita que `core/` precise conhecer o runtime do Tauri.
-tokio = { version = "1", features = ["time"] }
+# O `sync` entrou com a fala em fluxo: o canal que leva as frases do agente até o motor de
+# voz é um `mpsc` do tokio, e ele precisa de um lado async dos dois — o produtor está
+# dentro do `handle`, o consumidor sintetiza por HTTP.
+tokio = { version = "1", features = ["time", "sync"] }
 # **Reconhecimento facial**, para o Jarvis saber QUEM está na frente da webcam.
 #
 # O modelo de visão que ele já usa não serve para isto: um VLM descreve a cena ("um homem

@@ -2,7 +2,9 @@
 //!
 //! Três chamadas por turno de papo, e cada divisão foi paga com uma medição:
 //!
-//! 1. [`responder`] — fala com o usuário, com histórico e notas relevantes.
+//! 1. [`responder`] — fala com o usuário, com histórico e notas relevantes. É a única
+//!    **em fluxo**: entrega cada frase assim que ela fecha, para a fala começar no
+//!    primeiro ponto final em vez de no último token.
 //! 2. [`destilar_assunto`] — decide SE a troca virou conhecimento, e sobre o quê.
 //! 3. [`escrever_nota`] — reescreve a nota daquele assunto, inteira.
 //!
@@ -30,8 +32,9 @@
 
 use serde::Deserialize;
 
-use super::intent::pedir;
+use super::intent::{pedir, pedir_em_fluxo};
 use super::AgentError;
+use super::AoFalar;
 use crate::config::{AppSettings, Persona};
 use crate::core::chat::{ChatMessage, Role};
 
@@ -39,17 +42,82 @@ use crate::core::chat::{ChatMessage, Role};
 /// uns 1500 tokens — folgado nos 32K do modelo, e o que sai da janela vira resumo.
 pub const JANELA: usize = 20;
 
+/// Onde uma frase acaba, para a fala poder começar antes do último token.
+///
+/// Devolve o fim da PRIMEIRA frase fechada do buffer, ou `None` enquanto não houver uma.
+/// Três regras, e cada uma existe por um jeito de errar:
+///
+/// 1. **Só corta com o caractere seguinte já na mão.** Sem isso, o `.` de "3." fecharia
+///    uma frase que era "3.5" — o modelo ainda ia mandar o resto.
+/// 2. **Engole os terminadores emendados**, para "..." e "?!" saírem inteiros em vez de
+///    virarem três frases vazias.
+/// 3. **Piso de tamanho.** "Sr.", "etc." e "Dr." têm ponto e não terminam frase nenhuma;
+///    cortar ali poria uma pausa no meio de uma oração. O piso não os resolve sempre, mas
+///    resolve o caso comum sem uma lista de abreviaturas que nunca fica pronta.
+fn fim_de_frase(buffer: &str) -> Option<usize> {
+    // Percorrer por byte é seguro: todo terminador é ASCII, e byte ASCII em UTF-8 nunca
+    // aparece dentro de um caractere de vários bytes.
+    let bytes = buffer.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if !matches!(bytes[i], b'.' | b'!' | b'?' | b'\n') {
+            i += 1;
+            continue;
+        }
+
+        let mut fim = i + 1;
+        while fim < bytes.len() && matches!(bytes[fim], b'.' | b'!' | b'?' | b'\n') {
+            fim += 1;
+        }
+
+        // Fim do buffer não é fim de frase: falta o caractere que diria se o ponto
+        // separava duas orações ou dois dígitos.
+        if fim >= bytes.len() {
+            return None;
+        }
+
+        if bytes[fim].is_ascii_whitespace()
+            && buffer[..fim].trim().chars().count() >= MINIMO_DA_FRASE
+        {
+            return Some(fim);
+        }
+
+        i = fim;
+    }
+
+    None
+}
+
+/// Abaixo disto, o trecho continua juntando. Doze caracteres passam "Bom dia, Guilherme."
+/// — que é exatamente o tipo de abertura curta que vale falar cedo — e seguram "Sr.",
+/// "Dr." e "etc.", que têm ponto e não terminam frase nenhuma.
+///
+/// O piso só protege a abreviatura que aparece no COMEÇO do trecho: "os sistemas estão
+/// online, Sr. Guilherme" ainda corta no meio. O preço é uma pausa a mais, não uma
+/// palavra perdida, e a alternativa seria uma lista de abreviaturas que nunca fica pronta.
+const MINIMO_DA_FRASE: usize = 12;
+
 /// Resposta ao usuário. Texto puro: não há nada para estruturar, e um schema aqui só
 /// serviria para o modelo gastar tokens escrevendo `{"resposta": ...}`.
 /// Recebe `settings` inteiro em vez de `url`, `model`, `nome` e `persona` soltos: eram
 /// oito parâmetros, e o clippy do repo reprova acima de sete. É o mesmo formato de
 /// `pesquisar_e_responder`, que já fazia assim.
+///
+/// **Em fluxo, e frase a frase.** `ao_frase` recebe cada frase assim que ela fecha, e é
+/// isso que faz o Jarvis começar a falar enquanto o modelo ainda escreve o resto — a
+/// espera cai do último token para o primeiro ponto final. Quem toca o áudio é
+/// `commands::chat`, que é o único lado que conhece o motor de voz.
+///
+/// O texto inteiro continua voltando no fim: é ele que vai para o histórico e para a
+/// memória, e ele passa pela mesma limpeza de sempre.
 pub async fn responder(
     http: &reqwest::Client,
     settings: &AppSettings,
     memoria: &str,
     historico: &[ChatMessage],
     frase: &str,
+    ao_frase: AoFalar<'_>,
 ) -> Result<String, AgentError> {
     let (url, model) = (&settings.ollama_url, &settings.ollama_model);
 
@@ -70,7 +138,10 @@ pub async fn responder(
 
     let corpo = serde_json::json!({
         "model": model,
-        "stream": false,
+        // **O único `true` das sete chamadas ao Ollama do projeto**, e é o que tira a
+        // espera da frente do usuário: as outras seis classificam ou escrevem nota, onde
+        // metade do texto não serve para nada. Aqui cada frase pronta já é fala.
+        "stream": true,
         "keep_alive": super::intent::KEEP_ALIVE,
         "options": {
             // Conversa a temperatura baixa fica robótica E repetitiva: o modelo
@@ -86,12 +157,39 @@ pub async fn responder(
         "messages": mensagens,
     });
 
-    let texto = pedir(http, url, model, &corpo).await?;
+    // O que ainda não fechou uma frase. Vive entre os pedaços da rede, que chegam por
+    // token e não por oração — "Bom dia" e ", Guilherme." costumam vir separados.
+    let mut pendente = String::new();
+
+    let texto = pedir_em_fluxo(http, url, model, &corpo, |pedaco| {
+        pendente.push_str(pedaco);
+
+        while let Some(corte) = fim_de_frase(&pendente) {
+            let pronta: String = pendente.drain(..corte).collect();
+            entregar(&pronta, ao_frase);
+        }
+    })
+    .await?;
+
+    // O rabo da resposta: a última frase raramente termina em ponto seguido de espaço.
+    entregar(&pendente, ao_frase);
 
     // O modelo escreve `[[nome-da-nota]]` na FALA — herdou o hábito do prompt que
     // escreve as notas, onde o link é a sintaxe certa. Aqui é conversa: o link vira
     // ruído no meio da frase. Sem nota conhecida, tudo é órfão e tudo é desembrulhado.
     Ok(tirar_links_orfaos(texto.trim(), "", &[]))
+}
+
+/// Entrega uma frase já limpa, ou nada se não sobrou nada dela.
+///
+/// A limpeza é a MESMA do texto inteiro, e tem que ser: falar "colchete colchete rotinas
+/// observadas" seria pior do que lê-lo na tela, e é exatamente o que sai do motor de voz
+/// quando o `[[link]]` não é desembrulhado antes.
+fn entregar(frase: &str, ao_frase: AoFalar<'_>) {
+    let limpa = tirar_links_orfaos(frase.trim(), "", &[]);
+    if !limpa.is_empty() {
+        ao_frase(&limpa);
+    }
 }
 
 #[derive(Deserialize)]
@@ -791,5 +889,80 @@ mod tests {
             ),
             "Talvez musica-charlie-brow-jr? Ou rotinas-observadas."
         );
+    }
+
+    /// Corta uma frase por vez, na ordem, como o fluxo faz — devolve o que seria falado.
+    fn fatiar(texto: &str) -> Vec<String> {
+        let mut resto = texto.to_owned();
+        let mut frases = Vec::new();
+
+        while let Some(corte) = fim_de_frase(&resto) {
+            let pronta: String = resto.drain(..corte).collect();
+            frases.push(pronta.trim().to_owned());
+        }
+
+        if !resto.trim().is_empty() {
+            frases.push(resto.trim().to_owned());
+        }
+
+        frases
+    }
+
+    #[test]
+    fn a_primeira_frase_sai_antes_do_resto() {
+        assert_eq!(
+            fatiar("Bom dia, Guilherme. Hoje o tempo está firme. Quer o resumo?"),
+            [
+                "Bom dia, Guilherme.",
+                "Hoje o tempo está firme.",
+                "Quer o resumo?"
+            ]
+        );
+    }
+
+    /// O modelo escreve por token, então o buffer é visto no meio de uma palavra o tempo
+    /// todo. Cortar sem o caractere seguinte na mão faria "3." virar frase e o "5" órfão
+    /// começar a seguinte — a fala diria "três" e depois "cinco graus".
+    #[test]
+    fn ponto_no_fim_do_buffer_ainda_nao_e_frase() {
+        assert_eq!(fim_de_frase("A temperatura está em 21."), None);
+        assert_eq!(fim_de_frase("A temperatura está em 21.5"), None);
+        assert!(fim_de_frase("A temperatura está em 21.5 graus. E").is_some());
+    }
+
+    /// Reticências e "?!" são UM fim de frase, não três. Sem engolir a sequência, a fala
+    /// sairia picotada em pedaços vazios.
+    #[test]
+    fn terminadores_emendados_saem_juntos() {
+        assert_eq!(
+            fatiar("Não sei o que dizer... Talvez amanhã fique melhor?! Vamos ver."),
+            [
+                "Não sei o que dizer...",
+                "Talvez amanhã fique melhor?!",
+                "Vamos ver."
+            ]
+        );
+    }
+
+    /// O piso de tamanho existe por causa das abreviaturas: sem ele, "Sr." seria uma
+    /// frase inteira e a pausa cairia no meio do nome de quem está sendo chamado. Vale
+    /// para a abreviatura no COMEÇO do trecho, que é onde o piso alcança.
+    #[test]
+    fn abreviatura_curta_nao_fecha_frase() {
+        assert_eq!(
+            fatiar("Sr. Guilherme, os sistemas estão online."),
+            ["Sr. Guilherme, os sistemas estão online."]
+        );
+    }
+
+    /// Acento não pode virar ponto de corte: os terminadores são todos ASCII, e um byte
+    /// ASCII nunca aparece dentro de um caractere de vários bytes em UTF-8.
+    #[test]
+    fn corte_cai_sempre_em_fronteira_de_caractere() {
+        let texto = "Não é bem assim, não. Vou explicar direitinho para você.";
+        let corte = fim_de_frase(texto).expect("tem frase fechada");
+
+        assert!(texto.is_char_boundary(corte));
+        assert_eq!(texto[..corte].trim(), "Não é bem assim, não.");
     }
 }

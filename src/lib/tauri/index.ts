@@ -59,6 +59,7 @@ export {
   type AlertaDeCamera,
   type Faixa,
   type MudouDeEndereco,
+  type PedacoDaResposta,
   type UiAction,
 } from './events'
 export {

@@ -4,8 +4,9 @@ import { isTauriRuntime } from './client'
 /**
  * Eventos que o backend empurra para a UI (o caminho inverso do `invoke`).
  *
- * Evento é para o que a UI não pergunta, só desenha. O nível do microfone é o
- * primeiro caso real disso; a wake word e o streaming do agente entram aqui depois.
+ * Evento é para o que a UI não pergunta, só desenha. O nível do microfone foi o
+ * primeiro caso real disso, e o streaming da resposta ({@link JarvisEvent.ReplyChunk})
+ * é o mais recente; a wake word entra aqui depois.
  */
 export const JarvisEvent = {
   /** Emitido pelo item "Configurações" do menu da bandeja (`src-tauri/src/tray.rs`). */
@@ -20,6 +21,15 @@ export const JarvisEvent = {
    * diz.
    */
   TtsLevel: 'jarvis://tts-level',
+  /**
+   * Uma frase da resposta, assim que ela fica pronta — e antes de o modelo escrever o
+   * resto.
+   *
+   * É o par escrito da fala: a mesma frase vai para a caixa de som e para a bolha no
+   * mesmo instante. Precisa ser evento porque o retorno do `send_message` é um só e chega
+   * no fim, quando a resposta já foi inteiramente ouvida.
+   */
+  ReplyChunk: 'jarvis://reply-chunk',
   /** A aba do navegador mudou de endereço sozinha — link, redirecionamento, rota de SPA. */
   BrowserUrl: 'jarvis://browser-url',
   /** A página pediu janela nova: clique do meio, `target="_blank"`, `window.open`. */
@@ -63,6 +73,17 @@ export interface AlertaDeCamera {
   /** O que o modelo disse ter visto. */
   resposta: string
   quando: number
+}
+
+/**
+ * Carga do {@link JarvisEvent.ReplyChunk}. Espelha `Pedaco` em `commands/chat.rs`.
+ *
+ * O `turno` é o crachá que a tela mandou no `sendMessage`: frase de outro turno é de uma
+ * resposta que foi interrompida, e não pertence à bolha que está sendo escrita.
+ */
+export interface PedacoDaResposta {
+  turno: string
+  frase: string
 }
 
 /** Carga do {@link JarvisEvent.BrowserUrl}. Espelha `MudouDeEndereco` no Rust. */
