@@ -849,13 +849,32 @@ O que eu queria era não depender de chave nenhuma. Não dá:
 | fonte                        | resultado                                                |
 | ---------------------------- | -------------------------------------------------------- |
 | `html.duckduckgo.com`        | página de desafio anti-bot (`anomaly`, `challenge-form`) |
+| `lite.duckduckgo.com`        | o mesmo desafio, HTTP 202 — a versão "leve" também fechou |
+| `www.mojeek.com`             | 403                                                       |
 | `api.duckduckgo.com`         | `AbstractText` vazio em 4 de 4 consultas reais           |
 | instâncias públicas de SearX | JSON desligado, 403 ou "Too Many Requests"               |
 | **Wikipedia**                | **3 de 4** — falha só no que não é enciclopédico         |
+| **Google News (RSS)**        | **200, sem chave, 100 itens datados**                     |
 
-Então **Wikipedia por padrão**, sem configurar nada, e um campo de chave do Brave Search
-(grátis, 2000 buscas/mês) que troca a fonte por busca web de verdade. É a chave que
-resolve "preço do dólar hoje" — a Wikipedia responde isso com "Opções (título)".
+Então **Wikipedia + manchetes por padrão**, sem configurar nada, e um campo de chave do
+Brave Search (grátis) que troca a Wikipedia por busca web de verdade.
+
+**As manchetes entraram porque enciclopédia não tem HOJE.** Perguntado "quanto está a
+Bitcoin?", o Jarvis pesquisou `Bitcoin preço`, recebeu os verbetes _Bitcoin_, _Mercado
+Bitcoin_ e _Mineração de Bitcoin_, e respondeu explicando o que é a moeda. O RSS do Google
+News responde a mesma consulta com "Bitcoin cai quase 2% e ronda os US$ 77 mil", **com
+data** — e é a data que separa "está" de "estava", que é a regra que entrou no prompt junto
+com a fonte. Não é busca web (só a manchete, sem trecho da página), mas é fato atual.
+
+**Manchete não vira nota.** Nota é o que continua valendo amanhã; notícia é o retrato de um
+dia. Guardá-la faria o Jarvis repetir, semanas depois e com cara de quem sabe, o preço de
+uma sexta-feira qualquer — que é exatamente o defeito que as duas notas `bitcoin-preco` e
+`valor-do-bitcoin` documentaram na prática.
+
+**O que a fonte nova NÃO resolve: cotação.** Medido com os dois modelos locais: com as
+manchetes na frente, perguntado "quanto está a Bitcoin hoje?", os dois recusam — e estão
+certos, porque manchete não é cotação. Preço quer o caminho do `tempo.rs`: verbo próprio,
+API de verdade, frase montada em Rust.
 
 **Sem a chave, ele admite que não sabe.** Um teste com temperatura 0.2 devolveu uma
 receita de pão de queijo inventada, com tempo de forno que não estava em trecho nenhum.
@@ -879,9 +898,16 @@ _feature_ `unstable` do Tauri, que é o que destrava o `Window::add_child`.
 A consequência que explica quase todo o código de `NavegadorPanel.tsx`: **um webview é uma
 camada nativa acima do HTML**. Nenhum CSS o alcança e nada o posiciona sozinho. Então o
 painel desenha um buraco, mede o retângulo com `getBoundingClientRect` e conta para o Rust
-onde encaixá-lo — a cada arrasto, a cada _resize_, e com um `null` ao fechar. Pela mesma
-razão as abas só aparecem quando o painel do navegador é o da **frente**: sendo uma camada
-de cima, elas cobririam a conversa aberta por cima delas.
+onde encaixá-lo — a cada arrasto, a cada _resize_, e com um `null` ao fechar.
+
+**O recorte é pelo LUGAR, não pela ordem.** A primeira versão sumia com a página inteira
+quando qualquer janelinha vinha à frente — e isso incomodava no arranjo mais comum de
+todos: conversa à esquerda, navegador à direita, sem um pixel em comum, e mesmo assim a
+página apagada. Hoje o painel mede quem está desenhado ACIMA dele (`z-index` maior, lido do
+DOM), desconta esses retângulos do buraco e mostra a página no maior pedaço que sobrar
+(`lib/buraco.ts`, com teste). Uma janelinha encostando na borda esquerda do navegador
+encolhe a página; só some quando não sobra espaço, e aí a mensagem no buraco explica que é
+sobreposição, não defeito.
 
 O agente não abre nada disso direto. `open_site` e `web_search` devolvem um `AcaoDeUi`
 (`abrir-site` / `pesquisar`) e quem age é a tela — o `core` não conhece o Tauri, e é a
@@ -1088,6 +1114,21 @@ para os links que VOCÊ escrever na mão.
 Não é embedding de propósito: um segundo modelo (`nomic-embed-text`, ~274 MB) disputaria
 os 4 GB de VRAM com o intérprete, e o índice viveria dessincronizado de arquivos que
 você edita por fora.
+
+### O grafo se redesenha sozinho
+
+A janelinha do Conhecimento não espera o botão de atualizar: quando uma conversa vira nota,
+quando uma busca guarda o que achou, quando um "esquece X" apaga alguma coisa, o Rust emite
+`jarvis://memoria-mudou` e a tela relê o grafo — com você olhando ele crescer.
+
+**Só quando mudou de verdade, e só com a janelinha aberta.** A `Memoria` conta as escritas
+num `AtomicU64` (o contador vive no `gravar_nota`, que é o choque por onde os cinco caminhos
+de escrita passam), e a fronteira compara o número antes e depois do turno. Um "bom dia" não
+muda nota nenhuma e não avisa ninguém; a janelinha fechada ignora o aviso, porque ela já
+relê ao abrir e puxar a base inteira pelo IPC para ninguém olhar seria trabalho jogado fora.
+
+O que ele NÃO cobre é o que você edita por fora, no Obsidian — para isso o botão continua
+lá, e um vigia de pasta seria outro assunto.
 
 ### Guardar tem dois caminhos, e um é confiável
 

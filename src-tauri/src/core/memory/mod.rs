@@ -35,6 +35,7 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use chrono::Local;
@@ -87,6 +88,15 @@ pub struct Memoria {
     /// `recarregar` público existe para quando VOCÊ edita a pasta no Obsidian.
     notas: Mutex<Vec<Nota>>,
     resumidas: Mutex<usize>,
+    /// Quantas vezes as notas mudaram por conta NOSSA — uma escrita, uma remoção.
+    ///
+    /// Serve para a fronteira saber se vale avisar a tela: o grafo do conhecimento se
+    /// redesenha sozinho quando uma conversa vira nota, e sem este contador o aviso teria
+    /// que sair a cada mensagem, inclusive nas que não aprenderam nada.
+    ///
+    /// Não conta o que muda no disco por fora (você editando no Obsidian). Para isso
+    /// existe o botão de atualizar, e um vigia de pasta seria outro assunto.
+    versao: AtomicU64,
 }
 
 impl Memoria {
@@ -100,6 +110,7 @@ impl Memoria {
             notas: Mutex::new(carregar_notas(&raiz.join(PASTA_NOTAS))),
             resumidas: Mutex::new(marcador.resumidas),
             raiz: raiz.to_owned(),
+            versao: AtomicU64::new(0),
         };
 
         memoria.escrever_indice();
@@ -300,6 +311,8 @@ impl Memoria {
             if bate {
                 apagadas.push(nota.nome.clone());
                 let _ = std::fs::remove_file(self.caminho_da_nota(&nota.nome));
+                // Apagar também é mudança: "esquece X" tem que tirar o nó do grafo na hora.
+                self.versao.fetch_add(1, Ordering::Relaxed);
             }
             !bate
         });
@@ -375,11 +388,23 @@ impl Memoria {
         self.raiz.join(PASTA_NOTAS).join(format!("{nome}.md"))
     }
 
+    /// **O choque de todas as escritas de nota**, e por isso o lugar do contador: são cinco
+    /// caminhos que gravam (aprender, escrever conhecimento, anotar fato, rotinas, resumo),
+    /// e marcar cada um seria esquecer o sexto no dia em que ele aparecesse.
     fn gravar_nota(&self, nota: &Nota) {
         let caminho = self.caminho_da_nota(&nota.nome);
         if let Err(erro) = std::fs::write(&caminho, nota.para_markdown()) {
             eprintln!("[jarvis] não gravei {}: {erro}", caminho.display());
         }
+
+        self.versao.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Quantas vezes as notas mudaram nesta sessão. Só é útil comparada consigo mesma:
+    /// mudou o número, mudou a pasta — e é isso que faz o grafo do conhecimento se
+    /// redesenhar sozinho no meio da conversa.
+    pub fn versao(&self) -> u64 {
+        self.versao.load(Ordering::Relaxed)
     }
 
     /// Regravado inteiro a cada mudança. São dezenas de linhas — reconciliar seria

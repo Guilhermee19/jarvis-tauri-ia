@@ -1,19 +1,31 @@
 //! Busca na web, para o Jarvis responder o que não está na memória dele.
 //!
-//! **Duas fontes, e a escolha foi medida.** O que eu queria era raspar um buscador e
+//! **Três fontes, e cada escolha foi medida.** O que eu queria era raspar um buscador e
 //! não depender de chave nenhuma. Não dá:
 //!
 //! | fonte | resultado |
 //! | --- | --- |
-//! | `html.duckduckgo.com` | devolve página de desafio anti-bot (`anomaly`, `challenge-form`) |
+//! | `html.duckduckgo.com` | página de desafio anti-bot (`anomaly`, `challenge-form`) |
+//! | `lite.duckduckgo.com` | o mesmo desafio, HTTP 202 — a versão "leve" não é mais aberta |
+//! | `www.mojeek.com` | 403 |
 //! | `api.duckduckgo.com` (Instant Answer) | `AbstractText` vazio em 4 de 4 consultas reais |
 //! | instâncias públicas de SearXNG | JSON desligado, 403 ou "Too Many Requests" |
 //! | **Wikipedia** | **3 acertos em 4** — falha só no que não é enciclopédico |
+//! | **Google News (RSS)** | **200, sem chave, 100 itens datados** |
 //!
-//! Então: **Wikipedia por padrão**, sem configurar nada, e uma chave do Brave Search
-//! nas configurações que troca a fonte por busca web de verdade. O Brave é o que
-//! resolve "preço do dólar hoje" — a Wikipedia responde isso com "Opções (título)",
-//! que foi o que ela devolveu no teste.
+//! Então: **Wikipedia + manchetes por padrão**, sem configurar nada, e uma chave do Brave
+//! Search nas configurações que troca a Wikipedia por busca web de verdade.
+//!
+//! **Por que as manchetes entraram.** A Wikipedia é enciclopédia, e enciclopédia não tem
+//! HOJE: perguntado "quanto está a Bitcoin?", ela devolveu os verbetes *Bitcoin*, *Mercado
+//! Bitcoin* e *Mineração de Bitcoin*, e o Jarvis respondeu explicando o que é a moeda —
+//! que foi exatamente a reclamação que originou esta fonte. O RSS do Google News responde
+//! a mesma pergunta com "Preço do Bitcoin fica em US$ 77 mil…", **com data**. Não é busca
+//! web (não há trecho da página, só a manchete), mas é fato atual e datado, que é o que
+//! faltava.
+//!
+//! O RSS e não uma API: não existe API pública do Google News, e o feed responde 200 sem
+//! chave, sem cabeçalho especial e sem desafio — os três tropeços da tabela acima.
 //!
 //! ponytail: sem cache. Perguntar duas vezes bate duas vezes na rede. Um mapa com TTL
 //! entra quando (e se) isso incomodar.
@@ -46,6 +58,13 @@ pub struct Achado {
     pub titulo: String,
     pub trecho: String,
     pub url: String,
+    /// A data, quando o achado é uma NOTÍCIA. `None` no que é enciclopédico ou de página.
+    ///
+    /// Serve a duas coisas, e as duas importam. Na resposta, ela é a diferença entre "a
+    /// Bitcoin está em US$ 77 mil" e "estava em US$ 77 mil na sexta" — sem a data, o
+    /// modelo fala de ontem no presente. Na memória, ela é o que impede a manchete de
+    /// virar nota: notícia é retrato de um dia, e nota é o que continua valendo amanhã.
+    pub quando: Option<String>,
 }
 
 /// A Wikipedia recusa chamada sem User-Agent identificável.
@@ -62,24 +81,48 @@ pub async fn pesquisar(
         return Err(SearchError::SemConsulta);
     }
 
-    let achados = if chave_brave.trim().is_empty() {
-        wikipedia(http, consulta).await?
+    let principal = if chave_brave.trim().is_empty() {
+        wikipedia(http, consulta).await
     } else {
-        brave(http, consulta, chave_brave.trim()).await?
+        brave(http, consulta, chave_brave.trim()).await
     };
 
-    if achados.is_empty() {
-        return Err(SearchError::NadaEncontrado(consulta.to_owned()));
+    // A chave recusada TEM que aparecer: é configuração errada, e o usuário é o único que
+    // pode consertar. Qualquer outra falha da fonte principal só vira erro se as manchetes
+    // também vierem vazias — derrubar a busca por causa da Wikipedia fora do ar seria
+    // trocar meia resposta por nenhuma.
+    if let Err(SearchError::Recusada { status }) = &principal {
+        return Err(SearchError::Recusada { status: *status });
     }
+
+    let mut achados = match &principal {
+        Ok(itens) => itens.clone(),
+        Err(_) => Vec::new(),
+    };
+
+    achados.extend(noticias(http, consulta).await);
+
+    if achados.is_empty() {
+        // O erro da fonte principal explica melhor que "não achei nada": ele diz se foi
+        // rede, recusa, ou busca que rodou e voltou vazia.
+        return match principal {
+            Ok(_) => Err(SearchError::NadaEncontrado(consulta.to_owned())),
+            Err(erro) => Err(erro),
+        };
+    }
+
     Ok(achados)
 }
 
-/// Nome da fonte, para o log de ações dizer de onde veio a resposta.
+/// Nome das fontes, para o log de ações dizer de onde veio a resposta.
+///
+/// Diz o que foi CONSULTADO, não o que respondeu: as manchetes entram sempre, e quando o
+/// feed não responde a linha do log continua verdadeira — ela conta onde ele foi olhar.
 pub fn fonte(chave_brave: &str) -> &'static str {
     if chave_brave.trim().is_empty() {
-        "wikipedia"
+        "wikipedia + notícias"
     } else {
-        "brave"
+        "brave + notícias"
     }
 }
 
@@ -154,11 +197,145 @@ async fn resumo_da_wikipedia(http: &reqwest::Client, titulo: &str) -> Option<Ach
     Some(Achado {
         titulo: resumo.title,
         trecho: resumo.extract,
+        quando: None,
         url: resumo
             .content_urls
             .map(|enderecos| enderecos.desktop.page)
             .unwrap_or_default(),
     })
+}
+
+// ---- Google News (RSS) -------------------------------------------------------
+
+/// Quantas manchetes entram junto dos resultados principais.
+///
+/// Menos que os outros de propósito: manchete é uma linha, e o que ela traz de útil é o
+/// FATO e a DATA. Três cobrem "o que está acontecendo com X" sem empurrar os verbetes para
+/// fora da janela de um modelo de 3B.
+const MANCHETES: usize = 3;
+
+/// As notícias recentes sobre o assunto, com data. **Nunca falha a busca**: feed fora do
+/// ar devolve lista vazia, e o resto da resposta continua de pé.
+async fn noticias(http: &reqwest::Client, consulta: &str) -> Vec<Achado> {
+    let url = format!(
+        "https://news.google.com/rss/search?q={}&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        urlencode(consulta)
+    );
+
+    let resposta = http
+        .get(&url)
+        .timeout(TIMEOUT)
+        .header("User-Agent", AGENTE)
+        .send()
+        .await;
+
+    let Ok(resposta) = resposta else {
+        return Vec::new();
+    };
+    if !resposta.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(xml) = resposta.text().await else {
+        return Vec::new();
+    };
+
+    manchetes(&xml)
+}
+
+/// O XML vira achados. Separado da rede para poder ser testado com um feed de mentira —
+/// é a única parte disto que pode quebrar em silêncio quando o Google mudar o formato.
+fn manchetes(xml: &str) -> Vec<Achado> {
+    xml.split("<item>")
+        .skip(1)
+        .filter_map(|item| {
+            let titulo = sem_entidades(etiqueta(item, "title")?);
+            if titulo.trim().is_empty() {
+                return None;
+            }
+
+            let quando = etiqueta(item, "pubDate").map(data_curta);
+
+            Some(Achado {
+                // A manchete JÁ diz a fonte ("… - Portal do Bitcoin"), então o trecho não
+                // precisa repeti-la. Ele carrega o que a manchete não tem: quando foi.
+                trecho: match &quando {
+                    Some(dia) => format!("Manchete de {dia}."),
+                    None => "Manchete recente.".to_owned(),
+                },
+                titulo,
+                url: etiqueta(item, "link")
+                    .map(str::to_owned)
+                    .unwrap_or_default(),
+                quando,
+            })
+        })
+        .take(MANCHETES)
+        .collect()
+}
+
+/// O conteúdo de `<etiqueta>…</etiqueta>`, cru.
+///
+/// Um parser de XML inteiro seria uma crate a mais por três campos de um feed que este
+/// projeto não controla — e que, quando mudar, muda de um jeito que nenhum parser
+/// salvaria. O `manchetes` tem teste justamente por isso.
+fn etiqueta<'a>(item: &'a str, nome: &str) -> Option<&'a str> {
+    let abre = item.find(&format!("<{nome}>"))? + nome.len() + 2;
+    let fecha = item[abre..].find(&format!("</{nome}>"))? + abre;
+
+    Some(item[abre..fecha].trim())
+}
+
+/// `Sat, 29 Aug 2026 16:03:00 GMT` vira `29/08/2026`.
+///
+/// Só o dia: hora de publicação de notícia não muda resposta nenhuma, e a data é o que
+/// separa "está" de "estava".
+fn data_curta(rfc2822: &str) -> String {
+    match chrono::DateTime::parse_from_rfc2822(rfc2822) {
+        Ok(data) => data.format("%d/%m/%Y").to_string(),
+        // Formato inesperado vira o texto cru: uma data feia informa mais que nenhuma.
+        Err(_) => rfc2822.to_owned(),
+    }
+}
+
+/// As cinco entidades que aparecem em manchete, e as numéricas decimais.
+///
+/// `&#39;` em "o &#39;rali&#39; do bitcoin" atravessa o prompt e sai na fala do Jarvis
+/// como está — é pequeno e é exatamente o tipo de sujeira que ninguém liga à causa.
+fn sem_entidades(texto: &str) -> String {
+    let mut saida = String::with_capacity(texto.len());
+    let mut resto = texto;
+
+    while let Some(inicio) = resto.find('&') {
+        saida.push_str(&resto[..inicio]);
+        let daqui = &resto[inicio..];
+
+        let Some(fim) = daqui.find(';').filter(|fim| *fim <= 8) else {
+            saida.push('&');
+            resto = &daqui[1..];
+            continue;
+        };
+
+        let entidade = &daqui[1..fim];
+        match entidade {
+            "amp" => saida.push('&'),
+            "lt" => saida.push('<'),
+            "gt" => saida.push('>'),
+            "quot" => saida.push('"'),
+            "apos" => saida.push('\''),
+            numerica if numerica.starts_with('#') => {
+                match numerica[1..].parse::<u32>().ok().and_then(char::from_u32) {
+                    Some(letra) => saida.push(letra),
+                    None => saida.push_str(&daqui[..=fim]),
+                }
+            }
+            _ => saida.push_str(&daqui[..=fim]),
+        }
+
+        resto = &daqui[fim + 1..];
+    }
+
+    saida.push_str(resto);
+    saida
 }
 
 // ---- Brave -------------------------------------------------------------------
@@ -224,6 +401,7 @@ async fn brave(
             titulo: resultado.title,
             trecho: limpar(&resultado.description),
             url: resultado.url,
+            quando: None,
         })
         .collect())
 }
@@ -322,8 +500,103 @@ mod tests {
     /// A escolha da fonte é o que o log de ações mostra ao usuário.
     #[test]
     fn a_fonte_depende_da_chave() {
-        assert_eq!(fonte(""), "wikipedia");
-        assert_eq!(fonte("   "), "wikipedia");
-        assert_eq!(fonte("BSA-xxx"), "brave");
+        assert_eq!(fonte(""), "wikipedia + notícias");
+        assert_eq!(fonte("   "), "wikipedia + notícias");
+        assert_eq!(fonte("BSA-xxx"), "brave + notícias");
+    }
+
+    /// Um feed do Google News encurtado, com as três coisas que importam: manchete com
+    /// entidade, data em RFC 2822, e um item sem data.
+    const FEED: &str = r#"<rss version="2.0"><channel>
+<title>bitcoin - Google Notícias</title>
+<item>
+<title>Preço do Bitcoin fica em US$ 77 mil após ETFs perderem US$ 202 milhões - Economic News</title>
+<link>https://news.google.com/rss/articles/abc</link>
+<pubDate>Sat, 29 Aug 2026 16:03:00 GMT</pubDate>
+</item>
+<item>
+<title>O &#39;rali&#39; do bitcoin &amp; o discurso do Fed - Portal do Bitcoin</title>
+<link>https://news.google.com/rss/articles/def</link>
+<pubDate>Fri, 28 Aug 2026 12:06:00 GMT</pubDate>
+</item>
+<item>
+<title>Sem data nenhuma - Jornal</title>
+<link>https://news.google.com/rss/articles/ghi</link>
+</item>
+<item>
+<title>O quarto item, que não deve entrar - Jornal</title>
+<link>https://news.google.com/rss/articles/jkl</link>
+<pubDate>Thu, 27 Aug 2026 09:00:00 GMT</pubDate>
+</item>
+</channel></rss>"#;
+
+    /// **O contrato com um XML que este projeto não controla.** O Google muda o feed sem
+    /// avisar, e o sintoma seria a busca voltar a responder só com verbete — sem erro, sem
+    /// log, sem nada que ligue uma coisa à outra.
+    #[test]
+    fn o_feed_de_noticias_vira_achados_com_data() {
+        let achados = manchetes(FEED);
+
+        assert_eq!(achados.len(), MANCHETES, "o teto de manchetes vale");
+
+        assert_eq!(
+            achados[0].titulo,
+            "Preço do Bitcoin fica em US$ 77 mil após ETFs perderem US$ 202 milhões - Economic News"
+        );
+        assert_eq!(achados[0].quando.as_deref(), Some("29/08/2026"));
+        // A data também vai no trecho: é ele que o modelo lê.
+        assert_eq!(achados[0].trecho, "Manchete de 29/08/2026.");
+        assert_eq!(achados[0].url, "https://news.google.com/rss/articles/abc");
+
+        // As entidades saem — `&#39;` na fala do Jarvis é sujeira que ninguém liga à causa.
+        assert_eq!(
+            achados[1].titulo,
+            "O 'rali' do bitcoin & o discurso do Fed - Portal do Bitcoin"
+        );
+
+        // Item sem `pubDate` entra mesmo assim: a manchete ainda informa, e sem data ela
+        // só não pode ser citada como sendo de hoje.
+        assert_eq!(achados[2].quando, None);
+        assert_eq!(achados[2].trecho, "Manchete recente.");
+    }
+
+    /// O título do canal também é um `<title>`, mas fora de `<item>` — se ele entrasse, a
+    /// primeira "notícia" de toda busca seria "bitcoin - Google Notícias".
+    #[test]
+    fn o_titulo_do_canal_nao_vira_noticia() {
+        let achados = manchetes(FEED);
+
+        assert!(
+            !achados
+                .iter()
+                .any(|achado| achado.titulo.contains("Google Notícias")),
+            "o cabeçalho do feed vazou para os achados"
+        );
+    }
+
+    #[test]
+    fn feed_vazio_ou_quebrado_nao_derruba_a_busca() {
+        assert!(manchetes("").is_empty());
+        assert!(manchetes("<rss><channel></channel></rss>").is_empty());
+        // Item pela metade: o que dá para ler, lê; o que não dá, ignora.
+        assert!(manchetes("<item><title></title></item>").is_empty());
+    }
+
+    #[test]
+    fn a_data_vira_dia_legivel() {
+        assert_eq!(data_curta("Sat, 29 Aug 2026 16:03:00 GMT"), "29/08/2026");
+        // Formato que não bate volta cru: data feia informa mais que data nenhuma.
+        assert_eq!(data_curta("ontem"), "ontem");
+    }
+
+    #[test]
+    fn as_entidades_da_manchete_viram_texto() {
+        assert_eq!(sem_entidades("a &amp; b"), "a & b");
+        assert_eq!(sem_entidades("o &#39;rali&#39;"), "o 'rali'");
+        assert_eq!(sem_entidades("&quot;alta&quot;"), "\"alta\"");
+        // `&` solto é comum em manchete e não pode comer o resto do texto.
+        assert_eq!(sem_entidades("Fed & juros hoje"), "Fed & juros hoje");
+        // Entidade que não conhecemos passa inteira, em vez de sumir.
+        assert_eq!(sem_entidades("50&nbsp;mil"), "50&nbsp;mil");
     }
 }

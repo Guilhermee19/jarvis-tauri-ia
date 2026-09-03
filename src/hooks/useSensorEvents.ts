@@ -14,6 +14,7 @@ import { cadastrarRosto } from './useSaudacao'
 import {
   useCamerasStore,
   useChatStore,
+  useConhecimentoStore,
   useJanelaStore,
   useNavegadorStore,
   useNowPlayingStore,
@@ -63,6 +64,17 @@ export function useSensorEvents() {
       onJarvisEvent<PedacoDaResposta>(JarvisEvent.ReplyChunk, (pedaco) =>
         receberFrase(pedaco.turno, pedaco.frase),
       ),
+    )
+
+    // O grafo se redesenhando sozinho enquanto a conversa acontece. Só relê com a
+    // janelinha ABERTA: fechada, o `ConhecimentoPanel` já relê ao montar, e puxar a base
+    // inteira pelo IPC para ninguém olhar seria trabalho jogado fora.
+    assinar(
+      onJarvisEvent(JarvisEvent.MemoriaMudou, () => {
+        if (useJanelaStore.getState().abertas.includes('conhecimento')) {
+          void useConhecimentoStore.getState().atualizar()
+        }
+      }),
     )
 
     // O navegador se mexendo por conta própria. Os dois vêm de callbacks do webview, que

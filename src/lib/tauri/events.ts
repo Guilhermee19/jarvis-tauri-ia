@@ -30,6 +30,14 @@ export const JarvisEvent = {
    * no fim, quando a resposta já foi inteiramente ouvida.
    */
   ReplyChunk: 'jarvis://reply-chunk',
+  /**
+   * As notas do Jarvis mudaram — o grafo do conhecimento que estiver aberto se redesenha.
+   *
+   * Sem carga: quem recebe relê o grafo inteiro. Só chega quando mudou de verdade (uma
+   * busca que virou nota, a nota da conversa, um "esquece X"), então reagir a ele não
+   * custa uma releitura por mensagem.
+   */
+  MemoriaMudou: 'jarvis://memoria-mudou',
   /** A aba do navegador mudou de endereço sozinha — link, redirecionamento, rota de SPA. */
   BrowserUrl: 'jarvis://browser-url',
   /** A página pediu janela nova: clique do meio, `target="_blank"`, `window.open`. */

@@ -2,9 +2,34 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+import { descontar, type Caixa } from '@/lib/buraco'
 import { browserExternal } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { abaAtiva, useJanelaStore, useNavegadorStore } from '@/stores'
+
+/**
+ * As janelinhas desenhadas ACIMA da que contém este buraco.
+ *
+ * Lido do DOM, e não da store, porque o que importa é o retângulo que está na tela agora —
+ * a store guarda a posição escolhida, que é `null` enquanto a janelinha nunca foi
+ * arrastada, e não sabe o tamanho que o conteúdo deu a ela. O `z-index` é o mesmo que o
+ * `zDaJanela` calculou e a `FloatingPanel` escreveu no `style`.
+ */
+function porCimaDe(elemento: HTMLElement): Caixa[] {
+  const minha = Number(elemento.closest<HTMLElement>('.floating-panel')?.style.zIndex ?? 0)
+
+  return [...document.querySelectorAll<HTMLElement>('.floating-panel')]
+    .filter((painel) => Number(painel.style.zIndex || 0) > minha)
+    .map((painel) => {
+      const caixa = painel.getBoundingClientRect()
+      return {
+        x: Math.round(caixa.x),
+        y: Math.round(caixa.y),
+        largura: Math.round(caixa.width),
+        altura: Math.round(caixa.height),
+      }
+    })
+}
 
 /**
  * O navegador interno: barra de abas, barra de endereço, e um buraco.
@@ -17,9 +42,14 @@ import { abaAtiva, useJanelaStore, useNavegadorStore } from '@/stores'
  *
  * - Nenhum CSS alcança a página. Nada de sombra, borda arredondada ou transparência sobre
  *   ela — o que se vê ali é uma janela do sistema fingindo estar dentro do painel.
- * - Ela cobre o que estiver por baixo. Por isso as abas só aparecem quando este painel é
- *   o da FRENTE: sem essa regra, abrir a conversa por cima do navegador desenharia a
- *   conversa embaixo dele.
+ * - Ela cobre o que estiver por baixo. Por isso o webview é recortado para caber só onde
+ *   nenhuma janelinha mais alta está — quem faz essa conta é o `lib/buraco`.
+ *
+ * **A regra antiga era pela ORDEM, e agora é pelo LUGAR.** Antes, qualquer janelinha à
+ * frente sumia com a página inteira, mesmo estando do outro lado da tela e sem cobrir um
+ * pixel dela. Hoje o que esconde é sobreposição de verdade — e mesmo ela só esconde o que
+ * for coberto: uma conversa encostando na borda esquerda do navegador encolhe a página,
+ * não a apaga.
  */
 export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
   const abas = useNavegadorStore((state) => state.abas)
@@ -37,32 +67,40 @@ export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
   // mostraria para sempre o endereço com que a aba nasceu.
   const urlAtiva = useNavegadorStore((state) => abaAtiva(state)?.url ?? '')
 
-  // A posição e o tamanho do painel mudam a cada quadro enquanto ele é arrastado, e é
-  // isso que dispara a remedição — sem um laço de animação girando à toa.
-  const arranjo = useJanelaStore((state) => state.arranjos.navegador)
+  // A posição e o tamanho de QUALQUER janelinha mudam a cada quadro enquanto ela é
+  // arrastada, e é isso que dispara a remedição — sem um laço de animação girando à toa.
+  // São todas, e não só a do navegador, porque agora o recorte depende de onde as outras
+  // estão: arrastar a conversa por cima da página tem que encolher a página.
+  const arranjos = useJanelaStore((state) => state.arranjos)
   const abertas = useJanelaStore((state) => state.abertas)
-  const naFrente = abertas[abertas.length - 1] === 'navegador'
 
   const buraco = useRef<HTMLDivElement>(null)
+  // Coberta de tal jeito que não sobrou página para mostrar. Guardado porque é o que a
+  // mensagem do buraco vazio explica — e ele não dá para deduzir do `abertas`.
+  const [coberto, setCoberto] = useState(false)
 
   useEffect(() => {
     const medir = () => {
       const alvo = buraco.current
-      if (!alvo || !naFrente || escondido) {
+      if (!alvo || escondido) {
         posicionar(null)
         return
       }
 
       const caixa = alvo.getBoundingClientRect()
-      posicionar({
-        // `getBoundingClientRect` já é relativo à área de conteúdo da janela, que é
-        // exatamente o sistema de coordenadas que o Tauri usa para posicionar um webview
-        // filho. É por isso que não há conversão nenhuma aqui.
+      // `getBoundingClientRect` já é relativo à área de conteúdo da janela, que é
+      // exatamente o sistema de coordenadas que o Tauri usa para posicionar um webview
+      // filho. É por isso que não há conversão nenhuma aqui.
+      const area = {
         x: Math.round(caixa.x),
         y: Math.round(caixa.y),
         largura: Math.round(caixa.width),
         altura: Math.round(caixa.height),
-      })
+      }
+
+      const livre = descontar(area, porCimaDe(alvo))
+      setCoberto(livre === null)
+      posicionar(livre)
     }
 
     medir()
@@ -77,7 +115,7 @@ export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
       observador.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [posicionar, naFrente, arranjo, escondido])
+  }, [posicionar, arranjos, abertas, escondido])
 
   // Fechar o painel desmonta este componente, e o webview precisa sumir junto — ele não
   // sabe que o painel dele deixou de existir.
@@ -124,10 +162,11 @@ export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
               Peça “abre o youtube” ou “pesquisa preço do dólar” — e a página aparece aqui.
             </p>
           </div>
-        ) : !naFrente ? (
+        ) : coberto ? (
           <div className="text-muted/70 flex h-full items-center justify-center px-6 text-center text-[10px] leading-relaxed">
-            A página fica escondida enquanto outra janelinha está na frente — ela é uma camada do
-            sistema e cobriria o que estivesse por cima. Clique aqui para trazê-la de volta.
+            Outra janelinha está bem em cima da página, e não sobrou espaço para ela — a página é
+            uma camada do sistema e cobriria a janelinha que está por cima. Arraste uma das duas
+            para o lado e ela volta.
           </div>
         ) : null}
       </div>

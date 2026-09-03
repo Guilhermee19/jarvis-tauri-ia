@@ -26,6 +26,16 @@ const UI_ACTION_EVENT: &str = "jarvis://ui-action";
 /// bolha cresce no mesmo passo da fala. Escutado por `src/hooks/useSensorEvents.ts`.
 const REPLY_CHUNK_EVENT: &str = "jarvis://reply-chunk";
 
+/// As notas mudaram — o grafo do conhecimento que está aberto precisa se redesenhar.
+///
+/// Sai só quando mudou de verdade (a `Memoria::versao` diz), e não a cada mensagem: um
+/// "bom dia" não muda nota nenhuma, e recarregar o grafo por causa dele seria trabalho
+/// para desenhar exatamente a mesma coisa.
+///
+/// Vazio de propósito: o que a tela faz com isto é reler o grafo inteiro, e mandar o que
+/// mudou junto seria um segundo formato para manter em sincronia com o primeiro.
+const MEMORIA_EVENT: &str = "jarvis://memoria-mudou";
+
 /// Uma frase, com o crachá do turno que a gerou.
 ///
 /// O `turno` existe por causa da interrupção: mandar uma pergunta nova enquanto ele
@@ -93,6 +103,10 @@ pub async fn send_message(
         let _ = services.ensure_ollama(&http, &settings.ollama_url).await;
     }
 
+    // O retrato das notas ANTES do turno. Comparado no fim, ele diz se a busca aprendeu
+    // alguma coisa — e é o que decide se a tela precisa saber.
+    let notas_antes = memoria.versao();
+
     // A fila da fala abre ANTES do modelo pensar, e é de propósito: subir o servidor de
     // voz leva segundos na primeira vez do dia, e eles cabem inteiros dentro do tempo que
     // o Ollama leva para escrever a primeira frase. Depois disso ela fica só esperando.
@@ -155,6 +169,13 @@ pub async fn send_message(
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);
     memoria.push_message(reply.clone());
 
+    // O que a busca guardou e o que o "esquece X" apagou já aconteceram: quem escreve
+    // durante o turno é o `handle`. O aviso sai aqui, e o da manutenção sai depois dela,
+    // que é quando a nota da conversa fica pronta.
+    if memoria.versao() != notas_antes {
+        let _ = app.emit(MEMORIA_EVENT, ());
+    }
+
     // **A resposta sai primeiro; o Jarvis anota depois.**
     //
     // Destilar o assunto e reescrever a nota são de duas a três chamadas ao Ollama, e
@@ -171,7 +192,15 @@ pub async fn send_message(
 
         tauri::async_runtime::spawn(async move {
             let memoria = app.state::<Memoria>();
+            let antes = memoria.versao();
+
             crate::core::agent::manter_memoria(&http, &settings, &memoria, &servico).await;
+
+            // A nota da conversa nasce aqui, segundos depois de a resposta ter saído. É o
+            // caso que mais aparece na tela: você conversa, e o grafo ganha um nó sozinho.
+            if memoria.versao() != antes {
+                let _ = app.emit(MEMORIA_EVENT, ());
+            }
         });
     }
 

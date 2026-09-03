@@ -595,13 +595,12 @@ pub async fn responder_com_busca(
         .iter()
         .enumerate()
         .map(|(i, achado)| {
-            format!(
-                "[{}] {}\n{}",
-                i + 1,
-                achado.titulo,
-                // Trecho longo de mais come o contexto sem melhorar o resumo.
-                achado.trecho.chars().take(700).collect::<String>()
-            )
+            // O trecho de uma manchete já vem com a data escrita nele ("Manchete de
+            // 29/08/2026."), e é a regra do prompt que obriga a repeti-la na fala.
+            // Trecho longo de mais come o contexto sem melhorar o resumo.
+            let corpo: String = achado.trecho.chars().take(700).collect();
+
+            format!("[{}] {}\n{corpo}", i + 1, achado.titulo)
         })
         .collect();
 
@@ -627,6 +626,9 @@ pub async fn responder_com_busca(
                  MAS NÃO INVENTE:\n\
                  - Use SÓ o que está nos trechos abaixo. Data, número, quantidade, tempo \
                    e nome próprio que não estiverem escritos ali NÃO entram.\n\
+                 - Trecho que diz \"Manchete de <data>\" é NOTÍCIA daquele dia, não de \
+                   agora. Ao usar o número dela, diga quando foi (\"na sexta\", \"dia 29\") \
+                   em vez de falar no presente. Entre duas manchetes, a mais nova vence.\n\
                  - SÓ quando ele pedir INSTRUÇÕES (uma receita, um tutorial, como \
                    instalar algo) e os trechos tiverem apenas informação geral: conte o \
                    que eles têm e diga, naturalmente, que não achou o passo a passo. \
@@ -661,6 +663,10 @@ pub async fn responder_com_busca(
 pub fn nota_da_busca(achados: &[crate::core::search::Achado]) -> String {
     achados
         .iter()
+        // **Manchete não vira nota.** Nota é o que continua valendo amanhã; notícia é o
+        // retrato de um dia, e guardá-la faz o Jarvis repetir semana que vem, com cara de
+        // quem sabe, o que era verdade na sexta passada.
+        .filter(|achado| achado.quando.is_none())
         .map(|achado| {
             let corpo = achado.trecho.chars().take(900).collect::<String>();
             if achado.url.is_empty() {

@@ -9,9 +9,10 @@ import { useJanelaStore, useNavegadorStore, zDaJanela } from '@/stores'
  * Janelinha flutuante, no mesmo molde das outras — com uma diferença que importa.
  *
  * A página de dentro é uma camada NATIVA do sistema, acima de todo o HTML. Ela não é
- * coberta pelas outras janelinhas, e por isso o painel só a mostra quando está na frente.
- * Arrastar e redimensionar funcionam porque o `NavegadorPanel` remede o buraco a cada
- * mudança e reposiciona o webview — nada disso acontece por CSS.
+ * coberta pelas outras janelinhas — é o contrário —, então o painel recorta o webview para
+ * ele ocupar só o espaço que nenhuma janelinha mais alta está usando. Arrastar e
+ * redimensionar funcionam porque o `NavegadorPanel` remede o buraco a cada mudança de
+ * qualquer janelinha e reposiciona o webview; nada disso acontece por CSS.
  */
 export function NavegadorWindow() {
   const abertas = useJanelaStore((state) => state.abertas)
