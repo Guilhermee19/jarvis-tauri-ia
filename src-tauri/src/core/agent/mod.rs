@@ -1506,22 +1506,32 @@ mod tests {
             let mut etapas: Vec<(&str, f32)> = Vec::new();
 
             // ---- 1. ouvir -------------------------------------------------
-            let relogio = Instant::now();
-            let dito = match crate::core::voice::transcribe(
-                &http,
-                &whisper,
-                std::path::Path::new(&wav),
-            )
-            .await
-            {
-                Ok(texto) => texto,
-                Err(erro) => {
-                    println!("transcrição falhou: {erro}");
-                    println!("(aponte JARVIS_TURNO_WAV para um WAV com fala, ou grave um em Diagnóstico › Microfone)");
-                    return;
+            //
+            // `JARVIS_TURNO_FRASE` pula o Whisper e mede o turno de quem DIGITOU. É o
+            // recorte certo quando se está mexendo no modelo: são as etapas seguintes que
+            // mudam, e subir o whisper-server só para elas seria pedágio.
+            let dito = match std::env::var("JARVIS_TURNO_FRASE") {
+                Ok(frase) if !frase.trim().is_empty() => frase,
+                _ => {
+                    let relogio = Instant::now();
+                    let ouvido = match crate::core::voice::transcribe(
+                        &http,
+                        &whisper,
+                        std::path::Path::new(&wav),
+                    )
+                    .await
+                    {
+                        Ok(texto) => texto,
+                        Err(erro) => {
+                            println!("transcrição falhou: {erro}");
+                            println!("(aponte JARVIS_TURNO_WAV para um WAV com fala, grave um em Diagnóstico › Microfone, ou mande a frase em JARVIS_TURNO_FRASE)");
+                            return;
+                        }
+                    };
+                    etapas.push(("ouvir (whisper)", relogio.elapsed().as_secs_f32()));
+                    ouvido
                 }
             };
-            etapas.push(("ouvir (whisper)", relogio.elapsed().as_secs_f32()));
             println!("ouviu: {dito:?}\n");
 
             // ---- 2. rotear ------------------------------------------------

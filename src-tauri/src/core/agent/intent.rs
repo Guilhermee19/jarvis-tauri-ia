@@ -1177,6 +1177,57 @@ mod tests {
         assert!(com.contains("\"meu jogo\" = steam"));
     }
 
+    /// Cronometra a MESMA chamada nos dois endereços do Ollama: `localhost` e `127.0.0.1`.
+    ///
+    /// Não é um teste: é a ferramenta que mede o custo do NOME. No Windows, `localhost`
+    /// resolve para `::1` antes de `127.0.0.1`, e o Ollama só escuta em IPv4 — cada
+    /// chamada paga a tentativa perdida antes de cair no endereço certo. O que sai daqui
+    /// é o número que decide se isso importa nesta máquina.
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture o_endereco_do_ollama_custa
+    /// ```
+    #[test]
+    #[ignore]
+    fn o_endereco_do_ollama_custa() {
+        let modelo = std::env::var("JARVIS_MODELO").unwrap_or_else(|_| "qwen2.5vl:3b".to_owned());
+
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        bloco.block_on(async {
+            // O prompt é mínimo de propósito: o que se mede aqui é o caminho até o
+            // servidor, não o modelo. Quanto menos trabalho ele tiver, mais limpo o número.
+            let corpo = serde_json::json!({
+                "model": modelo,
+                "stream": false,
+                "keep_alive": KEEP_ALIVE,
+                "options": { "temperature": 0, "num_predict": 1 },
+                "messages": [{ "role": "user", "content": "oi" }],
+            });
+
+            for url in ["http://localhost:11434", "http://127.0.0.1:11434"] {
+                let http = client();
+
+                for volta in 1..=3 {
+                    let relogio = std::time::Instant::now();
+                    let saida = pedir(&http, url, &modelo, &corpo).await;
+                    let levou = relogio.elapsed().as_secs_f32();
+
+                    match saida {
+                        Ok(_) => println!("{url:<24} volta {volta}: {levou:.2} s"),
+                        Err(erro) => {
+                            println!("{url:<24} não respondeu: {erro}");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// Uma resposta em fluxo do Ollama, como ela sai do `/api/chat` com `"stream": true`.
     const FLUXO: &str = r#"{"message":{"role":"assistant","content":"Bom dia"},"done":false}
 {"message":{"role":"assistant","content":", Guilherme"},"done":false}
