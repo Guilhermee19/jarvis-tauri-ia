@@ -21,10 +21,16 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(store: Box<dyn SettingsStore>) -> Self {
-        let settings = store.load().unwrap_or_else(|error| {
+        let mut settings = store.load().unwrap_or_else(|error| {
             eprintln!("[jarvis] não consegui ler as configurações ({error}); usando os padrões");
             AppSettings::default()
         });
+
+        // Uma correção, não uma preferência: o porquê (com o número) está no
+        // `config::endereco_direto`. Aqui e não no `save` porque o arquivo de quem já usa
+        // o app tem `localhost` escrito, e ninguém vai abrir as Configurações para trocar
+        // um endereço que parece igual.
+        settings.ollama_url = crate::config::endereco_direto(&settings.ollama_url);
 
         Self {
             settings: Mutex::new(settings),

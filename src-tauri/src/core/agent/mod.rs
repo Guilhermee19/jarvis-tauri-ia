@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 
-pub use intent::client;
+pub use intent::{aquecer, client};
 
 /// Reexportados para `core::vision::ollama`, que fala com o MESMO modelo já quente —
 /// em 4 GB de VRAM não cabe um segundo.

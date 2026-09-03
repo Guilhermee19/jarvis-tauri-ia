@@ -7,7 +7,27 @@
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ASSISTANT_NAME: &str = "Jarvis";
-pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+
+/// **`127.0.0.1`, e não `localhost`.** No Windows o nome resolve para `::1` antes do
+/// IPv4, e o Ollama só escuta em IPv4: cada conexão NOVA tenta o endereço errado antes de
+/// acertar. Medido aqui com o cliente do app (`o_endereco_do_ollama_custa`, em
+/// `core/agent/intent.rs`): **0,33 s pelo nome contra 0,02 s pelo endereço**.
+///
+/// O pool do reqwest esconde isso enquanto a conversa é seguida — só a primeira conexão
+/// paga. Mas é justamente a PRIMEIRA mensagem, depois de o app ficar parado, que decide se
+/// ele parece rápido. Os outros serviços locais (whisper, piper, chatterbox, go2rtc) já
+/// usavam o endereço; o Ollama era o único fora do padrão.
+pub const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
+
+/// Troca `localhost` pelo endereço IPv4 na URL de um serviço local.
+///
+/// Mora na LEITURA das configurações, e não só no padrão acima, porque o `settings.json`
+/// de quem já usa o app tem `localhost` escrito — um padrão novo não alcançaria nenhum
+/// deles. Quem apontar o Ollama para outra máquina não é tocado: só o nome da própria
+/// máquina é trocado, e ele sempre quer dizer a mesma coisa.
+pub fn endereco_direto(url: &str) -> String {
+    url.replacen("//localhost", "//127.0.0.1", 1)
+}
 
 /// O tema: **a cor do app, a voz e o jeito de falar**, num campo só.
 ///
@@ -288,6 +308,26 @@ impl AppSettings {
 
 #[cfg(test)]
 mod tests {
+    /// O nome custa uma conexão perdida por IPv6 em toda conexão nova. O endereço não —
+    /// e é o mesmo lugar.
+    #[test]
+    fn o_localhost_do_ollama_vira_endereco() {
+        assert_eq!(
+            endereco_direto("http://localhost:11434"),
+            "http://127.0.0.1:11434"
+        );
+
+        // Já certo, e apontando para outra máquina: os dois passam intactos. Trocar o
+        // host de um Ollama remoto seria mandar a pergunta para a máquina errada.
+        assert_eq!(
+            endereco_direto("http://127.0.0.1:11434"),
+            "http://127.0.0.1:11434"
+        );
+        assert_eq!(
+            endereco_direto("http://servidor-da-sala:11434"),
+            "http://servidor-da-sala:11434"
+        );
+    }
     use super::*;
 
     #[test]

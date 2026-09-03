@@ -691,7 +691,7 @@ espera do usuário            3.60 s   ← até a fala começar
 em segundo plano             1.75 s   (33%)
 ```
 
-**Três coisas mudaram por causa dessa medição**, e nenhuma delas era o que se suspeitava:
+**Cinco coisas mudaram por causa dessa medição**, e nenhuma delas era o que se suspeitava:
 
 **O Whisper usava um quarto do processador.** Ele subia com `-t 4` fixo, herdado do laptop
 de 4 núcleos onde o projeto nasceu. Medido aqui: 4 threads = 2,29 s, **8 threads = 1,66 s**,
@@ -726,6 +726,29 @@ segundos, e sem o carimbo ele entraria na bolha da pergunta nova.
 
 O que sobra na frente do usuário deixou de ser a resposta inteira e passou a ser a primeira
 frase dela.
+
+**A primeira mensagem do dia custava 8,5 s, e nada daquilo era pensamento.** Medido com o
+`turno_de_verdade` depois de um `ollama stop`:
+
+| a mesma pergunta | até ele começar a falar |
+| --- | --- |
+| modelo fora da VRAM (o primeiro "oi" do dia) | **8,54 s** |
+| modelo carregado, prompt do roteador frio | 2,10 s |
+| tudo quente | **0,89 s** |
+
+Os 7,9 s de diferença são o `qwen2.5vl:3b` indo para a VRAM (8,5 s) e as ~3.150 fichas do
+prompt do roteador sendo avaliadas (0,8 s) — trabalho fixo, que vale para a sessão inteira e
+que alguém ia pagar de qualquer jeito. Hoje ele é pago no `setup` do app
+(`commands::chat::aquecer`), enquanto a janela abre, com o prompt e o schema DE VERDADE:
+prompt aproximado esquentaria o modelo e deixaria a avaliação para a primeira pergunta.
+
+**E o Ollama era o único serviço chamado pelo NOME.** `localhost` resolve para `::1` antes
+do IPv4 no Windows, e o Ollama só escuta em IPv4 — cada conexão nova tenta o endereço errado
+primeiro. Medido com o cliente do app (`o_endereco_do_ollama_custa`): **0,33 s pelo nome
+contra 0,02 s pelo endereço**. O pool do reqwest esconde isso numa conversa seguida, e cobra
+justamente na primeira mensagem depois de uma pausa. Os outros quatro serviços locais já
+usavam `127.0.0.1`; agora o Ollama também, inclusive nos `settings.json` que já existem
+(`config::endereco_direto`, aplicado na leitura).
 
 ## Modo conversa
 

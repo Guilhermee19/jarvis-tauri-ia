@@ -99,6 +99,13 @@ pub fn run() {
             app.manage(crate::core::rostos::Reconhecedor::new());
 
             tray::build(app.handle())?;
+
+            // O modelo indo para a VRAM enquanto a janela abre, em vez de na primeira
+            // pergunta. É a única coisa que sobe sozinha aqui, e sobe porque o custo dela
+            // é fixo e inevitável: quem for conversar vai pagá-lo de um jeito ou de outro,
+            // e aqui ele não aparece.
+            commands::chat::aquecer(app.handle().clone());
+
             Ok(())
         })
         .on_window_event(window::handle_window_event)

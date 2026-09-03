@@ -348,7 +348,15 @@ Das ~7 etapas de um turno de voz, **só uma tinha número**. O `turno_de_verdade
   das sete — vai com `"stream": true`, `converse::fim_de_frase` corta a resposta em frases,
   e a fila de `commands/voice.rs` sintetiza uma à frente enquanto a atual toca. A espera
   passou de "a resposta inteira" para "a primeira frase dela"
-- ⬜ Build CUDA do Whisper — troca de arquivos, sem código
+- ✅ **O modelo entra na VRAM enquanto a janela abre.** O primeiro "oi" do dia media
+  **8,54 s** até a fala começar contra 0,89 s com tudo quente — 7,9 s de carga de modelo e
+  de prompt do roteador, que ninguém precisava esperar. O `commands::chat::aquecer` roda no
+  `setup`, com o prompt e o schema de verdade, para o cache servir à primeira pergunta
+- ✅ **`127.0.0.1` no lugar de `localhost` no Ollama.** O nome resolve para `::1` primeiro e
+  o Ollama só escuta em IPv4: 0,33 s por conexão nova contra 0,02 s. Era o único dos cinco
+  serviços locais chamado pelo nome
+- ⬜ Build CUDA do Whisper — troca de arquivos, sem código. É o que sobra no turno de VOZ:
+  1,66 s de transcrição em CPU contra os ~0,9 s de todo o resto
 
 **O TTS nunca foi o gargalo.** A 0,15 s ele é o elo mais rápido; trocar de motor (foi
 cogitado o MeloTTS, que além disso não fala português) otimizaria 3% do turno. Medir antes

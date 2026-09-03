@@ -475,6 +475,47 @@ pub async fn interpret(
     Ok(sem_confundir_pergunta(acao, frase))
 }
 
+/// Carrega o modelo e deixa o prompt do roteador quente, ANTES da primeira pergunta.
+///
+/// **O primeiro "oi" do dia custava perto de dez segundos, e nenhum deles era pensamento**
+/// — medido nesta máquina, com o `o_endereco_do_ollama_custa` e o `turno_de_verdade`:
+///
+/// | o que | quanto |
+/// | --- | --- |
+/// | trazer o `qwen2.5vl:3b` para a VRAM | **8,5 s** |
+/// | avaliar as ~3.150 fichas do prompt do roteador | **0,8 s** |
+/// | o mesmo roteador com tudo quente | 0,27 s |
+///
+/// Os dois primeiros acontecem uma vez e valem para a sessão inteira. Pagá-los enquanto a
+/// janela abre é de graça; pagá-los na primeira frase é o app parecendo lento justamente
+/// na hora em que alguém está decidindo se ele presta.
+///
+/// **Manda o prompt de verdade, com o schema de verdade.** É o prefixo dele que fica no
+/// cache do llama.cpp, então um prompt aproximado esquentaria o modelo e deixaria a
+/// avaliação para a primeira mensagem — metade do ganho. `num_predict: 1` corta a
+/// geração: o que interessa é a conta do prompt, não a resposta.
+pub async fn aquecer(
+    http: &reqwest::Client,
+    url: &str,
+    model: &str,
+    assistant_name: &str,
+    apelidos: &BTreeMap<String, String>,
+) -> Result<(), AgentError> {
+    let corpo = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "keep_alive": KEEP_ALIVE,
+        "format": schema(),
+        "options": { "temperature": 0, "num_predict": 1 },
+        "messages": [
+            { "role": "system", "content": system_prompt(assistant_name, apelidos) },
+            { "role": "user", "content": "oi" },
+        ],
+    });
+
+    pedir(http, url, model, &corpo).await.map(|_| ())
+}
+
 /// Desfaz o único erro do roteador que o prompt não consegue corrigir.
 ///
 /// **Medido contra o 3B**: "quem é o Guilherme?" sai como `sou_eu` mesmo com a regra

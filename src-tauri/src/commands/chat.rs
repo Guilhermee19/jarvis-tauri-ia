@@ -185,6 +185,55 @@ pub async fn send_message(
     Ok(ChatResponse::new(reply))
 }
 
+/// Sobe o Ollama e deixa o modelo carregado antes de alguém perguntar qualquer coisa.
+///
+/// Chamado uma vez, no `setup` do app, e sem ninguém esperando pelo resultado. **Os
+/// números que justificam isto estão no `agent::aquecer`**: 8,5 s de modelo indo para a
+/// VRAM mais 0,8 s de prompt do roteador que a primeira mensagem pagava sozinha.
+///
+/// Falha em silêncio de propósito. Ollama não instalado, modelo não baixado, máquina sem
+/// GPU — nada disso vira aviso aqui, porque aqui ninguém pediu nada: a mensagem boa (com
+/// o link e o `ollama pull`) continua saindo na primeira pergunta, que é onde ela ajuda.
+pub fn aquecer(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let settings = app.state::<AppState>().settings();
+        if settings.ollama_model.trim().is_empty() {
+            return;
+        }
+
+        let http = app.state::<AppState>().http();
+        if !app
+            .state::<Services>()
+            .ensure_ollama(&http, &settings.ollama_url)
+            .await
+        {
+            return;
+        }
+
+        // Os apelidos entram no prompt, então eles têm que entrar aqui também: sem eles o
+        // prefixo aquecido não é o mesmo que a primeira pergunta vai mandar, e o cache não
+        // serve para nada.
+        let apelidos = app.state::<Memoria>().apelidos();
+
+        let relogio = std::time::Instant::now();
+        match agent::aquecer(
+            &http,
+            &settings.ollama_url,
+            &settings.ollama_model,
+            &settings.assistant_name,
+            &apelidos,
+        )
+        .await
+        {
+            Ok(()) => println!(
+                "[jarvis] modelo quente em {:.1} s",
+                relogio.elapsed().as_secs_f32()
+            ),
+            Err(erro) => eprintln!("[jarvis] não consegui aquecer o modelo: {erro}"),
+        }
+    });
+}
+
 /// A UI chama isto ao montar. O histórico agora vem do disco, então a conversa
 /// sobrevive a fechar o app — não só a esconder a janela.
 #[tauri::command]
