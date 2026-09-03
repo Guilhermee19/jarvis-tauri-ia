@@ -22,3 +22,26 @@ export function knowledgeGraph(): Promise<Grafo> {
 export function noteBody(id: string): Promise<string> {
   return call<string>('note_body', { id })
 }
+
+/**
+ * Reescreve uma nota com o texto corrigido.
+ *
+ * O que ele aprende sozinho erra — a extração automática é best-effort, e uma busca já
+ * virou nota sobre o assunto errado. Sem isto, corrigir exigia achar o `.md` na pasta.
+ *
+ * O TIPO da nota não muda: ele diz de onde o conhecimento veio, e passar a mão no texto
+ * não reescreve a origem. A data de atualização passa a ser hoje.
+ */
+export function saveNote(id: string, corpo: string): Promise<void> {
+  return call<void>('save_note', { id, corpo })
+}
+
+/**
+ * Apaga uma nota — a que está aberta, e só ela.
+ *
+ * Diferente do "esquece X" falado, que casa por termo e pode levar várias notas junto.
+ * Para um botão, casar por termo seria uma armadilha.
+ */
+export function deleteNote(id: string): Promise<void> {
+  return call<void>('delete_note', { id })
+}

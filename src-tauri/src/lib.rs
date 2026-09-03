@@ -147,6 +147,8 @@ pub fn run() {
             commands::voice::transcribe,
             commands::conhecimento::knowledge_graph,
             commands::conhecimento::note_body,
+            commands::conhecimento::save_note,
+            commands::conhecimento::delete_note,
             commands::casa::discover_devices,
             commands::casa::known_devices,
             commands::casa::import_tuya_devices,

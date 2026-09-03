@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
-import { knowledgeGraph, noteBody } from '@/lib/tauri'
+import { deleteNote, knowledgeGraph, noteBody, saveNote } from '@/lib/tauri'
 import type { Grafo, NoDoGrafo } from '@/types'
 
 /**
@@ -22,6 +22,16 @@ interface ConhecimentoState {
 
   atualizar: () => Promise<void>
   abrir: (no: NoDoGrafo) => Promise<void>
+  /**
+   * Corrige o texto da nota aberta.
+   *
+   * Relê o grafo depois de gravar, e não é preciosismo: as arestas saem dos `[[links]]`
+   * escritos no corpo, então mexer no texto pode criar ou cortar uma ligação — o desenho
+   * ficaria mentindo até alguém clicar em atualizar.
+   */
+  salvar: (corpo: string) => Promise<boolean>
+  /** Apaga a nota aberta e fecha o painel. Nota errada nem sempre é para corrigir. */
+  apagar: () => Promise<void>
   fechar: () => void
   alternarFiltro: (tipo: string) => void
   buscar: (termo: string) => void
@@ -62,6 +72,49 @@ export const useConhecimentoStore = create<ConhecimentoState>((set, get) => ({
     } catch (erro) {
       set({ erro: descrever(erro) })
     }
+  },
+
+  salvar: async (corpo) => {
+    const aberto = get().aberto
+    if (!aberto) return false
+
+    try {
+      await saveNote(aberto.no.id, corpo)
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+      return false
+    }
+
+    // O painel mostra o texto novo na hora; o grafo relê porque as ligações podem ter
+    // mudado com ele.
+    const texto = corpo.trim()
+    set({ aberto: { no: aberto.no, corpo: texto }, erro: null })
+    await get().atualizar()
+
+    // E o cabeçalho do painel se acerta com o nó recém-lido: tamanho, citações e data de
+    // atualização mudaram com a edição, e mostrar os números velhos ao lado do texto novo
+    // seria a tela mentindo sobre o que acabou de acontecer.
+    const relido = get().grafo.nos.find((no) => no.id === aberto.no.id)
+    if (relido) set({ aberto: { no: relido, corpo: texto } })
+
+    return true
+  },
+
+  apagar: async () => {
+    const aberto = get().aberto
+    if (!aberto) return
+
+    try {
+      await deleteNote(aberto.no.id)
+    } catch (erro) {
+      set({ erro: descrever(erro) })
+      return
+    }
+
+    // Fecha antes de reler: o nó não existe mais, e um painel apontando para ele ficaria
+    // mostrando o texto de uma nota que já não está no grafo.
+    set({ aberto: null, erro: null })
+    await get().atualizar()
   },
 
   fechar: () => set({ aberto: null }),
@@ -116,8 +169,6 @@ function filtrar(grafo: Grafo, filtros: string[], busca: string): Grafo {
 
   return {
     nos,
-    arestas: grafo.arestas.filter(
-      (aresta) => vivos.has(aresta.de) && vivos.has(aresta.para),
-    ),
+    arestas: grafo.arestas.filter((aresta) => vivos.has(aresta.de) && vivos.has(aresta.para)),
   }
 }

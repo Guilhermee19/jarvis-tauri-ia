@@ -72,7 +72,11 @@ export function ConhecimentoPanel() {
       <div className="border-border-soft flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
         <Medidor rotulo="memórias indexadas" valor={total} />
         <Medidor rotulo="nódulos ativos" valor={visivel.nos.length} />
-        <Medidor rotulo="ligações" valor={visivel.arestas.length} detalhe={`${escritas} escritas`} />
+        <Medidor
+          rotulo="ligações"
+          valor={visivel.arestas.length}
+          detalhe={`${escritas} escritas`}
+        />
 
         <input
           value={busca}
@@ -142,21 +146,15 @@ export function ConhecimentoPanel() {
           tamanho.largura > 0 && <Grafo largura={tamanho.largura} altura={tamanho.altura} />
         )}
 
-        {aberto ? <PainelDoNo onFechar={fechar} /> : null}
+        {/* A `key` reseta o rascunho ao trocar de nó: sem ela, clicar noutro ponto no meio
+            de uma edição levaria o texto da nota antiga para dentro da nova. */}
+        {aberto ? <PainelDoNo key={aberto.no.id} onFechar={fechar} /> : null}
       </div>
     </div>
   )
 }
 
-function Medidor({
-  rotulo,
-  valor,
-  detalhe,
-}: {
-  rotulo: string
-  valor: number
-  detalhe?: string
-}) {
+function Medidor({ rotulo, valor, detalhe }: { rotulo: string; valor: number; detalhe?: string }) {
   return (
     <div className="flex shrink-0 flex-col leading-none">
       <span className="text-accent text-sm font-medium tabular-nums">{valor}</span>
@@ -168,12 +166,40 @@ function Medidor({
   )
 }
 
-/** O que o Jarvis aprendeu sobre um assunto, quando se clica no ponto dele. */
+/**
+ * O que o Jarvis aprendeu sobre um assunto, quando se clica no ponto dele — e onde se
+ * corrige ou se apaga o que ele aprendeu errado.
+ *
+ * **A edição existe porque a extração automática é best-effort**, e isso está escrito no
+ * próprio `converse`: ele destila o assunto de cada conversa e às vezes destila errado.
+ * Uma busca por "Bitcoin preço" já virou uma nota explicando o que é a moeda, arquivada
+ * sob um título de cotação — e ela voltaria como contexto em toda conversa sobre o
+ * assunto. Sem esta tela, consertar exigia achar o `.md` na pasta.
+ */
 function PainelDoNo({ onFechar }: { onFechar: () => void }) {
   const aberto = useConhecimentoStore((state) => state.aberto)
+  const salvar = useConhecimentoStore((state) => state.salvar)
+  const apagar = useConhecimentoStore((state) => state.apagar)
+
+  // `null` = só lendo. Uma string = editando, e ela é o que está no campo.
+  const [rascunho, setRascunho] = useState<string | null>(null)
+  const [confirmando, setConfirmando] = useState(false)
+  const [ocupado, setOcupado] = useState(false)
+
   if (!aberto) return null
 
   const { no, corpo } = aberto
+  const editando = rascunho !== null
+
+  async function guardar() {
+    if (rascunho === null) return
+    setOcupado(true)
+    const deu = await salvar(rascunho)
+    setOcupado(false)
+    // Só sai do modo de edição quando gravou: falhando, o texto continua no campo em vez
+    // de sumir junto com o erro.
+    if (deu) setRascunho(null)
+  }
 
   return (
     <aside className="border-border-soft bg-surface/95 absolute inset-y-0 right-0 flex w-64 flex-col border-l backdrop-blur-sm">
@@ -207,12 +233,72 @@ function PainelDoNo({ onFechar }: { onFechar: () => void }) {
       </div>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 py-2">
-        {corpo ? (
+        {editando ? (
+          <textarea
+            value={rascunho}
+            onChange={(evento) => setRascunho(evento.target.value)}
+            onKeyDown={(evento) => {
+              // Esc desiste, Ctrl+Enter grava. O campo é pequeno e fica longe dos botões
+              // quando a nota é grande — sem atalho, corrigir uma linha vira uma rolagem.
+              if (evento.key === 'Escape') setRascunho(null)
+              if (evento.key === 'Enter' && (evento.ctrlKey || evento.metaKey)) void guardar()
+            }}
+            spellCheck
+            autoFocus
+            aria-label={`Texto da nota ${no.rotulo}`}
+            className="border-border-soft bg-base text-content focus:border-accent h-full min-h-32 w-full resize-none rounded border px-2 py-1.5 text-[11px] leading-relaxed outline-none"
+          />
+        ) : corpo ? (
           <p className="text-muted text-[11px] leading-relaxed whitespace-pre-wrap">{corpo}</p>
         ) : (
           <p className="text-muted/60 text-[11px]">carregando…</p>
         )}
       </div>
+
+      <footer className="border-border-soft flex shrink-0 items-center gap-1.5 border-t px-3 py-2">
+        {editando ? (
+          <>
+            <Button variant="subtle" onClick={() => void guardar()} disabled={ocupado}>
+              {ocupado ? 'salvando…' : 'salvar'}
+            </Button>
+            <Button variant="subtle" onClick={() => setRascunho(null)} disabled={ocupado}>
+              cancelar
+            </Button>
+          </>
+        ) : confirmando ? (
+          <>
+            {/* Apagar não tem desfazer: o arquivo sai do disco. O passo a mais é o que
+                separa "quis apagar" de "clicou no lugar errado". */}
+            <span className="text-danger text-[10px]">apagar de vez?</span>
+            <Button
+              variant="subtle"
+              onClick={() => {
+                setConfirmando(false)
+                void apagar()
+              }}
+            >
+              sim
+            </Button>
+            <Button variant="subtle" onClick={() => setConfirmando(false)}>
+              não
+            </Button>
+          </>
+        ) : (
+          <>
+            {/* Sem corpo, a nota ainda está chegando pelo IPC: editar agora abriria um
+                campo vazio, e salvar por cima apagaria o texto que nem foi visto. */}
+            <Button variant="subtle" onClick={() => setRascunho(corpo)} disabled={!corpo}>
+              editar
+            </Button>
+            <Button variant="subtle" onClick={() => setConfirmando(true)}>
+              apagar
+            </Button>
+            <span className="text-muted/50 ml-auto text-[9px] tracking-[0.12em] uppercase">
+              {no.tipo}
+            </span>
+          </>
+        )}
+      </footer>
     </aside>
   )
 }

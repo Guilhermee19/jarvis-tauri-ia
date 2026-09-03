@@ -1,4 +1,4 @@
-export { knowledgeGraph, noteBody } from './conhecimento'
+export { deleteNote, knowledgeGraph, noteBody, saveNote } from './conhecimento'
 export { call, isTauriRuntime, TauriCommandError } from './client'
 export {
   cameraSnapshot,

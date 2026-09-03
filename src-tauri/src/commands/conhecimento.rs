@@ -24,3 +24,40 @@ pub fn knowledge_graph(memoria: State<'_, Memoria>) -> Grafo {
 pub fn note_body(id: String, memoria: State<'_, Memoria>) -> String {
     memoria.corpo_da_nota(&id)
 }
+
+/// Reescreve uma nota com o que a pessoa digitou.
+///
+/// **O que ele aprende sozinho erra**, e a extração automática é declaradamente
+/// best-effort — uma busca por "Bitcoin preço" já virou uma nota explicando o que é a
+/// moeda. Sem isto, corrigir exigia achar o arquivo na pasta, o que só serve para quem
+/// sabe onde ela mora.
+///
+/// O tipo da nota não muda (o porquê está no `Memoria::reescrever`), e a data de
+/// atualização passa a ser hoje — a nota corrigida é recente, e é assim que ela deve
+/// aparecer para quem procura o que está velho.
+#[tauri::command(async)]
+pub fn save_note(id: String, corpo: String, memoria: State<'_, Memoria>) -> Result<(), String> {
+    if corpo.trim().is_empty() {
+        return Err("nota vazia — para tirá-la da memória, use o apagar".to_owned());
+    }
+
+    if memoria.reescrever(&id, &corpo) {
+        Ok(())
+    } else {
+        Err(format!("não achei a nota \"{id}\" para reescrever"))
+    }
+}
+
+/// Apaga uma nota, pelo nome exato.
+///
+/// Diferente do "esquece X" falado, que casa por termo e pode levar várias: aqui é a nota
+/// aberta na tela, e só ela. Nota errada não é para ser corrigida sempre — às vezes o
+/// certo é ela não existir.
+#[tauri::command(async)]
+pub fn delete_note(id: String, memoria: State<'_, Memoria>) -> Result<(), String> {
+    if memoria.apagar_nota(&id) {
+        Ok(())
+    } else {
+        Err(format!("não achei a nota \"{id}\" para apagar"))
+    }
+}

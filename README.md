@@ -915,9 +915,12 @@ store que precisa abrir a janelinha ANTES do webview nascer, para que exista um 
 medir. O caminho de fora continua vivo no botão ↗ da barra de endereço: senha salva,
 extensão e impressão ainda pedem o navegador de verdade.
 
-A busca mantém a regra que já tinha: **a aba só abre quando mandaram pesquisar**. "Quem foi
-Santos Dumont?" é pergunta e a resposta vem na conversa; abrir uma página no meio de um papo
-é interromper, não ajudar. O que mudou é só o destino da aba.
+**A aba abre em toda busca**, e essa regra mudou de lado. Ela dependia de a frase conter
+"pesquisa", "procura" ou "no google", para não interromper um papo com uma janela — mas a
+consequência era pior que a interrupção: ele respondia com o que leu e não havia como
+conferir de onde tirou. Uma resposta de busca que não mostra a fonte pede confiança cega, e
+ele erra o suficiente para isso não se sustentar. Quem não quiser a aba fecha a janelinha;
+quem quiser conferir tem onde.
 
 ---
 
@@ -1104,6 +1107,29 @@ Mesmo com a regra explícita no prompt, o 3B produziu tudo isto em produção:
 corte fica no código** — cinto e suspensório, porque cada um pega o que o outro deixa
 passar. Brigar só com prompt custa rodada e nunca fecha de vez.
 
+### O roteador também enxerga a conversa
+
+"O que é bitcoin?" e, em seguida, "quanto ele vale agora?". O segundo turno só funciona se
+alguém souber a quem "ele" se refere — e quem precisava saber era justamente o único que
+não via nada: o roteador recebia a frase solta, sem histórico.
+
+Agora ele recebe as **quatro últimas mensagens** antes da frase. Medido com o 3B:
+
+| frase (depois de "o que é bitcoin?") | sem histórico | com histórico          |
+| ------------------------------------ | ------------- | ---------------------- |
+| "quanto ele está hoje?"               | `weather`     | `web_search bitcoin preço` |
+| "e quanto ele vale agora?"            | `reply`       | `web_search valor bitcoin` |
+| "quanto ele está?"                    | `weather`     | `weather` — ainda erra  |
+
+A última linha fica aí de propósito: sem "hoje" nem "vale", a frase é ambígua até para
+gente, e "como está?" é a pergunta canônica do tempo em português.
+
+**O risco era desequilibrar o roteador, e ele foi medido.** Numa bateria de 12 frases
+representativas (abrir site, abrir programa, volume, mídia, casa, webcam, memória, busca e
+conversa pura), o resultado foi **12/12 com e sem** histórico. As quatro mensagens entram
+DEPOIS do system prompt, então as ~3.150 fichas dele continuam quentes no cache entre um
+turno e outro — só as mensagens novas são avaliadas.
+
 ### Como ele escolhe o que lembrar na hora
 
 Palavra-chave **mais um salto de `[[link]]`**. Perguntar "que horas eu acordo" casa com
@@ -1129,6 +1155,26 @@ relê ao abrir e puxar a base inteira pelo IPC para ninguém olhar seria trabalh
 
 O que ele NÃO cobre é o que você edita por fora, no Obsidian — para isso o botão continua
 lá, e um vigia de pasta seria outro assunto.
+
+### Corrigir e apagar o que ele aprendeu errado
+
+Clicar num ponto do grafo abre a nota; embaixo dela há **editar** e **apagar**. Não é
+conveniência: a extração automática é declaradamente _best-effort_, e uma busca por
+"Bitcoin preço" já virou uma nota explicando o que é a moeda, arquivada sob um título de
+cotação — que voltaria como contexto em toda conversa sobre o assunto. Sem a tela,
+consertar exigia achar o `.md` na pasta, o que só serve para quem sabe onde ela mora.
+
+Três decisões que valem a pena:
+
+- **O tipo não muda na edição.** Uma nota `aprendido` corrigida continua `aprendido`: o
+  tipo diz de ONDE o conhecimento veio, e passar a mão no texto não reescreve a origem
+  dele. É por isso que `Memoria::reescrever` existe em vez de reusar o
+  `escrever_conhecimento`, que carimba tudo como `fato`.
+- **Corpo vazio não apaga.** Um `Ctrl+A Delete` sem querer no campo viraria exclusão
+  silenciosa; apagar tem botão próprio, e ele pergunta antes, porque o arquivo sai do
+  disco e não há desfazer.
+- **`delete_note` leva UMA nota, pelo nome exato** — ao contrário do "esquece X" falado,
+  que casa por termo e pode levar cinco. Para um botão, casar por termo seria armadilha.
 
 ### Guardar tem dois caminhos, e um é confiável
 

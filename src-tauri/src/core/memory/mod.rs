@@ -348,6 +348,69 @@ impl Memoria {
             .unwrap_or_default()
     }
 
+    /// Reescreve o corpo de uma nota que já existe, **preservando o tipo dela**.
+    ///
+    /// É a edição à mão, feita da janelinha do Conhecimento. Existe porque o que ele
+    /// aprende sozinho às vezes está errado, e corrigir tinha que passar por achar o
+    /// arquivo no disco — o que só serve para quem sabe onde a pasta mora.
+    ///
+    /// **O tipo não muda.** Uma nota `aprendido` corrigida continua `aprendido`: o tipo diz
+    /// de ONDE o conhecimento veio, e passar a mão no texto não reescreve a origem dele. É
+    /// por isso que isto não é um `escrever_conhecimento`, que carimba tudo como `fato`.
+    ///
+    /// Corpo vazio não apaga a nota — apagar tem botão próprio, e um `Ctrl+A Delete` sem
+    /// querer não pode virar exclusão silenciosa. Devolve `false` quando a nota sumiu do
+    /// disco entre a tela abrir e o salvar.
+    pub fn reescrever(&self, nome: &str, corpo: &str) -> bool {
+        let corpo = corpo.trim();
+        if corpo.is_empty() {
+            return false;
+        }
+
+        let nome = nota::slug(nome);
+        let mut notas = lock(&self.notas);
+
+        let Some(alvo) = notas.iter_mut().find(|nota| nota.nome == nome) else {
+            return false;
+        };
+
+        alvo.corpo = corpo.to_owned();
+        alvo.atualizado = hoje();
+        let nova = alvo.clone();
+        drop(notas);
+
+        self.gravar_nota(&nova);
+        self.escrever_indice();
+        true
+    }
+
+    /// Apaga UMA nota, pelo nome exato.
+    ///
+    /// Irmão do [`Self::esquecer`] e diferente dele no que importa: aquele casa por termo e
+    /// pode levar cinco notas junto (é o "esquece academia" falado), este leva a que está
+    /// aberta na tela. Para um botão de apagar, casar por termo seria uma armadilha.
+    ///
+    /// A nota de rotinas passa igual, ao contrário do que acontece no `esquecer`: ali ela é
+    /// protegida porque some e volta, e o usuário culparia o comando errado. Aqui ele
+    /// apontou para um arquivo específico e mandou apagar — o arquivo some. Que o log de
+    /// ações a reconstrua depois é o comportamento dela, não uma recusa nossa.
+    pub fn apagar_nota(&self, nome: &str) -> bool {
+        let nome = nota::slug(nome);
+        let mut notas = lock(&self.notas);
+
+        let Some(pos) = notas.iter().position(|nota| nota.nome == nome) else {
+            return false;
+        };
+
+        notas.remove(pos);
+        drop(notas);
+
+        let _ = std::fs::remove_file(self.caminho_da_nota(&nome));
+        self.versao.fetch_add(1, Ordering::Relaxed);
+        self.escrever_indice();
+        true
+    }
+
     /// Grava a nota de conhecimento destilada de uma conversa, reescrevendo por
     /// inteiro. É a diferença entre um documento e uma pilha de frases coladas na
     /// ordem em que foram ditas.
@@ -686,5 +749,87 @@ mod tests {
         assert!(nota.corpo.contains("spotify"));
 
         assert!(memoria.esquecer("spotify").is_empty());
+    }
+
+    /// Corrigir à mão não pode reclassificar a nota: o tipo diz de ONDE o conhecimento
+    /// veio, e passar a mão no texto não reescreve a origem dele.
+    #[test]
+    fn reescrever_troca_o_texto_e_mantem_o_tipo() {
+        let (memoria, raiz) = temporaria("reescreve");
+        memoria.aprender(
+            "bitcoin preço",
+            "Bitcoin é uma criptomoeda descentralizada.",
+        );
+
+        assert!(memoria.reescrever("bitcoin-preco", "Cotação não vira nota."));
+
+        let notas = memoria.notas();
+        let nota = notas
+            .iter()
+            .find(|n| n.nome == "bitcoin-preco")
+            .expect("existe");
+        assert_eq!(nota.corpo, "Cotação não vira nota.");
+        assert_eq!(nota.tipo, Tipo::Aprendido, "o tipo é a origem, não o texto");
+
+        // E foi para o DISCO: a tela mostra a cópia em memória, e sem isto a correção
+        // sumiria no próximo `recarregar`.
+        let markdown = std::fs::read_to_string(raiz.join(PASTA_NOTAS).join("bitcoin-preco.md"))
+            .expect("arquivo");
+        assert!(markdown.contains("Cotação não vira nota."));
+        assert!(markdown.contains("tipo: aprendido"));
+    }
+
+    /// Um `Ctrl+A Delete` sem querer no campo de texto não pode virar exclusão silenciosa.
+    /// Apagar tem botão próprio, e ele avisa antes.
+    #[test]
+    fn reescrever_com_texto_vazio_nao_apaga_a_nota() {
+        let (memoria, _) = temporaria("reescreve-vazio");
+        memoria.aprender("stan lee", "Criador de heróis.");
+
+        assert!(!memoria.reescrever("stan-lee", "   "));
+        assert_eq!(memoria.corpo_da_nota("stan lee"), "Criador de heróis.");
+    }
+
+    #[test]
+    fn reescrever_nota_que_nao_existe_avisa_em_vez_de_criar() {
+        let (memoria, _) = temporaria("reescreve-ausente");
+
+        assert!(!memoria.reescrever("nunca-existiu", "texto"));
+        assert!(memoria.notas().is_empty());
+    }
+
+    /// O botão de apagar leva UMA nota — a que está aberta. O "esquece X" falado é que
+    /// casa por termo e pode levar várias; confundir os dois seria uma armadilha.
+    #[test]
+    fn apagar_leva_so_a_nota_apontada() {
+        let (memoria, raiz) = temporaria("apaga");
+        memoria.aprender("bitcoin preço", "verbete errado");
+        memoria.aprender("valor do bitcoin", "outro verbete errado");
+
+        assert!(memoria.apagar_nota("bitcoin-preco"));
+
+        let restantes: Vec<String> = memoria.notas().into_iter().map(|n| n.nome).collect();
+        assert_eq!(restantes, ["valor-do-bitcoin"]);
+        assert!(!raiz.join(PASTA_NOTAS).join("bitcoin-preco.md").exists());
+
+        // Apagar de novo não é erro de programa, é um "não achei" — a tela pode ter
+        // ficado aberta enquanto a nota sumia por outro caminho.
+        assert!(!memoria.apagar_nota("bitcoin-preco"));
+    }
+
+    /// O grafo se redesenha por causa deste número. Uma correção que não o mexesse
+    /// deixaria a tela mostrando o texto velho até alguém clicar em atualizar.
+    #[test]
+    fn editar_e_apagar_contam_como_mudanca() {
+        let (memoria, _) = temporaria("versao");
+        memoria.aprender("stan lee", "Criador de heróis.");
+
+        let depois_de_aprender = memoria.versao();
+        assert!(memoria.reescrever("stan-lee", "Editor da Marvel."));
+        assert!(memoria.versao() > depois_de_aprender);
+
+        let depois_de_editar = memoria.versao();
+        assert!(memoria.apagar_nota("stan-lee"));
+        assert!(memoria.versao() > depois_de_editar);
     }
 }

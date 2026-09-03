@@ -8,6 +8,11 @@
 //! É aqui também que a memória fecha o laço de aprendizado: os apelidos que o usuário
 //! já ensinou entram no system prompt, então "abre meu jogo" passa a funcionar depois
 //! de ensinado UMA vez — sem treinar nada, sem tocar em peso nenhum.
+//!
+//! E é aqui que a CONVERSA entra, pelas últimas quatro mensagens. Sem elas o roteador lê
+//! cada frase como se fosse a primeira, e "quanto ele vale agora?" logo depois de "o que é
+//! bitcoin?" vira `reply` — o "ele" não aponta para nada. Com elas, vira
+//! `web_search valor bitcoin`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -16,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::AgentError;
 use crate::core::cameras;
+use crate::core::chat::{ChatMessage, Role};
 use crate::core::vision;
 
 /// O que o modelo pode pedir.
@@ -445,15 +451,51 @@ fn conteudo(linha: &[u8]) -> Option<String> {
     (!envelope.message.content.is_empty()).then_some(envelope.message.content)
 }
 
+/// Quantas mensagens anteriores o roteador enxerga.
+///
+/// **Quatro, e não a janela de vinte da conversa.** O que ele precisa daqui é uma coisa
+/// só: saber a quem "ele" se refere. "O que é bitcoin?" seguido de "quanto ele vale
+/// agora?" só vira `web_search bitcoin` se as duas frases estiverem na mesma chamada.
+///
+/// Mais que isso custaria sem comprar nada — e o custo é real. O prompt do roteador tem
+/// ~3.150 fichas que ficam quentes no cache entre um turno e outro; o histórico entra
+/// DEPOIS dele, então o prefixo continua aproveitado e só as mensagens novas são
+/// avaliadas. Fosse antes, cada turno pagaria os 0,8 s de reavaliar o prompt inteiro.
+pub const JANELA_DO_ROTEADOR: usize = 4;
+
 /// Manda a frase ao Ollama e devolve a ação.
+///
+/// **O histórico entra porque pronome não se resolve sozinho.** Medido com o 3B: "quanto
+/// ele vale agora?" sai como `reply` sem contexto e como `web_search valor bitcoin` com
+/// as duas últimas trocas na frente. E medido também o que se temia: numa bateria de 12
+/// frases representativas (abrir site, volume, mídia, casa, memória, conversa pura), o
+/// roteador acertou **12 de 12 com e sem** histórico — o contexto não desequilibrou o
+/// balanço entre comando e conversa que o [`system_prompt`] documenta.
 pub async fn interpret(
     http: &reqwest::Client,
     url: &str,
     model: &str,
     assistant_name: &str,
     apelidos: &BTreeMap<String, String>,
+    historico: &[ChatMessage],
     frase: &str,
 ) -> Result<Intent, AgentError> {
+    let mut mensagens = vec![serde_json::json!({
+        "role": "system",
+        "content": system_prompt(assistant_name, apelidos),
+    })];
+
+    // O log de ações (`Role::System`) fica de fora, como no `converse`: ele é registro
+    // para o usuário ler, e aqui viraria ruído no meio das falas.
+    for message in historico.iter().filter(|m| m.role != Role::System) {
+        mensagens.push(serde_json::json!({
+            "role": if message.role == Role::User { "user" } else { "assistant" },
+            "content": message.content,
+        }));
+    }
+
+    mensagens.push(serde_json::json!({ "role": "user", "content": frase }));
+
     let corpo = serde_json::json!({
         "model": model,
         "stream": false,
@@ -461,10 +503,7 @@ pub async fn interpret(
         "format": schema(),
         // Isto é classificação, não redação: temperatura 0 e teto curto de saída.
         "options": { "temperature": 0, "num_predict": 200 },
-        "messages": [
-            { "role": "system", "content": system_prompt(assistant_name, apelidos) },
-            { "role": "user", "content": frase },
-        ],
+        "messages": mensagens,
     });
 
     // Dois parses: o JSON da API traz o JSON da ação como STRING dentro de `content`.
@@ -1055,6 +1094,7 @@ mod tests {
                         "qwen2.5vl:3b",
                         "Jarvis",
                         &BTreeMap::new(),
+                        &[],
                         frase,
                     )
                     .await;
@@ -1129,6 +1169,7 @@ mod tests {
                         "qwen2.5vl:3b",
                         "Jarvis",
                         &BTreeMap::new(),
+                        &[],
                         frase,
                     )
                     .await;

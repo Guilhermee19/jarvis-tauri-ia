@@ -196,8 +196,19 @@ pub async fn handle(
     let model = &settings.ollama_model;
     let nome = &settings.assistant_name;
 
+    // As últimas trocas, para o roteador saber a quem "ele" se refere. Sem a frase atual:
+    // ela já entra como a mensagem do usuário, e mandá-la duas vezes seguidas o faz ler a
+    // repetição como ênfase.
+    let mut recentes = memoria.recentes(intent::JANELA_DO_ROTEADOR + 1);
+    if recentes.last().is_some_and(|ultima| {
+        ultima.role == crate::core::chat::Role::User && ultima.content == dito
+    }) {
+        recentes.pop();
+    }
+
     let relogio = Instant::now();
-    let acao = intent::interpret(http, url, model, nome, &memoria.apelidos(), dito).await?;
+    let acao =
+        intent::interpret(http, url, model, nome, &memoria.apelidos(), &recentes, dito).await?;
     let pensou = relogio.elapsed();
 
     let mut log = Log::novo(dito, model, &acao, pensou, settings.log_detalhado);
@@ -225,16 +236,15 @@ pub async fn handle(
         }
 
         // Pergunta sobre o mundo: dá uma olhada na internet, GUARDA o que achou, e
-        // responde conversando. A aba do navegador só abre quando ele mandou pesquisar
-        // — abrir Google no meio de um papo é interromper, não ajudar.
+        // responde conversando.
+        //
+        // **A aba abre sempre.** Antes ela dependia de a frase conter "pesquisa",
+        // "procura" ou "no google", para não interromper um papo com uma janela — mas a
+        // consequência era pior: ele respondia com o que leu e não havia como conferir de
+        // onde tirou. Uma resposta de busca que não mostra a fonte pede confiança cega, e
+        // ele erra o suficiente para isso não se sustentar.
         Intent::WebSearch { query } => {
             log.acao(&acao);
-
-            if pediu_a_aba(dito) {
-                ui = Some(AcaoDeUi::Pesquisar {
-                    query: query.clone(),
-                });
-            }
 
             memoria.registrar_acao(Acao {
                 quando: Utc::now().timestamp_millis(),
@@ -621,6 +631,20 @@ pub async fn handle(
         ao_falar(&reply);
     }
 
+    // **Pesquisou, abre a aba.** Vale para os três caminhos que consultam a internet — a
+    // pergunta sobre o mundo e os dois da visão —, porque em todos eles a resposta veio de
+    // uma página que o usuário não viu, e conferir a fonte é o que separa uma resposta de
+    // um palpite com voz firme.
+    //
+    // Só quando a UI não tem outro pedido: quando ele foi olhar uma câmera, a janelinha da
+    // câmera é o que a pessoa pediu para ver, e uma aba do Google por cima seria roubar a
+    // tela dela.
+    if ui.is_none() {
+        if let Some(consulta) = log.pesquisou.clone() {
+            ui = Some(AcaoDeUi::Pesquisar { query: consulta });
+        }
+    }
+
     Ok(Outcome {
         trace: log.render(),
         reply,
@@ -879,17 +903,6 @@ async fn olhar(
     Ok(pesquisar_e_responder(http, settings, memoria, consulta.trim(), pergunta, log).await)
 }
 
-/// Frases que pedem a aba do navegador. O resto é pergunta no meio da conversa, e
-/// abrir o Google nessas seria interromper.
-const ORDENS_DE_BUSCA: [&str; 5] = ["pesquis", "procur", "busca ", "no google", "abre o google"];
-
-fn pediu_a_aba(dito: &str) -> bool {
-    let normalizado = crate::core::memory::normalizar(dito);
-    ORDENS_DE_BUSCA
-        .iter()
-        .any(|ordem| normalizado.contains(ordem.trim_end()))
-}
-
 /// Dá uma olhada na internet, guarda o que achou e responde conversando.
 ///
 /// Nunca devolve `Err`: sem internet, dizer isso na conversa é melhor que derrubar a
@@ -918,11 +931,11 @@ async fn pesquisar_e_responder(
     let achados = match search::pesquisar(http, consulta, &settings.brave_api_key).await {
         Ok(achados) => achados,
         Err(erro) => {
-            log.busca(fonte, 0, relogio.elapsed());
+            log.busca(consulta, fonte, 0, relogio.elapsed());
             return erro.to_string();
         }
     };
-    log.busca(fonte, achados.len(), relogio.elapsed());
+    log.busca(consulta, fonte, achados.len(), relogio.elapsed());
 
     // Guarda ANTES de responder: se o modelo falhar na hora de falar, o conhecimento
     // fica na pasta do mesmo jeito. É isso que faz ele não pesquisar a mesma coisa
@@ -1290,6 +1303,15 @@ struct Log {
     houve_algo: bool,
     /// Mostra o log em TODA mensagem, inclusive conversa pura. Vem das configurações.
     sempre: bool,
+    /// O que ele pesquisou neste turno, se pesquisou. É o que abre a aba do navegador.
+    ///
+    /// Mora no log, e não numa variável do [`handle`], porque **são três os caminhos que
+    /// pesquisam**: a pergunta sobre o mundo (`web_search`) e os dois da visão, quando o
+    /// modelo identifica a coisa na imagem mas a resposta está fora dela ("que mouse é
+    /// esse?" → busca pelo modelo do mouse). Os três já passam o `&mut Log` adiante; fazer
+    /// a aba subir por outro caminho seria mais dois parâmetros em funções que já andam no
+    /// teto do clippy, para carregar a mesma informação.
+    pesquisou: Option<String>,
 }
 
 impl Log {
@@ -1318,6 +1340,7 @@ impl Log {
             ],
             houve_algo: false,
             sempre,
+            pesquisou: None,
         }
     }
 
@@ -1330,6 +1353,7 @@ impl Log {
             linhas: Vec::new(),
             houve_algo: false,
             sempre: false,
+            pesquisou: None,
         }
     }
 
@@ -1357,12 +1381,13 @@ impl Log {
 
     /// De onde veio a resposta importa: "wikipedia · 0 resultados" explica sozinho por
     /// que o Jarvis disse que não achou nada.
-    fn busca(&mut self, fonte: &str, quantos: usize, levou: std::time::Duration) {
+    fn busca(&mut self, consulta: &str, fonte: &str, quantos: usize, levou: std::time::Duration) {
         self.linhas.push(format!(
             "BUSCA      {fonte} · {quantos} resultados · {:.1} s",
             levou.as_secs_f32()
         ));
         self.houve_algo = true;
+        self.pesquisou = Some(consulta.to_owned());
     }
 
     /// Sem ação nem memória o log some, porque uma caixa embaixo de cada "bom dia" faz o
@@ -1554,6 +1579,7 @@ mod tests {
                 &settings.ollama_model,
                 &settings.assistant_name,
                 &BTreeMap::new(),
+                &[],
                 &dito,
             )
             .await
@@ -1792,28 +1818,22 @@ espera do usuário          {espera:>6.2} s  <- até a fala começar");
         assert!(texto.contains("reply"));
     }
 
-    /// "quem foi santos dumont?" no meio de um papo não pode abrir uma aba do Google
-    /// na cara do usuário; "pesquisa isso aí" pode.
+    /// A aba do navegador sai DAQUI, e não de um `if` no braço da busca: é o que faz os
+    /// três caminhos que pesquisam (a pergunta sobre o mundo e os dois da visão) abrirem a
+    /// fonte sem que nenhum deles precise lembrar de pedir.
     #[test]
-    fn so_abre_a_aba_quando_mandaram_pesquisar() {
-        for ordem in [
-            "pesquisa preço do dólar",
-            "procura a receita de pão de queijo",
-            "quem foi tesla, pesquisa aí",
-            "busca isso no google",
-            "abre o google e vê quem descobriu o brasil",
-        ] {
-            assert!(pediu_a_aba(ordem), "devia abrir a aba: {ordem:?}");
-        }
+    fn o_log_guarda_a_consulta_para_a_aba() {
+        let mut log = Log::mudo();
+        assert_eq!(log.pesquisou, None, "sem busca, sem aba");
 
-        for papo in [
-            "quem foi santos dumont?",
-            "o que é uma black hole",
-            "qual a capital da austrália",
-            "como faz pão de queijo",
-        ] {
-            assert!(!pediu_a_aba(papo), "não devia abrir a aba: {papo:?}");
-        }
+        log.busca(
+            "preço do dólar hoje",
+            "wikipedia + notícias",
+            3,
+            std::time::Duration::from_millis(500),
+        );
+
+        assert_eq!(log.pesquisou.as_deref(), Some("preço do dólar hoje"));
     }
 
     /// O `AcaoDeUi` é espelhado À MÃO em `src/lib/tauri/events.ts`, e nada no build
