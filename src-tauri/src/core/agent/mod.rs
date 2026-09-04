@@ -1078,10 +1078,11 @@ async fn pesquisar_e_responder(
     pergunta: &str,
     log: &mut Log,
 ) -> String {
-    let fonte = search::fonte(&settings.brave_api_key);
+    let chaves = settings.chaves_de_busca();
+    let fonte = search::fonte(&chaves);
     let relogio = Instant::now();
 
-    let achados = match search::pesquisar(http, consulta, &settings.brave_api_key).await {
+    let achados = match search::pesquisar(http, consulta, &chaves).await {
         Ok(achados) => achados,
         Err(erro) => {
             log.busca(consulta, fonte, 0, relogio.elapsed());

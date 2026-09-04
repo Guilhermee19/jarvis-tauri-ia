@@ -197,6 +197,17 @@ pub struct AppSettings {
     /// precisa de chave e responde bem "quem foi X" e "o que é Y" — mas não sabe preço,
     /// clima nem notícia. É a chave que transforma isso em busca web de verdade.
     pub brave_api_key: String,
+    /// Chave da Custom Search JSON API do Google, e o `cx` do mecanismo programável.
+    ///
+    /// **Precisa dos DOIS.** A chave sozinha não busca nada: o `cx` é o que diz em QUE
+    /// índice procurar, e é lá que se marca "pesquisar em toda a web" em vez de num site.
+    /// Os dois saem de `programmablesearchengine.google.com` e do console de APIs.
+    ///
+    /// Custa 100 buscas por dia no plano gratuito — menos que as 2.000/mês do Brave, mas
+    /// é o índice do Google, que é quem responde "quanto custa um PS5". A Wikipédia,
+    /// que é o padrão sem chave nenhuma, devolve para essa pergunta o verbete do console.
+    pub google_api_key: String,
+    pub google_cx: String,
     /// Credenciais do Spotify (*client credentials*, sem OAuth). VAZIAS fazem "toque X"
     /// abrir a busca dentro do app em vez de tocar a faixa — achar o ID exato da música
     /// não tem caminho sem credencial, e isso foi medido.
@@ -248,6 +259,18 @@ pub struct AppSettings {
     pub log_detalhado: bool,
 }
 
+impl AppSettings {
+    /// As credenciais de busca, juntas. Quem decide qual fonte ganha é o
+    /// `search::Chaves::escolher` — aqui só se empacota o que o usuário preencheu.
+    pub fn chaves_de_busca(&self) -> crate::core::search::Chaves<'_> {
+        crate::core::search::Chaves {
+            brave: &self.brave_api_key,
+            google: &self.google_api_key,
+            google_cx: &self.google_cx,
+        }
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -265,6 +288,8 @@ impl Default for AppSettings {
             ollama_model_busca: String::new(),
             memoria_path: String::new(),
             brave_api_key: String::new(),
+            google_api_key: String::new(),
+            google_cx: String::new(),
             spotify_client_id: String::new(),
             spotify_client_secret: String::new(),
             tuya_client_id: String::new(),

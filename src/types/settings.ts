@@ -92,6 +92,9 @@ export interface AppSettings {
   memoriaPath: string
   /** Chave do Brave Search. Vazio = Wikipedia (sem chave, mas só enciclopédia). */
   braveApiKey: string
+  /** Chave da Custom Search do Google + o `cx` do mecanismo. Precisa dos DOIS. */
+  googleApiKey: string
+  googleCx: string
   /** Credenciais do Spotify. Vazias = "toque X" abre a busca em vez de tocar. */
   spotifyClientId: string
   spotifyClientSecret: string
@@ -181,6 +184,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ollamaModelBusca: '',
   memoriaPath: '',
   braveApiKey: '',
+  googleApiKey: '',
+  googleCx: '',
   spotifyClientId: '',
   spotifyClientSecret: '',
   tuyaClientId: '',

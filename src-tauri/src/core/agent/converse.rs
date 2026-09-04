@@ -851,6 +851,18 @@ pub async fn responder_com_busca(
                    \"os trechos indicam\" nem cite links. Ele não pediu um relatório, \
                    pediu uma resposta.\n\
                  - Nada de lista com marcadores e nada de título.\n\n\
+                 VOCÊ NÃO VIU A INTERNET — VOCÊ VIU OS TRECHOS ABAIXO:\n\
+                 - NUNCA diga que algo \"não está disponível na internet\", \"não há \
+                   informação online\" ou \"não foi possível encontrar na web\". Você não \
+                   olhou a internet: você leu um punhado de resultados. O que eles não \
+                   têm, VOCÊ não tem — a internet continua tendo.\n\
+                 - A diferença não é sutil e já causou uma resposta errada: perguntado o \
+                   preço do PlayStation 5, ele recebeu três verbetes de enciclopédia sobre \
+                   o console e respondeu que o preço \"não está disponível na internet\". \
+                   Estava — em toda loja do país. O que faltou foi nos RESULTADOS.\n\
+                 - A forma certa é dizer o que você leu e o que faltou nele: \"os \
+                   resultados que li falam do console, mas nenhum traz preço\". Isso é \
+                   verdade, é útil, e ele sabe o que fazer com a informação.\n\n\
                  MAS NÃO INVENTE:\n\
                  - Use SÓ o que está nos trechos abaixo. Data, número, quantidade, tempo \
                    e nome próprio que não estiverem escritos ali NÃO entram.\n\
