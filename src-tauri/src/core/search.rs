@@ -13,8 +13,15 @@
 //! | **Wikipedia** | **3 acertos em 4** — falha só no que não é enciclopédico |
 //! | **Google News (RSS)** | **200, sem chave, 100 itens datados** |
 //!
-//! Então: **Wikipedia + manchetes por padrão**, sem configurar nada, e uma chave do Brave
-//! Search nas configurações que troca a Wikipedia por busca web de verdade.
+//! Então: **Wikipedia + manchetes por padrão**, sem configurar nada, e uma chave do
+//! Google nas configurações que troca a Wikipedia por busca web de verdade.
+//!
+//! **O Brave Search saiu.** Ele era a segunda fonte com chave, escolhido pela cota de
+//! 2.000 buscas/mês contra as 100/dia do Google — mas o plano "gratuito" dele pede
+//! cartão de crédito no cadastro, e uma fonte que exige cartão é, para este app, o
+//! mesmo que uma fonte paga. Duas fontes com chave também dobravam a superfície de
+//! configuração por metade do ganho: as duas respondem web de verdade, e é isso que a
+//! Wikipedia não faz.
 //!
 //! **Por que as manchetes entraram.** A Wikipedia é enciclopédia, e enciclopédia não tem
 //! HOJE: perguntado "quanto está a Bitcoin?", ela devolveu os verbetes *Bitcoin*, *Mercado
@@ -46,10 +53,16 @@ pub enum SearchError {
     NadaEncontrado(String),
     #[error("sem internet para pesquisar: {0}")]
     Rede(String),
-    #[error(
-        "a busca recusou a chamada (HTTP {status}). Confira a chave do Brave em Configurações"
-    )]
-    Recusada { status: u16 },
+    /// O buscador respondeu, e disse não.
+    ///
+    /// **Carrega o `motivo` porque o número sozinho não conserta nada.** Um 403 do Google
+    /// tem pelo menos quatro causas — API não habilitada no projeto, chave restrita por IP
+    /// ou referrer, chave de outro projeto, `cx` inválido — e todas viravam a mesma linha
+    /// na tela. O corpo da resposta dele já traz qual delas é, em texto; jogá-lo fora era
+    /// transformar um erro que se resolve em cinco minutos num que se resolve por
+    /// tentativa e erro.
+    #[error("a busca recusou a chamada (HTTP {status}): {motivo}")]
+    Recusada { status: u16, motivo: String },
 }
 
 /// As credenciais que decidem ONDE ele pesquisa.
@@ -59,7 +72,6 @@ pub enum SearchError {
 /// lugar que sabe qual ganha de qual.
 #[derive(Debug, Clone, Copy)]
 pub struct Chaves<'a> {
-    pub brave: &'a str,
     pub google: &'a str,
     /// O mecanismo de pesquisa programável do Google. Sem ele a chave não serve para nada.
     pub google_cx: &'a str,
@@ -69,27 +81,23 @@ pub struct Chaves<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fonte<'a> {
     Google { chave: &'a str, cx: &'a str },
-    Brave { chave: &'a str },
     Wikipedia,
 }
 
 impl<'a> Chaves<'a> {
-    /// **Google primeiro, Brave depois, Wikipédia por último.**
+    /// **Google quando as duas credenciais existem; Wikipédia quando não.**
     ///
-    /// O Google ganha por ser o índice que responde pergunta de compra — foi o caso que
-    /// forçou isto a existir. O Brave vem em seguida porque também é web de verdade e tem
-    /// cota mensal bem maior. A Wikipédia fica no fim porque não é buscador: é o que
-    /// existe para o app funcionar sem nenhum cadastro, e não o que se quer usar.
+    /// Duas fontes e não três: o Google é o índice que responde pergunta de compra, e a
+    /// Wikipédia é o que faz o app funcionar sem nenhum cadastro. Não há meio-termo útil
+    /// entre as duas — o que existia (Brave) pedia cartão de crédito pela cota grátis.
+    ///
+    /// Chave sem `cx` cai para a Wikipédia em vez de quebrar: é o erro de meia-configuração
+    /// mais provável, e derrubar a busca por causa dele seria pior que responder pior.
     pub fn escolher(&self) -> Fonte<'a> {
         let google = self.google.trim();
         let cx = self.google_cx.trim();
         if !google.is_empty() && !cx.is_empty() {
             return Fonte::Google { chave: google, cx };
-        }
-
-        let brave = self.brave.trim();
-        if !brave.is_empty() {
-            return Fonte::Brave { chave: brave };
         }
 
         Fonte::Wikipedia
@@ -99,7 +107,6 @@ impl<'a> Chaves<'a> {
     pub fn nome_da_fonte(&self) -> &'static str {
         match self.escolher() {
             Fonte::Google { .. } => "google + notícias",
-            Fonte::Brave { .. } => "brave + notícias",
             Fonte::Wikipedia => "wikipedia + notícias",
         }
     }
@@ -123,7 +130,7 @@ pub struct Achado {
 /// A Wikipedia recusa chamada sem User-Agent identificável.
 const AGENTE: &str = "Jarvis/0.1 (assistente pessoal local)";
 
-/// Busca, preferindo o Brave quando há chave.
+/// Busca, preferindo o Google quando há chave e `cx`.
 pub async fn pesquisar(
     http: &reqwest::Client,
     consulta: &str,
@@ -142,7 +149,6 @@ pub async fn pesquisar(
     // resposta.
     let principal = match chaves.escolher() {
         Fonte::Google { chave, cx } => google(http, consulta, chave, cx).await,
-        Fonte::Brave { chave } => brave(http, consulta, chave).await,
         Fonte::Wikipedia => wikipedia(http, consulta).await,
     };
 
@@ -150,8 +156,11 @@ pub async fn pesquisar(
     // pode consertar. Qualquer outra falha da fonte principal só vira erro se as manchetes
     // também vierem vazias — derrubar a busca por causa da Wikipedia fora do ar seria
     // trocar meia resposta por nenhuma.
-    if let Err(SearchError::Recusada { status }) = &principal {
-        return Err(SearchError::Recusada { status: *status });
+    if let Err(SearchError::Recusada { status, motivo }) = &principal {
+        return Err(SearchError::Recusada {
+            status: *status,
+            motivo: motivo.clone(),
+        });
     }
 
     let mut achados = match &principal {
@@ -393,7 +402,7 @@ fn sem_entidades(texto: &str) -> String {
     saida
 }
 
-// ---- Brave -------------------------------------------------------------------
+// ---- Google ------------------------------------------------------------------
 
 /// Busca no índice do Google, pela Custom Search JSON API.
 ///
@@ -441,10 +450,13 @@ async fn google(
 
     let status = resposta.status();
     if !status.is_success() {
-        // O 429 daqui é a cota diária de 100 buscas do plano gratuito, e é o erro mais
-        // provável desta fonte — quem o lê é o texto do `SearchError::Recusada`.
+        // O corpo do erro do Google é JSON com `error.message` em inglês, e é a única
+        // coisa que diz QUAL das causas foi. Ler antes de desistir é o que separa
+        // "recusou (403)" de "a Custom Search API não está habilitada neste projeto".
+        let corpo = resposta.text().await.unwrap_or_default();
         return Err(SearchError::Recusada {
             status: status.as_u16(),
+            motivo: motivo_do_google(&corpo, status.as_u16()),
         });
     }
 
@@ -459,7 +471,7 @@ async fn google(
         .take(QUANTOS)
         .map(|item| Achado {
             titulo: item.title,
-            trecho: item.snippet,
+            trecho: limpar(&item.snippet),
             url: item.link,
             // Resultado de web não é notícia: sem data, o `nota_da_busca` o considera
             // conhecimento que continua valendo, que é o certo para uma página.
@@ -468,70 +480,42 @@ async fn google(
         .collect())
 }
 
-async fn brave(
-    http: &reqwest::Client,
-    consulta: &str,
-    chave: &str,
-) -> Result<Vec<Achado>, SearchError> {
-    #[derive(Deserialize)]
-    struct Resposta {
-        #[serde(default)]
-        web: Option<Web>,
-    }
-    #[derive(Deserialize)]
-    struct Web {
-        #[serde(default)]
-        results: Vec<Resultado>,
-    }
-    #[derive(Deserialize)]
-    struct Resultado {
-        title: String,
-        #[serde(default)]
-        description: String,
-        url: String,
+/// O `error.message` do Google, traduzido para o que a pessoa tem que FAZER.
+///
+/// As três causas cobertas são as que aparecem de verdade ao configurar isto pela primeira
+/// vez, e cada uma tem uma ação diferente — que é justamente o que o número do HTTP não
+/// diz. O que não casar volta como veio: a mensagem crua em inglês ainda é melhor que
+/// "recusou".
+fn motivo_do_google(corpo: &str, status: u16) -> String {
+    let cru = corpo.to_lowercase();
+
+    if cru.contains("has not been used") || cru.contains("accessnotconfigured") {
+        return "a Custom Search API não está habilitada neste projeto do Google Cloud. \
+                Abra console.cloud.google.com, procure \"Custom Search API\" e clique em \
+                ATIVAR — leva um minuto e vale para a chave que você já criou"
+            .to_owned();
     }
 
-    let url = format!(
-        "https://api.search.brave.com/res/v1/web/search?q={}&count={QUANTOS}&country=BR&search_lang=pt",
-        urlencode(consulta)
-    );
-
-    let resposta = http
-        .get(&url)
-        // Timeout por requisição: o cliente compartilhado é o do intérprete, que tem
-        // 3 minutos de folga para carregar modelo na VRAM. Busca travada por 3 minutos
-        // seria o app inteiro parado.
-        .timeout(TIMEOUT)
-        .header("Accept", "application/json")
-        .header("X-Subscription-Token", chave)
-        .send()
-        .await
-        .map_err(|erro| SearchError::Rede(erro.to_string()))?;
-
-    let status = resposta.status();
-    if !status.is_success() {
-        return Err(SearchError::Recusada {
-            status: status.as_u16(),
-        });
+    if cru.contains("referer") || cru.contains("referrer") || cru.contains("ip address") {
+        return "a chave está restrita por site ou por IP, e este app chama direto do seu \
+                computador. No console de credenciais, deixe a restrição da chave como \
+                \"Nenhuma\" ou limite por API em vez de por origem"
+            .to_owned();
     }
 
-    let corpo: Resposta = resposta
-        .json()
-        .await
-        .map_err(|erro| SearchError::Rede(erro.to_string()))?;
+    if status == 429 || cru.contains("quota") || cru.contains("rate limit") {
+        return "a cota diária de 100 buscas do plano gratuito acabou. Ela reseta à \
+                meia-noite no fuso do Pacífico"
+            .to_owned();
+    }
 
-    Ok(corpo
-        .web
-        .map(|web| web.results)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|resultado| Achado {
-            titulo: resultado.title,
-            trecho: limpar(&resultado.description),
-            url: resultado.url,
-            quando: None,
-        })
-        .collect())
+    // Sem casar com nada conhecido, devolve o que o Google disse — cortado, porque isto vai
+    // para uma bolha de conversa e o corpo pode vir com o JSON inteiro.
+    let limpo: String = corpo.split_whitespace().collect::<Vec<_>>().join(" ");
+    if limpo.is_empty() {
+        return "a fonte não explicou".to_owned();
+    }
+    limpo.chars().take(220).collect()
 }
 
 // ---- utilidades --------------------------------------------------------------
@@ -552,6 +536,7 @@ async fn pegar<T: for<'de> Deserialize<'de>>(
     if !status.is_success() {
         return Err(SearchError::Recusada {
             status: status.as_u16(),
+            motivo: "a fonte não explicou".to_owned(),
         });
     }
 
@@ -561,8 +546,9 @@ async fn pegar<T: for<'de> Deserialize<'de>>(
         .map_err(|erro| SearchError::Rede(erro.to_string()))
 }
 
-/// O Brave devolve `<strong>` nos trechos para marcar o termo casado. Tirar tag é
-/// mais barato que ensinar o modelo a ignorá-la.
+/// Buscador devolve marcação no trecho para destacar o termo casado. Tirar tag é mais
+/// barato que ensinar o modelo a ignorá-la — e ela chegaria à FALA, onde "abre colchete
+/// strong" é o mesmo tipo de ruído que o `tirar_links_orfaos` já combate na conversa.
 fn limpar(texto: &str) -> String {
     let mut saida = String::with_capacity(texto.len());
     let mut dentro_de_tag = false;
@@ -613,7 +599,7 @@ mod tests {
     /// Sem isso o modelo recebe `<strong>` no meio do trecho e às vezes copia a tag
     /// para dentro do resumo.
     #[test]
-    fn tira_as_tags_do_trecho_do_brave() {
+    fn tira_as_tags_do_trecho_do_buscador() {
         assert_eq!(
             limpar("O <strong>dólar</strong> fechou em alta"),
             "O dólar fechou em alta"
@@ -625,43 +611,58 @@ mod tests {
         assert_eq!(limpar("antes <quebrado"), "antes");
     }
 
-    fn chaves<'a>(brave: &'a str, google: &'a str, cx: &'a str) -> Chaves<'a> {
+    fn chaves<'a>(google: &'a str, cx: &'a str) -> Chaves<'a> {
         Chaves {
-            brave,
             google,
             google_cx: cx,
         }
     }
 
+    /// O 403 do Google tem quatro causas e uma ação diferente para cada. O teste guarda
+    /// a tradução — sem ela a tela mostrava só o número, que não conserta nada.
+    #[test]
+    fn o_403_do_google_vira_o_que_fazer() {
+        let nao_habilitada = r#"{"error":{"code":403,"message":"Custom Search API has not been used in project 123 before or it is disabled."}}"#;
+        assert!(motivo_do_google(nao_habilitada, 403).contains("ATIVAR"));
+
+        let restrita = r#"{"error":{"message":"Requests from referer <empty> are blocked."}}"#;
+        assert!(motivo_do_google(restrita, 403).contains("restrita"));
+
+        assert!(motivo_do_google("{}", 429).contains("cota"));
+
+        // O que não casa volta como veio: inglês cru ainda diz mais que "recusou".
+        let estranho = motivo_do_google(r#"{"error":"algo novo que ninguem previu"}"#, 400);
+        assert!(estranho.contains("algo novo"), "{estranho}");
+
+        assert_eq!(motivo_do_google("", 500), "a fonte não explicou");
+    }
+
     /// A escolha da fonte é o que o log de ações mostra ao usuário.
     #[test]
     fn a_fonte_depende_da_chave() {
-        assert_eq!(fonte(&chaves("", "", "")), "wikipedia + notícias");
-        assert_eq!(fonte(&chaves("   ", "  ", " ")), "wikipedia + notícias");
-        assert_eq!(fonte(&chaves("BSA-xxx", "", "")), "brave + notícias");
-        assert_eq!(fonte(&chaves("", "AIza-xxx", "cx1")), "google + notícias");
+        assert_eq!(fonte(&chaves("", "")), "wikipedia + notícias");
+        assert_eq!(fonte(&chaves("  ", " ")), "wikipedia + notícias");
+        assert_eq!(fonte(&chaves("AIza-xxx", "cx1")), "google + notícias");
     }
 
-    /// **O Google ganha do Brave**, e a Wikipédia perde dos dois.
+    /// **O Google ganha da Wikipédia, e precisa das DUAS credenciais para ganhar.**
     ///
-    /// A ordem não é gosto: foi ela que consertou "qual o preço do PlayStation 5", que a
-    /// Wikipédia respondia com os verbetes de PlayStation 5, PlayStation e PlayStation 3.
+    /// A preferência não é gosto: foi ela que consertou "qual o preço do PlayStation 5",
+    /// que a Wikipédia respondia com os verbetes de PlayStation 5, PlayStation e
+    /// PlayStation 3 — nenhum deles com preço.
     #[test]
-    fn a_ordem_das_fontes_e_google_brave_wikipedia() {
+    fn o_google_ganha_da_wikipedia_mas_so_com_as_duas_credenciais() {
         assert_eq!(
-            chaves("BSA-xxx", "AIza-xxx", "cx1").escolher(),
+            chaves("AIza-xxx", "cx1").escolher(),
             Fonte::Google {
                 chave: "AIza-xxx",
                 cx: "cx1"
             }
         );
-        // Chave do Google sem o `cx` não busca nada — cai para a próxima em vez de
-        // quebrar. É o erro de meia-configuração mais provável desta fonte.
-        assert_eq!(
-            chaves("BSA-xxx", "AIza-xxx", "").escolher(),
-            Fonte::Brave { chave: "BSA-xxx" }
-        );
-        assert_eq!(chaves("", "AIza-xxx", "").escolher(), Fonte::Wikipedia);
+        // Chave sem `cx` não busca nada, e `cx` sem chave também não: os dois caem para a
+        // Wikipédia em vez de derrubar a busca. É o erro de quem configura pela metade.
+        assert_eq!(chaves("AIza-xxx", "").escolher(), Fonte::Wikipedia);
+        assert_eq!(chaves("", "cx1").escolher(), Fonte::Wikipedia);
     }
 
     /// Um feed do Google News encurtado, com as três coisas que importam: manchete com

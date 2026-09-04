@@ -90,8 +90,6 @@ export interface AppSettings {
   ollamaModelBusca: string
   /** Pasta da memória em markdown. Vazio = `memoria/` no projeto. */
   memoriaPath: string
-  /** Chave do Brave Search. Vazio = Wikipedia (sem chave, mas só enciclopédia). */
-  braveApiKey: string
   /** Chave da Custom Search do Google + o `cx` do mecanismo. Precisa dos DOIS. */
   googleApiKey: string
   googleCx: string
@@ -183,7 +181,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ollamaModel: 'qwen2.5vl:3b',
   ollamaModelBusca: '',
   memoriaPath: '',
-  braveApiKey: '',
   googleApiKey: '',
   googleCx: '',
   spotifyClientId: '',

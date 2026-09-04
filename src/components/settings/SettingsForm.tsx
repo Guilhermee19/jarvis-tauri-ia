@@ -39,7 +39,6 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
   const [ollamaModel, setOllamaModel] = useState(initial.ollamaModel)
   const [ollamaModelBusca, setOllamaModelBusca] = useState(initial.ollamaModelBusca)
   const [memoriaPath, setMemoriaPath] = useState(initial.memoriaPath)
-  const [braveKey, setBraveKey] = useState(initial.braveApiKey)
   const [googleKey, setGoogleKey] = useState(initial.googleApiKey)
   const [googleCx, setGoogleCx] = useState(initial.googleCx)
   const [spotifyId, setSpotifyId] = useState(initial.spotifyClientId)
@@ -118,21 +117,12 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
       />
 
       <Input
-        label="API key do Brave Search"
-        type="password"
-        value={braveKey}
-        onChange={(event) => setBraveKey(event.target.value)}
-        placeholder="BSA…"
-        hint="Sem ela a busca usa a Wikipedia, que responde 'quem foi X' mas não sabe preço nem notícia. Grátis em brave.com/search/api (2000 buscas/mês)."
-      />
-
-      <Input
         label="Google — API key da Custom Search"
         type="password"
         value={googleKey}
         onChange={(event) => setGoogleKey(event.target.value)}
         placeholder="AIza…"
-        hint="O índice do Google, e ele GANHA do Brave quando os dois estão preenchidos. É a única fonte que responde 'quanto custa um PS5' — a Wikipedia devolve o verbete do console. 100 buscas por dia no plano grátis. Precisa do ID abaixo junto."
+        hint="Sem ela a busca usa a Wikipedia, que responde 'quem foi X' mas devolve o verbete do console quando você pergunta 'quanto custa um PS5'. 100 buscas por dia no plano grátis, sem cartão. Precisa do ID abaixo junto — a chave sozinha não busca nada."
       />
 
       <Input
@@ -369,7 +359,6 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
               ollamaModelBusca: ollamaModelBusca.trim(),
               // Vazio também é válido: cai na pasta padrão.
               memoriaPath: memoriaPath.trim(),
-              braveApiKey: braveKey.trim(),
               googleApiKey: googleKey.trim(),
               googleCx: googleCx.trim(),
               spotifyClientId: spotifyId.trim(),

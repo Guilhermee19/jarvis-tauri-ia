@@ -193,19 +193,20 @@ pub struct AppSettings {
     /// Pasta da memória (markdown, formato Obsidian). Vazio = a pasta `memoria/` do
     /// projeto em desenvolvimento, ou a de dados do usuário num app instalado.
     pub memoria_path: String,
-    /// Chave do Brave Search (grátis, 2000 buscas/mês). VAZIO usa a Wikipedia, que não
-    /// precisa de chave e responde bem "quem foi X" e "o que é Y" — mas não sabe preço,
-    /// clima nem notícia. É a chave que transforma isso em busca web de verdade.
-    pub brave_api_key: String,
     /// Chave da Custom Search JSON API do Google, e o `cx` do mecanismo programável.
     ///
     /// **Precisa dos DOIS.** A chave sozinha não busca nada: o `cx` é o que diz em QUE
     /// índice procurar, e é lá que se marca "pesquisar em toda a web" em vez de num site.
     /// Os dois saem de `programmablesearchengine.google.com` e do console de APIs.
     ///
-    /// Custa 100 buscas por dia no plano gratuito — menos que as 2.000/mês do Brave, mas
-    /// é o índice do Google, que é quem responde "quanto custa um PS5". A Wikipédia,
-    /// que é o padrão sem chave nenhuma, devolve para essa pergunta o verbete do console.
+    /// VAZIOS usam a Wikipedia, que não pede cadastro e responde bem "quem foi X" e "o que
+    /// é Y" — mas não sabe preço, estoque nem promoção. São estes dois campos que
+    /// transformam a busca em busca web de verdade.
+    ///
+    /// **Foi a única fonte com chave que sobrou.** O Brave Search ocupava este lugar antes,
+    /// com cota maior (2.000/mês contra 100/dia), e saiu porque o plano "gratuito" dele
+    /// pede cartão de crédito — o que, para um app que roda na máquina de uma pessoa só,
+    /// é o mesmo que ser pago.
     pub google_api_key: String,
     pub google_cx: String,
     /// Credenciais do Spotify (*client credentials*, sem OAuth). VAZIAS fazem "toque X"
@@ -264,7 +265,6 @@ impl AppSettings {
     /// `search::Chaves::escolher` — aqui só se empacota o que o usuário preencheu.
     pub fn chaves_de_busca(&self) -> crate::core::search::Chaves<'_> {
         crate::core::search::Chaves {
-            brave: &self.brave_api_key,
             google: &self.google_api_key,
             google_cx: &self.google_cx,
         }
@@ -287,7 +287,6 @@ impl Default for AppSettings {
             ollama_model: DEFAULT_OLLAMA_MODEL.to_owned(),
             ollama_model_busca: String::new(),
             memoria_path: String::new(),
-            brave_api_key: String::new(),
             google_api_key: String::new(),
             google_cx: String::new(),
             spotify_client_id: String::new(),
