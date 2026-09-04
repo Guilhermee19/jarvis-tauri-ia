@@ -582,7 +582,18 @@ fn sem_confundir_pergunta(acao: Intent, frase: &str) -> Intent {
 /// O ponto de interrogação sozinho não basta: quem fala com o assistente por voz não
 /// pontua, e o Whisper nem sempre põe. Por isso o pronome interrogativo no COMEÇO conta
 /// igual — e só no começo, porque "sou o Bruno, quem é você?" é uma apresentação.
-fn e_pergunta(frase: &str) -> bool {
+/// A frase é uma pergunta.
+///
+/// `pub(super)` porque ganhou um segundo cliente: o `super::deve_estudar`, que decide se
+/// vale ir à internet antes de responder. Os dois querem exatamente a mesma coisa, e uma
+/// segunda regra de "isto é pergunta?" divergiria da primeira no primeiro mês.
+///
+/// **A lista de interrogativos é maior que a que o [`sem_confundir_pergunta`] precisava**,
+/// e alargá-la é seguro justamente por causa de como ele a usa: lá ela só serve para
+/// desviar `sou_eu` de volta para `reply`, e uma frase que começa com "quando", "onde",
+/// "quanto" ou "o que" **nunca** é a afirmação "eu sou o X". O alargamento só pode pegar
+/// mais do mesmo erro; não tem como criar um novo.
+pub(super) fn e_pergunta(frase: &str) -> bool {
     let limpa = crate::core::memory::normalizar(frase);
     let limpa = limpa.trim();
 
@@ -590,9 +601,12 @@ fn e_pergunta(frase: &str) -> bool {
         return true;
     }
 
-    ["quem ", "qual ", "quais "]
-        .iter()
-        .any(|pronome| limpa.starts_with(pronome))
+    [
+        "quem ", "qual ", "quais ", "quando ", "onde ", "quanto ", "quanta ", "como ", "por que ",
+        "o que ",
+    ]
+    .iter()
+    .any(|pronome| limpa.starts_with(pronome))
 }
 
 fn rede(error: reqwest::Error, url: &str, model: &str) -> AgentError {
@@ -1230,6 +1244,26 @@ mod tests {
 
     /// Uma pergunta que segue a apresentação não pode anular o cadastro: o "quem" só
     /// conta no COMEÇO da frase.
+    /// Os interrogativos que entraram quando o `e_pergunta` ganhou o segundo cliente.
+    ///
+    /// A última linha é a que prova que alargar foi seguro: a regra do "só no começo"
+    /// continua valendo, então uma AFIRMAÇÃO de quem ele é não vira pergunta por ter um
+    /// interrogativo no meio.
+    #[test]
+    fn e_pergunta_pega_os_interrogativos_novos() {
+        for frase in [
+            "quando lança o gta 6",
+            "o que é uma dobradiça de piano",
+            "quanto custa um ingresso",
+            "por que o céu é azul",
+        ] {
+            assert!(e_pergunta(frase), "{frase:?} é pergunta");
+        }
+
+        assert!(!e_pergunta("sou o Bruno e trabalho com isso"));
+        assert!(!e_pergunta("tô cansado demais hoje"));
+    }
+
     #[test]
     fn pronome_no_meio_da_frase_nao_conta() {
         let acao = Intent::SouEu {

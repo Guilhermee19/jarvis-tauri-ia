@@ -152,7 +152,13 @@ pub async fn responder(
             // recente, então "Como está sua semana?" duas vezes seguidas custa caro.
             "repeat_penalty": 1.2,
             "repeat_last_n": 256,
-            "num_predict": 300,
+            // Teto de EMERGÊNCIA, não de estilo. Quem decide o tamanho é a regra
+            // "o tamanho da resposta é o tamanho da pergunta" no `prompt_de_conversa`;
+            // este número só existe para um modelo em laço não escrever para sempre.
+            // Subiu de 300 porque a resposta desenvolvida que a regra agora permite
+            // batia no teto e era cortada no meio de uma frase — e uma frase cortada
+            // ainda vai para o TTS, que a lê pela metade.
+            "num_predict": 600,
         },
         "messages": mensagens,
     });
@@ -245,6 +251,99 @@ pub async fn destilar_assunto(
         .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))?;
 
     Ok(peneirar(destilacao))
+}
+
+#[derive(Deserialize)]
+struct Estudo {
+    pesquisar: bool,
+    #[serde(default)]
+    termo: String,
+}
+
+/// O que pesquisar antes de responder — e SE vale pesquisar. `None` = é papo, responda.
+///
+/// **É o terceiro portão, e o único que entende a frase.** Os dois antes dele
+/// (`super::deve_estudar`) são casamento de string e custam microssegundos; por isso esta
+/// chamada só acontece depois de os dois terem dito sim, e o papo normal nunca passa por
+/// aqui. O orçamento é o do [`destilar_assunto`], medido em 0,41 s.
+///
+/// O que só ele pega: "como assim?" e "sério?" passam pelos portões de string — terminam
+/// em interrogação, não citam ninguém, nenhuma nota casa — e são conversa pura. Abrir uma
+/// aba do navegador por causa delas seria pior que responder mal.
+///
+/// **`pesquisar` vem ANTES de `termo` no schema pelo mesmo motivo do [`Destilacao`]**: a
+/// grammar gera na ordem do schema, então ele se compromete com o sim/não antes de ter a
+/// chance de inventar um termo só para não devolver vazio.
+///
+/// **O termo importa mais do que parece: ele vira NOME DE ARQUIVO.** Quem escala chama o
+/// `pesquisar_e_responder`, que grava a nota com `memoria.aprender(consulta, …)` — então
+/// mandar a frase crua produziria `memoria/notas/quanto-ele-vale-agora.md` na pasta que o
+/// usuário abre no Obsidian. E como o nome vale 3 pontos na `busca::pontuar` contra 1 do
+/// corpo, uma nota com nome de pergunta nunca mais casa com nada. Foi este argumento, e
+/// não a qualidade da busca, que pagou esta chamada a mais.
+///
+/// Vai no `ollama_model`, e NÃO no `modelo_de_busca()`: o de busca pode ser outro modelo,
+/// e trazer um segundo para a VRAM custa os 8,5 s do carregamento. O principal já está
+/// quente desde o `aquecer`.
+pub async fn destilar_busca(
+    http: &reqwest::Client,
+    url: &str,
+    model: &str,
+    recentes: &[ChatMessage],
+    dito: &str,
+) -> Result<Option<String>, AgentError> {
+    let mut mensagens = vec![serde_json::json!({
+        "role": "system",
+        "content": PROMPT_DE_BUSCA,
+    })];
+
+    // As anteriores entram só para resolver pronome — "quanto ELE vale agora?" não tem
+    // termo de busca sem elas. É a mesma razão (e a mesma janela curta) do histórico no
+    // `intent::interpret`.
+    for message in recentes.iter().filter(|m| m.role != Role::System) {
+        mensagens.push(serde_json::json!({
+            "role": if message.role == Role::User { "user" } else { "assistant" },
+            "content": message.content,
+        }));
+    }
+    mensagens.push(serde_json::json!({ "role": "user", "content": dito }));
+
+    let corpo = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "keep_alive": super::intent::KEEP_ALIVE,
+        "format": {
+            "type": "object",
+            "properties": {
+                "pesquisar": { "type": "boolean" },
+                "termo": { "type": "string" }
+            },
+            "required": ["pesquisar", "termo"]
+        },
+        // Teto curto: a saída são poucas palavras. É classificação, não redação.
+        "options": { "temperature": 0, "num_predict": 60 },
+        "messages": mensagens,
+    });
+
+    let texto = pedir(http, url, model, &corpo).await?;
+    let estudo: Estudo = serde_json::from_str(texto.trim())
+        .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))?;
+
+    Ok(peneirar_busca(estudo))
+}
+
+/// `pesquisar` manda, mesmo quando o termo vem preenchido — gêmeo do [`peneirar`], e pela
+/// mesma razão medida: o modelo diz `false` e preenche o campo assim mesmo.
+///
+/// Aqui honrar o campo seria pior que lá: uma nota a mais você apaga, mas uma busca que
+/// não devia acontecer abre uma aba do navegador por cima do que a pessoa está fazendo.
+fn peneirar_busca(estudo: Estudo) -> Option<String> {
+    if !estudo.pesquisar {
+        return None;
+    }
+
+    let termo = estudo.termo.trim();
+    (!termo.is_empty()).then(|| termo.to_owned())
 }
 
 /// `rende` manda, mesmo quando o assunto vem preenchido.
@@ -441,6 +540,26 @@ fn tirar_links_orfaos(nota: &str, assunto: &str, conhecidas: &[String]) -> Strin
 /// das regras de estilo, e a lista de limitações é explícita — sem ela o modelo não tem
 /// como saber o que este app faz, e preenche a lacuna com o que um assistente genérico
 /// faria.
+///
+/// **"DE ONDE VEM O QUE VOCÊ SABE" é a mesma lição, um nível acima.** Dizer "fiz" sem
+/// ter feito some com a diferença entre funcionar e não funcionar; dizer um fato sem ter
+/// fonte some com a diferença entre saber e chutar — e aqui o estrago não para na frase.
+/// Esta resposta alimenta o extrator de notas, então um chute dito com voz firme vira um
+/// `.md` em `memoria/notas/`, e daí em diante o `Memoria::contexto` o serve como verdade.
+/// Casos reais: "quem é o presidente do Brasil?" respondido com o presidente de dois
+/// mandatos atrás, e um filme da Marvel com nome plausível que nunca existiu.
+///
+/// A regra é irmã da que o `intent::system_prompt` aplica no roteador — lá ela levou as
+/// perguntas sobre o mundo de 9/12 para 12/12. Aqui ela fecha o outro lado: o roteador
+/// manda para a busca o que RECONHECE como pergunta sobre o mundo, e este bloco cobre o
+/// que escapa dele (o pronome solto, o desdobramento de um assunto já em pauta).
+///
+/// **E o tamanho da resposta virou função da PERGUNTA, não uma constante.** O teto de
+/// "no máximo 2 frases" que estava aqui resolvia o assistente tagarela e criava o burro:
+/// pedir "me explica como funciona" e receber duas frases não é concisão, é recusa. A
+/// regra nova mantém o padrão curto — que é o que evita o tagarela — e abre espaço só
+/// quando o pedido dele abre. Note que o gatilho é o PEDIDO e não o assunto: sem essa
+/// linha, qualquer tema denso vira palestra.
 fn prompt_de_conversa(assistant_name: &str, persona: Persona, memoria: &str) -> String {
     let tom = persona.tom();
 
@@ -455,7 +574,7 @@ fn prompt_de_conversa(assistant_name: &str, persona: Persona, memoria: &str) -> 
     let agora = chrono::Local::now().format("%A, %d de %B de %Y, %H:%M");
 
     format!(
-        "Você é o {assistant_name}, assistente pessoal. Roda local, sem internet.
+        "Você é o {assistant_name}, assistente pessoal. Roda local no computador dele.
 
 SEU JEITO
 {tom}
@@ -483,13 +602,46 @@ abrir, mover ou apagar arquivo.
 Nesses casos: uma frase dizendo que não sabe fazer, e pare. Não invente um jeito, não
 prometa fazer depois, e não sugira que ele tente de novo com outras palavras.
 
+DE ONDE VEM O QUE VOCÊ SABE
+Você tem DUAS fontes, e só elas: a MEMÓRIA no fim deste prompt e o que foi dito nesta
+conversa. O que você acha que lembra do seu treino NÃO É FONTE — está velho, você não
+tem como conferir, e nada nele foi checado.
+Sobre o MUNDO — pessoa, empresa, filme, obra, cargo, data, número, preço, quem fez o
+quê, quando sai — se não estiver na memória nem na conversa, você NÃO SABE.
+NÃO OFEREÇA PESQUISAR. Nunca escreva \"quer que eu procure?\", \"posso dar uma olhada?\"
+nem \"se quiser eu pesquiso\". Quem decide isso não é você: quando a pergunta é sobre o
+mundo e a memória não cobre o assunto, eu JÁ pesquisei antes de te chamar, e o que a
+busca achou chegou até você como memória. Se você está lendo isto sem trecho de busca
+nenhum, é porque o assunto é ELE, é sobre vocês dois, é sobre você mesmo, ou já está
+anotado aqui embaixo.
+Se ainda assim escapar um fato do mundo que não está em lugar nenhum: diga em meia frase
+que não tem isso e siga o assunto. Não arrisque, não aproxime, não escreva \"acho que\",
+\"se não me engano\" nem \"pelo que sei\".
+Presidente, campeão, preço e data de lançamento MUDAM, e o seu treino ficou parado: o
+que você lembra hoje é a resposta certa de anos atrás. Título de filme então é o pior
+caso — você monta um nome plausível que nunca existiu.
+Responder de cabeça é o pior erro que você pode cometer, e ele não morre na frase: o
+que você disser aqui vira NOTA na memória, e um palpite virado nota passa a ser lido
+como verdade conferida depois.
+Isso NÃO vale para o que é sobre ELE, sobre vocês dois ou sobre você mesmo — aí a
+memória é a fonte certa e ela basta.
+
 COMO RESPONDER
-- Português, direto, no máximo 2 frases.
+- O TAMANHO DA RESPOSTA É O TAMANHO DA PERGUNTA. Pergunta simples, resposta simples:
+  uma ou duas frases, e PARE. Não emende explicação que ninguém pediu.
+- Só quando ELE pedir mais — \"me explica\", \"como funciona\", \"fala mais sobre\",
+  \"por quê\", \"detalha\", \"me dá um exemplo\" — desenvolva de verdade: até uns seis
+  períodos, na ordem que ajuda a entender.
+- Quem manda é o PEDIDO dele, não o assunto. Assunto complicado com pergunta curta
+  continua tendo resposta curta; ele pergunta o resto se quiser.
+- Português, direto, sem rodeio de abertura (\"boa pergunta\", \"deixa eu explicar\").
 - Responda À MENSAGEM DELE. A memória abaixo é CONTEXTO SEU, não o assunto da
   conversa. Só cite uma nota se ele perguntar ou se vier mesmo ao caso.
   NUNCA recite a memória sem motivo.
 - Se ele perguntar algo que está nas notas, responda com o que está lá.
-- Se não souber, diga que não sabe. Não invente.
+- Se a resposta não estiver na memória nem nesta conversa, diga isso e pare — sem
+  inventar, sem aproximar e sem oferecer procurar. Um \"isso eu não tenho anotado\" curto
+  vale mais que um parágrafo de rodeio.
 - Escreva como quem FALA. Nada de colchetes duplos, nada de markdown, nada de citar
   nome de arquivo. Isso é conversa, não anotação.
 - NÃO ofereça o que ele não pediu, e não comente o que o log mostra que ele fez. Ele
@@ -506,23 +658,44 @@ MEMÓRIA
 
 /// O balanço dos exemplos importa mais que as regras — foi a lição que custou três
 /// rodadas de medição no prompt anterior. Com mais negativos que positivos, o modelo
-/// responde `false` para tudo; aqui são 6 positivos contra 4 negativos.
+/// responde `false` para tudo; aqui são 6 positivos contra 5 negativos.
+///
+/// **A quinta negativa fecha o cano por onde a alucinação virava verdade.** A nota de
+/// conversa é `Tipo::Fato` e nasce sem fonte; a de busca é `Tipo::Aprendido` e nasce com
+/// o link dentro (veja `nota_da_busca`). Como este extrator só roda no braço `Reply` do
+/// `super::handle`, tudo que ele grava veio da CABEÇA do modelo — e quando o assunto era
+/// o mundo, o resultado era uma nota errada com cara de nota boa: Stan Lee como
+/// editor-chefe de uma "revista Marvel Comics" que não existe, um filme da Marvel com
+/// nome plausível que nunca foi feito. Pior: `Memoria::contexto` depois serve essas
+/// notas como contexto confiável, e o erro passa a se repetir sozinho.
+///
+/// Então a divisão é de ORIGEM, não de assunto interessante: **o que é sobre ELE vem da
+/// conversa; o que é sobre o MUNDO vem da busca, com fonte.** O exemplo do buraco negro
+/// saiu daqui por ser exatamente o caso que se quer barrar — e o `prompt_de_conversa` já
+/// ataca o mesmo problema um passo antes, impedindo o chute de existir.
 const PROMPT_DE_ASSUNTO: &str =
     "Você mantém uma base de conhecimento e lê a última troca de mensagens entre o \
 usuário e o assistente. Decida se ela rende uma NOTA DE CONHECIMENTO.
 
 Primeiro responda `rende`: true ou false.
 
-`rende` = true quando a troca traz algo que valeria reler daqui a meses: um assunto
-explicado, uma decisão, como algo funciona, um projeto, uma preferência firme, um
-plano, um fato sobre a vida dele.
+`rende` = true quando a troca traz algo que valeria reler daqui a meses E que veio DELE:
+um projeto dele, uma decisão que ele tomou, como algo que ele usa funciona, uma
+preferência firme, um plano, um fato sobre a vida dele.
 
-`rende` = false SÓ nestes casos: cumprimento, agradecimento, desabafo do momento,
-reclamação sobre o assistente, ou um comando executado.
+`rende` = false nestes casos: cumprimento, agradecimento, desabafo do momento,
+reclamação sobre o assistente, comando executado, ou — e este é o mais importante —
+uma explicação que o ASSISTENTE deu sobre o MUNDO de cabeça.
 
-NA DÚVIDA, RESPONDA TRUE. Perder conhecimento é pior que ter uma nota a mais — a nota
-você apaga, o que não foi anotado some. Se a troca menciona um projeto, uma tecnologia,
-uma pessoa, um lugar, um plano ou a explicação de qualquer coisa, ela RENDE.
+O QUE O ASSISTENTE SABE DE COR NÃO VIRA NOTA. Fato sobre pessoa pública, empresa, filme,
+obra, história, ciência, data ou preço só entra na base quando veio de uma BUSCA — e a
+busca grava a nota dela sozinha, com o link. Se a troca que você está lendo tem o
+assistente explicando o mundo sem fonte nenhuma, responda false: uma nota errada é pior
+que nenhuma, porque depois ela é lida como se fosse verdade conferida.
+
+NA DÚVIDA SOBRE ALGO DELE, RESPONDA TRUE. Perder conhecimento sobre ele é pior que ter
+uma nota a mais — a nota você apaga, o que não foi anotado some. Na dúvida sobre um fato
+do mundo, responda false.
 
 `assunto` = o TEMA, 2 a 4 palavras, minúsculas. É o nome do arquivo, então pense
 \"sobre o que é esta nota\", não \"o que foi dito\".
@@ -533,14 +706,62 @@ assim que a nota cresce em vez de virar duplicata.
 Exemplos:
 usuário fala que trabalha na Noclaf como dev das 9 às 18  -> true,  \"trabalho\"
 usuário explica que o projeto dele usa Tauri com Next     -> true,  \"projeto jarvis\"
-assistente explica o que é um buraco negro                -> true,  \"buraco negro\"
+usuário conta como o robô de solda da firma dele funciona -> true,  \"robo de solda\"
 usuário conta que adotou um gato chamado Bidu             -> true,  \"gato bidu\"
 usuário decide usar SQLite em vez de JSON e diz por quê   -> true,  \"escolha do banco\"
 usuário diz que prefere respostas curtas                  -> true,  \"preferencias\"
+assistente explica de cabeça quem foi Stan Lee            -> false, \"\"
 \"bom dia\" / \"obrigado\" / \"e aí?\"                          -> false, \"\"
 \"tô com fome\" / \"tô cansado\"                              -> false, \"\"
 \"você entrou em loop\" / \"não pedi nada\"                   -> false, \"\"
 \"abre o spotify\" (comando executado)                      -> false, \"\"";
+
+/// O balanço vale aqui como vale no [`PROMPT_DE_ASSUNTO`]: **5 positivos contra 5
+/// negativos**, com o `NA DÚVIDA, RESPONDA TRUE` desempatando para o lado que o usuário
+/// pediu. Mais negativos que positivos e o 3B responde `false` para tudo — aí a escalada
+/// não existe na prática e o app volta a dizer "não sei".
+///
+/// Os negativos não são decoração: são as quatro famílias que passam pelos portões de
+/// string e mesmo assim não podem virar busca — pergunta sobre ELE, pergunta sobre o
+/// próprio assistente, pergunta de capacidade ("que música está tocando?", que nenhuma
+/// fonte da web sabe) e frase solta que só puxa assunto.
+const PROMPT_DE_BUSCA: &str =
+    "Você lê a última mensagem do usuário e decide o que pesquisar na internet para poder \
+responder a ela. As mensagens anteriores estão aí SÓ para resolver pronome — \"ele\", \
+\"isso\", \"essa\" —, não para virar o assunto.
+
+Primeiro responda `pesquisar`: true ou false.
+
+`pesquisar` = true quando a mensagem PERGUNTA algo sobre o MUNDO e a resposta está fora
+desta conversa: pessoa, empresa, produto, filme, obra, cargo, lugar, data, preço, número,
+como uma coisa funciona, o que aconteceu.
+
+`pesquisar` = false quando: é conversa, desabafo, opinião, cumprimento ou piada; é sobre
+ELE (a rotina dele, o trabalho dele, o que ele já te contou); é sobre VOCÊ (o que você
+consegue fazer, o que você lembra, o que vocês conversaram); é sobre o que está
+acontecendo NO COMPUTADOR dele agora (que música toca, o que está na tela) — nenhuma
+página da internet sabe isso; ou é uma frase solta que só puxa assunto (\"como assim?\",
+\"sério?\", \"e aí?\").
+
+NA DÚVIDA, RESPONDA TRUE. Uma busca a mais custa alguns segundos; responder de cabeça
+sobre o mundo cria uma nota errada que depois é lida como verdade conferida.
+
+`termo` = o que você digitaria num buscador. 2 a 6 palavras, minúsculas, sem \"pesquise\",
+sem \"no google\" e sem ponto de interrogação. Troque TODO pronome pelo nome da coisa,
+puxando da conversa. É também o NOME DO ARQUIVO da nota que a busca vai gravar: escreva
+um ASSUNTO, nunca uma pergunta.
+
+Exemplos (a conversa vinha falando de Bitcoin):
+\"quanto ele vale agora?\"                    -> true,  \"cotação do bitcoin\"
+\"e quem inventou isso?\"                     -> true,  \"criador do bitcoin\"
+\"quanto custa um ingresso do rock in rio?\"  -> true,  \"preço do ingresso rock in rio\"
+\"o que é uma dobradiça de piano?\"           -> true,  \"dobradiça de piano\"
+\"quem ganhou o brasileirão?\"                -> true,  \"campeão do brasileirão\"
+\"que horas eu acordo?\"                      -> false, \"\"
+\"o que eu te falei ontem?\"                  -> false, \"\"
+\"você consegue tocar música?\"               -> false, \"\"
+\"que música é essa que tá tocando?\"         -> false, \"\"
+\"como assim?\"                               -> false, \"\"";
 
 /// A regra que resolve o pedido: a nota é um DOCUMENTO sobre um assunto, não o
 /// registro do que foi dito. Sem o "nada de ele perguntou / eu respondi", o modelo
@@ -612,13 +833,20 @@ pub async fn responder_com_busca(
         // invenção é a regra de não sair dos trechos, não a temperatura — a 0.2 ele
         // inventou um tempo de forno que não estava em trecho nenhum, e o que
         // resolveu foi a regra sobre passo a passo, logo abaixo.
-        "options": { "temperature": 0.3, "repeat_penalty": 1.15, "num_predict": 300 },
+        // O `num_predict` é teto de emergência, como no `responder`: quem decide o
+        // tamanho é a regra da resposta acompanhar a pergunta, e 300 cortava no meio da
+        // frase justamente quando ele tinha pedido detalhe.
+        "options": { "temperature": 0.3, "repeat_penalty": 1.15, "num_predict": 600 },
         "messages": [
             { "role": "system", "content": format!(
                 "Você é o {assistant_name}, assistente pessoal. Você acabou de dar uma \
                  olhada na internet para responder o que ele perguntou.\n\n\
                  FALE COMO GENTE:\n\
-                 - 1 a 3 frases, em português, no tom de quem está conversando.\n\
+                 - O TAMANHO DA RESPOSTA É O TAMANHO DA PERGUNTA. Pergunta simples, \
+                   1 ou 2 frases e PARE. Só desenvolva (até uns seis períodos) quando \
+                   ele PEDIU detalhe: \"me explica\", \"como funciona\", \"fala mais \
+                   sobre\", \"por quê\", \"detalha\".\n\
+                 - Em português, no tom de quem está conversando.\n\
                  - NUNCA diga \"segundo os resultados\", \"de acordo com as fontes\", \
                    \"os trechos indicam\" nem cite links. Ele não pediu um relatório, \
                    pediu uma resposta.\n\
@@ -636,8 +864,17 @@ pub async fn responder_com_busca(
                  - Essa regra acima vale só para pedido de instruções. Para \"o que é\", \
                    \"quem foi\", \"por que\" e afins, responda normalmente com o que os \
                    trechos trazem — não é para recusar por falta de passo a passo.\n\
-                 - Se os trechos não respondem, diga que não achou. Sem rodeio e sem \
-                   chute.") },
+                 - Se os trechos NÃO respondem, faça três coisas, nesta ordem: conte o \
+                   que eles TÊM sobre o assunto, diga com todas as letras qual parte da \
+                   pergunta ficou sem resposta, e PARE. \"Achei o preço, mas não achei a \
+                   data\" é uma resposta boa; \"não sei\" seco não é.\n\
+                 - NUNCA complete o que faltou com o que você lembra de cor. Você acabou \
+                   de olhar a internet: o que não estava lá, você não tem. Nem \"acho \
+                   que\", nem \"se não me engano\", nem um número aproximado, nem um ano \
+                   \"por volta de\". Preferir o buraco ao palpite não é falha — o que \
+                   você disser aqui é gravado como nota COM FONTE, e um chute no meio de \
+                   uma resposta com link vira o pior tipo de erro: o que parece \
+                   conferido.") },
             { "role": "user", "content":
                 format!("PERGUNTA\n{consulta}\n\nTRECHOS\n\n{}", fontes.join("\n\n")) },
         ],
@@ -726,6 +963,48 @@ pub async fn resumir(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Gêmeo do `rende_falso_descarta_o_assunto_mesmo_preenchido`, e pelo mesmo motivo
+    /// medido: o modelo diz `false` e preenche o campo assim mesmo. Aqui honrar o campo
+    /// seria pior que lá — abriria uma aba do navegador por cima do que a pessoa faz.
+    #[test]
+    fn pesquisar_falso_descarta_o_termo_mesmo_preenchido() {
+        assert_eq!(
+            peneirar_busca(Estudo {
+                pesquisar: false,
+                termo: "cotação do bitcoin".to_owned(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn pesquisar_verdadeiro_passa_e_apara_o_branco() {
+        assert_eq!(
+            peneirar_busca(Estudo {
+                pesquisar: true,
+                termo: "  cotação do bitcoin  ".to_owned(),
+            }),
+            Some("cotação do bitcoin".to_owned())
+        );
+        // `true` com termo vazio é o modelo se comprometendo sem ter o que pesquisar.
+        assert_eq!(
+            peneirar_busca(Estudo {
+                pesquisar: true,
+                termo: "   ".to_owned(),
+            }),
+            None
+        );
+    }
+
+    /// A inversão que esta feature trouxe, e que regride em silêncio: se o prompt voltar a
+    /// oferecer pesquisa, ninguém percebe até usar — a resposta continua plausível.
+    #[test]
+    fn o_prompt_de_conversa_nao_oferece_pesquisar() {
+        let prompt = prompt_de_conversa("Jarvis", Persona::Jarvis, "");
+        assert!(prompt.contains("NÃO OFEREÇA PESQUISAR"));
+        assert!(!prompt.contains("ofereça pesquisar"));
+    }
 
     /// O caso medido: o modelo diz `false` e preenche o assunto mesmo assim. Se o
     /// campo vencesse, a base encheria de nota sobre tema inventado — o pior desfecho,

@@ -36,13 +36,7 @@ pub fn relevantes(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
         return Vec::new();
     }
 
-    let termos = termos_de(frase);
-
-    let mut pontuadas: Vec<(usize, &Nota)> = notas
-        .iter()
-        .map(|nota| (pontuar(nota, &termos), nota))
-        .filter(|(pontos, _)| *pontos > 0)
-        .collect();
+    let mut pontuadas = pontuadas(notas, frase);
 
     // Mais pontos primeiro; empate desempata pelo nome, para a saída ser estável entre
     // execuções (um prompt que muda sozinho é impossível de depurar).
@@ -80,6 +74,41 @@ pub fn relevantes(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
     escolhidas
 }
 
+/// As notas que casaram, com quantos pontos cada uma. Sem ordem e sem o fallback.
+///
+/// Extraída para o [`relevantes`] e o [`casou`] responderem à MESMA pergunta: um deles
+/// monta o prompt e o outro decide se vale ir à internet, e nada seria mais confuso que
+/// os dois discordarem sobre o que "casar" quer dizer depois que alguém mexer nas
+/// [`VAZIAS`] ou no peso do nome em [`pontuar`].
+fn pontuadas<'a>(notas: &'a [Nota], frase: &str) -> Vec<(usize, &'a Nota)> {
+    let termos = termos_de(frase);
+
+    notas
+        .iter()
+        .map(|nota| (pontuar(nota, &termos), nota))
+        .filter(|(pontos, _)| *pontos > 0)
+        .collect()
+}
+
+/// Alguma nota casou de VERDADE com a frase — ou o que sai de [`relevantes`] é só o
+/// fallback das mais recentes?
+///
+/// **Existe porque o fallback apaga o sinal, e apagá-lo mentia para o modelo.** Sem
+/// casamento nenhum, `relevantes` devolve as mais recentes e `Memoria::contexto` as
+/// rotulava como "Conteúdo das mais relevantes agora" — oito notas escolhidas por DATA,
+/// apresentadas como se tivessem a ver com a pergunta. O modelo então respondia como quem
+/// tem contexto, e o que ele não achava ali completava de cabeça.
+///
+/// A resposta certa não era tirar o fallback (ele é de propósito, veja [`relevantes`]) e
+/// sim dizer a verdade sobre o que ele é. Quem decide o que fazer com isso é o prompt.
+///
+/// Barato: é a mesma pontuação de string do [`relevantes`], sem ordenação, sem clone e
+/// sem salto no grafo, e para no primeiro acerto. Nenhuma chamada ao modelo.
+pub fn casou(notas: &[Nota], frase: &str) -> bool {
+    let termos = termos_de(frase);
+    notas.iter().any(|nota| pontuar(nota, &termos) > 0)
+}
+
 /// Nome vale mais que corpo: uma nota chamada `academia` é mais sobre academia do que
 /// uma que menciona a palavra no meio de um parágrafo.
 fn pontuar(nota: &Nota, termos: &[String]) -> usize {
@@ -113,6 +142,56 @@ fn termos_de(frase: &str) -> Vec<String> {
 mod tests {
     use super::super::nota::{Nota, Tipo};
     use super::*;
+
+    /// O sinal que o fallback apaga — e a razão de os dois existirem lado a lado.
+    ///
+    /// Amarra os dois comportamentos num teste só de propósito: quebra se alguém
+    /// "consertar" o fallback do `relevantes` sem olhar o `casou`, ou vice-versa.
+    #[test]
+    fn casou_e_o_sinal_que_o_fallback_esconde() {
+        let notas = vec![Nota::nova(
+            "academia",
+            Tipo::Fato,
+            "Treina na Smart Fit de manhã.",
+            "2026-01-01",
+        )];
+
+        assert!(
+            !casou(&notas, "cotacao do bitcoin"),
+            "nada ali fala de bitcoin"
+        );
+        assert_eq!(
+            relevantes(&notas, "cotacao do bitcoin", 1).len(),
+            1,
+            "e mesmo assim o relevantes entrega a mais recente — é o fallback, e ele fica"
+        );
+    }
+
+    #[test]
+    fn casou_pelo_nome_e_pelo_corpo() {
+        let notas = vec![Nota::nova(
+            "academia",
+            Tipo::Fato,
+            "Treina na Smart Fit de manhã.",
+            "2026-01-01",
+        )];
+
+        assert!(
+            casou(&notas, "que horas abre a academia?"),
+            "casa pelo nome"
+        );
+        assert!(
+            casou(&notas, "ainda treina na smart fit?"),
+            "casa pelo corpo"
+        );
+        // Só palavras curtas ou da lista de VAZIAS: não sobra termo nenhum para casar.
+        assert!(!casou(&notas, "o que é isso para mim?"));
+    }
+
+    #[test]
+    fn memoria_vazia_nao_cobre_nada() {
+        assert!(!casou(&[], "qualquer coisa que seja"));
+    }
 
     fn nota(nome: &str, corpo: &str, dia: &str) -> Nota {
         Nota::nova(nome, Tipo::Fato, corpo, dia)

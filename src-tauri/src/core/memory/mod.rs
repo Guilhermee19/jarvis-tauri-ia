@@ -208,11 +208,47 @@ impl Memoria {
             .map(|nota| format!("### {}\n{}", nota.nome, nota.corpo))
             .collect();
 
+        // **O cabeçalho diz de onde as notas vieram, e isso decide a resposta.** Sem
+        // casamento nenhum, `busca::relevantes` cai nas mais recentes (de propósito), e o
+        // rótulo antigo — "as mais relevantes agora" — chamava de relevante o que tinha
+        // sido escolhido por DATA. O modelo lia aquilo como "então é isto que eu sei sobre
+        // o assunto", não achava a resposta lá dentro, e completava de cabeça.
+        //
+        // Agora ele sabe a diferença entre "a memória respondeu" e "a memória não tem
+        // isto" — que é exatamente a bifurcação que o `prompt_de_conversa` usa para
+        // decidir entre responder e mandar pesquisar.
+        let cabecalho = if busca::casou(&notas, frase) {
+            "Conteúdo das notas que CASARAM com o que ele disse:"
+        } else {
+            "NENHUMA NOTA CASOU com o que ele disse. As de baixo são só as mais recentes, \
+             para você saber o que existe — NÃO são a resposta:"
+        };
+
         format!(
-            "Notas que existem na sua memória:\n{}\n\nConteúdo das mais relevantes agora:\n\n{}",
+            "Notas que existem na sua memória:\n{}\n\n{cabecalho}\n\n{}",
             indice.join("\n"),
             corpos.join("\n\n")
         )
+    }
+
+    /// Se a memória tem alguma nota que fale DE VERDADE sobre isto.
+    ///
+    /// **É a pergunta que o [`Self::contexto`] não consegue responder**, e por desenho:
+    /// ele sempre devolve texto, porque o fallback do `busca::relevantes` entrega as mais
+    /// recentes quando nada casa. Isso está certo para MONTAR PROMPT — memória que só
+    /// aparece pelo nome exato não parece memória — e está errado para DECIDIR, que é
+    /// para o que este método serve.
+    ///
+    /// Quem decide é o `agent::deve_estudar`: sem nota sobre o assunto, uma pergunta
+    /// sobre o mundo vai para a busca antes de virar resposta.
+    ///
+    /// Custa um `contains` por termo por nota, sem ida ao modelo — é o que permite
+    /// pendurar isto no caminho de toda mensagem sem o "bom dia" ficar mais lento.
+    ///
+    /// Memória vazia não cobre nada, e é o comportamento certo: numa instalação nova
+    /// tudo é assunto novo, e é exatamente aí que ele mais precisa ir aprender.
+    pub fn cobre(&self, frase: &str) -> bool {
+        busca::casou(&lock(&self.notas), frase)
     }
 
     /// `apelido → alvo`, para o prompt do roteador. É o que faz "abre meu jogo" passar

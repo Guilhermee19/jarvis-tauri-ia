@@ -211,6 +211,17 @@ pub async fn handle(
         intent::interpret(http, url, model, nome, &memoria.apelidos(), &recentes, dito).await?;
     let pensou = relogio.elapsed();
 
+    // **Vale parar e estudar antes de responder?** Só faz sentido perguntar no caminho de
+    // conversa: os outros verbos já sabem o que fazer, e o `web_search` já vai pesquisar.
+    //
+    // Fica AQUI, e não dentro do braço, por um motivo mecânico: a conversa fala em
+    // STREAMING de dentro do `converse::responder`, então depois de entrar em `conversar`
+    // a primeira frase já saiu pela boca. Este é o último ponto mudo do turno.
+    let estudo = match &acao {
+        Intent::Reply {} => talvez_estudar(http, settings, memoria, &recentes, dito).await,
+        _ => None,
+    };
+
     let mut log = Log::novo(dito, model, &acao, pensou, settings.log_detalhado);
     let mut ui = None;
     // Preenchido só no caminho de CONVERSA: é o único que gera nota. Comando de PC e casa
@@ -223,6 +234,34 @@ pub async fn handle(
     let mut ja_falou = false;
 
     let reply = match &acao {
+        // A memória não cobria, e era pergunta sobre o mundo: ele vai estudar ANTES de
+        // responder, em vez de dizer que não sabe.
+        //
+        // **Sem `manutencao` aqui**, e é de propósito. A nota deste caminho quem grava é o
+        // `pesquisar_e_responder`, com fonte e `Tipo::Aprendido`; deixar o extrator rodar
+        // junto criaria uma segunda nota `Tipo::Fato` SEM fonte sobre o mesmo assunto — a
+        // duplicata errada ao lado da certa. E o `PROMPT_DE_ASSUNTO` foi calibrado sobre a
+        // premissa de que tudo que ele vê veio da cabeça do modelo, que aqui não vale.
+        //
+        // **Sem `registrar_acao`** tampouco: `acoes.jsonl` é a matéria-prima das rotinas
+        // observadas, e ele não pediu esta busca — anotá-la ensinaria ao app um hábito que
+        // é do assistente, não da pessoa.
+        Intent::Reply {} if estudo.is_some() => {
+            let termo = estudo.expect("acabou de ser testado com is_some");
+            log.estudou(&termo);
+
+            // A ponte contra o silêncio. O caminho de busca é MUDO o turno inteiro
+            // (`responder_com_busca` não faz streaming), e aqui a espera é pior que no
+            // `web_search`: lá a pessoa pediu a pesquisa e sabe que ela vem; aqui ela fez
+            // uma pergunta e some tudo por segundos. No modo conversa é ainda pior, porque
+            // o microfone fica FECHADO até o turno acabar — ela não tem nem como
+            // interromper falando. Uma frase custa zero, usa a fila de voz que já está
+            // aberta, e é sintetizada enquanto a rede trabalha.
+            ao_falar("Isso eu não tenho anotado. Deixa eu dar uma olhada.");
+
+            pesquisar_e_responder(http, settings, memoria, &termo, dito, &mut log).await
+        }
+
         Intent::Reply {} => {
             // A resposta sai agora; as notas ficam para depois dela. O `resposta` é
             // preenchido no fim do `handle`, quando o texto final já existe.
@@ -651,6 +690,75 @@ pub async fn handle(
         ui,
         manutencao,
     })
+}
+
+/// O termo a pesquisar antes de responder, ou `None` para conversar normalmente.
+///
+/// **Três portões, e a ordem é a do custo.** Os dois primeiros são casamento de string e
+/// custam microssegundos; só quando os dois passam é que a terceira ida ao modelo
+/// acontece. É isso que mantém a promessa de que "bom dia" e desabafo continuam falando
+/// nos mesmos 0,89 s de sempre — eles morrem no primeiro portão e nunca chegam ao Ollama.
+///
+/// Falha na destilação é `None`, não erro: não conseguir decidir se valia pesquisar é
+/// motivo para conversar, nunca para derrubar a mensagem.
+async fn talvez_estudar(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    memoria: &Memoria,
+    recentes: &[crate::core::chat::ChatMessage],
+    dito: &str,
+) -> Option<String> {
+    if !deve_estudar(memoria, dito) {
+        return None;
+    }
+
+    converse::destilar_busca(
+        http,
+        &settings.ollama_url,
+        &settings.ollama_model,
+        recentes,
+        dito,
+    )
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Os dois portões de GRAÇA: parece pergunta, e a memória não tem nada sobre isso.
+fn deve_estudar(memoria: &Memoria, frase: &str) -> bool {
+    intent::e_pergunta(frase) && !e_sobre_nos_dois(frase) && !memoria.cobre(frase)
+}
+
+/// Pergunta sobre ELE ou sobre o PRÓPRIO assistente nunca vira busca na internet.
+///
+/// **É o portão que impede o pior caso desta feature.** "que horas eu acordo mesmo?" é um
+/// exemplo literal de CONVERSA no prompt do roteador, termina em interrogação, e não casa
+/// nota nenhuma — os termos que sobram são `horas`, `acordo`, `mesmo`, e `acordo` nem é
+/// substring de `acorda`, que é como a nota estaria escrita. Sem este portão, a pergunta
+/// mais íntima que o app sabe responder iria para a Wikipédia com uma aba do navegador
+/// abrindo por cima da tela dele.
+///
+/// O `system_prompt` do roteador já diz a regra ("sobre ELE ou sobre vocês dois vai para
+/// reply, porque a resposta está na memória e não na internet"); o que faltava era o
+/// código aplicá-la do lado de cá.
+///
+/// **Casa por PALAVRA INTEIRA, nunca por `contains`**: o "eu" de "europa" e o "te" de
+/// "tempo" fariam esta regra barrar quase tudo, e a feature morreria calada.
+///
+/// A régua é grossa e pode ser: quem manda pergunta sobre o mundo para a busca é o
+/// roteador, que acerta 12/12 nelas. Isto aqui só vê o resíduo que ele chamou de conversa,
+/// então barrar demais custa pouco e barrar de menos custa uma aba na cara da pessoa.
+fn e_sobre_nos_dois(frase: &str) -> bool {
+    /// Primeira pessoa (é sobre ele) e segunda (é sobre mim). Sem "seu"/"sua", que em
+    /// português falado apontam para terceiros com frequência demais ("qual o seu preço").
+    const NOSSAS: [&str; 14] = [
+        "eu", "meu", "minha", "meus", "minhas", "mim", "comigo", "voce", "vc", "te", "ti",
+        "contigo", "teu", "tua",
+    ];
+
+    crate::core::memory::normalizar(frase)
+        .split(' ')
+        .any(|palavra| NOSSAS.contains(&palavra))
 }
 
 /// Papo: responde com histórico e memória, e depois tenta aprender algo com o que foi
@@ -1384,6 +1492,18 @@ impl Log {
 
     /// De onde veio a resposta importa: "wikipedia · 0 resultados" explica sozinho por
     /// que o Jarvis disse que não achou nada.
+    /// Por que ele foi pesquisar sem ninguém ter pedido.
+    ///
+    /// Sem esta linha, o log mostra uma BUSCA num turno que o roteador classificou como
+    /// `reply`, e não há como distinguir a escalada de um bug do roteador. É o caso mais
+    /// difícil de auditar que este `Log` tem, porque é o único em que o app agiu por conta
+    /// própria — e auditar exatamente isso é a razão de o módulo existir.
+    fn estudou(&mut self, termo: &str) {
+        self.linhas
+            .push(format!("ESTUDOU    a memória não cobre · {termo}"));
+        self.houve_algo = true;
+    }
+
     fn busca(&mut self, consulta: &str, fonte: &str, quantos: usize, levou: std::time::Duration) {
         self.linhas.push(format!(
             "BUSCA      {fonte} · {quantos} resultados · {:.1} s",
@@ -1442,6 +1562,79 @@ fn campos(acao: &Intent) -> serde_json::Map<String, serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// O portão que impede o pior caso da escalada.
+    ///
+    /// As quatro primeiras são exemplos LITERAIS de conversa no prompt do roteador ou o
+    /// caso que o `sem_confundir_pergunta` já protege. Todas terminam em interrogação e
+    /// nenhuma casaria nota numa pasta nova — sem este portão, as quatro iriam para a
+    /// Wikipédia com uma aba abrindo por cima da tela da pessoa.
+    #[test]
+    fn o_que_e_sobre_nos_dois_nunca_vira_busca() {
+        for frase in [
+            "que horas eu acordo mesmo?",
+            "quem sou eu?",
+            "o que eu te falei ontem?",
+            "você consegue tocar música?",
+        ] {
+            assert!(e_sobre_nos_dois(frase), "{frase:?} é sobre nós dois");
+        }
+
+        for frase in [
+            "quem descobriu o brasil?",
+            "quanto custa um ingresso do rock in rio?",
+        ] {
+            assert!(!e_sobre_nos_dois(frase), "{frase:?} é sobre o mundo");
+        }
+    }
+
+    /// O teste que impede a volta do `contains`.
+    ///
+    /// Casar por substring faria o "eu" de "europa" e o "te" de "tempo" barrarem quase
+    /// toda pergunta sobre o mundo — e a feature morreria calada, sem erro nenhum.
+    #[test]
+    fn o_pronome_casa_por_palavra_inteira() {
+        assert!(!e_sobre_nos_dois("quanto custa uma viagem pra europa?"));
+        assert!(!e_sobre_nos_dois("como está o tempo?"));
+        assert!(!e_sobre_nos_dois("quem é o técnico do timão?"));
+    }
+
+    /// Os dois portões de graça, juntos — e a prova de que "bom dia" não paga nada.
+    #[test]
+    fn deve_estudar_precisa_dos_dois_sinais() {
+        let raiz = std::env::temp_dir().join("jarvis-testes-estudar");
+        let _ = std::fs::remove_dir_all(&raiz);
+        let memoria = Memoria::new(&raiz);
+
+        assert!(!deve_estudar(&memoria, "bom dia"), "não é pergunta");
+        assert!(
+            !deve_estudar(&memoria, "tô cansado demais hoje"),
+            "não é pergunta"
+        );
+        assert!(!deve_estudar(&memoria, "quem sou eu?"), "é sobre ele");
+
+        assert!(
+            deve_estudar(&memoria, "quem foi o Tony Stark?"),
+            "pergunta sobre o mundo, memória vazia: vai estudar"
+        );
+
+        // E depois de aprender, para de estudar — a escalada é auto-limitante, paga uma
+        // vez por assunto.
+        memoria.lembrar("tony stark", "Personagem da Marvel.");
+        assert!(
+            !deve_estudar(&memoria, "quem foi o Tony Stark?"),
+            "agora a memória cobre, e a resposta sai dela"
+        );
+    }
+
+    #[test]
+    fn o_log_da_escalada_aparece() {
+        let mut log = Log::mudo();
+        log.estudou("cotação do bitcoin");
+
+        let caixa = log.render().expect("estudar tem que fazer o log aparecer");
+        assert!(caixa.contains("cotação do bitcoin"), "{caixa}");
+    }
 
     fn chaveiro_de_teste(nome: &str) -> Chaveiro {
         let dir = std::env::temp_dir().join(format!("jarvis-agente-casa-{nome}"));
