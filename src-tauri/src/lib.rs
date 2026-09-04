@@ -100,6 +100,12 @@ pub fn run() {
 
             tray::build(app.handle())?;
 
+            // A janela nasce escondida e do tamanho do config; aqui ela ganha o quarto
+            // de tela e só então aparece. Antes do `aquecer` de propósito: o modelo indo
+            // para a VRAM é a coisa mais demorada deste bloco, e a pessoa não tem por que
+            // esperar por ele para ver a janela.
+            window::abrir_dimensionada(app.handle());
+
             // O modelo indo para a VRAM enquanto a janela abre, em vez de na primeira
             // pergunta. É a única coisa que sobe sozinha aqui, e sobe porque o custo dela
             // é fixo e inevitável: quem for conversar vai pagá-lo de um jeito ou de outro,
