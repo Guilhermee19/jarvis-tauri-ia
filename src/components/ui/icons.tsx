@@ -261,3 +261,18 @@ export function GrafoIcon(props: IconProps) {
     </Svg>
   )
 }
+
+/**
+ * Cotações. Uma moeda com a linha de tendência atravessando — o gráfico sozinho vira
+ * gêmeo do {@link GaugeIcon} do desempenho na barra de 20px, e a moeda sozinha não diz
+ * que o número muda.
+ */
+export function MoedaIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M14.4 9.2a2.6 2.6 0 0 0-2.4-1.3c-1.4 0-2.3.7-2.3 1.8 0 2.4 4.8 1.2 4.8 3.6 0 1.1-.9 1.8-2.4 1.8a2.7 2.7 0 0 1-2.5-1.4" />
+      <path d="M12 6.4v1.5M12 16.1v1.5" />
+    </Svg>
+  )
+}

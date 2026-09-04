@@ -78,6 +78,22 @@ pub enum Intent {
     WeatherAt {
         local: String,
     },
+    /// "quanto tá o dólar?", "e o bitcoin?" — cotação de moeda e criptomoeda.
+    ///
+    /// **Verbo próprio, e não `web_search`**, pela mesma razão do [`Intent::Weather`]:
+    /// número que muda a cada minuto não se responde com trecho de página. A diferença é
+    /// que aqui a fonte é uma API que devolve o número exato, então não há o que resumir
+    /// e não há como o modelo inventar.
+    ///
+    /// **Um campo com enum FECHADO, e não cinco verbos.** É o desenho do
+    /// [`Intent::CameraMove`], e vale pelo mesmo motivo: o que forçou `weather` e
+    /// `weather_at` a serem separados foi o `local` ser texto livre, que o 3B preenchia em
+    /// toda pergunta. `moeda` não é texto livre — a gramática só deixa emitir os cinco
+    /// valores, e `todas` é o padrão de quem não nomeou nenhuma.
+    Cotacao {
+        #[serde(default = "todas_as_moedas")]
+        moeda: crate::core::cotacoes::Moeda,
+    },
     /// "toque Charlie Brown Jr só os loucos sabem no spotify". Diferente de
     /// [`Intent::OpenApp`], que só abre o programa, e de [`Intent::MediaPlayPause`],
     /// que retoma o que já estava tocando.
@@ -213,6 +229,10 @@ pub enum Intent {
     Reply {},
 }
 
+fn todas_as_moedas() -> crate::core::cotacoes::Moeda {
+    crate::core::cotacoes::Moeda::Todas
+}
+
 fn um_passo() -> u8 {
     1
 }
@@ -226,7 +246,8 @@ fn onde_der() -> vision::Fonte {
 
 /// Fonte única da lista de verbos: alimenta o schema, e o teste quebra se algum dia
 /// ela divergir do enum.
-const ACOES: [&str; 28] = [
+const ACOES: [&str; 29] = [
+    "cotacao",
     "sou_eu",
     "smart_home",
     "smart_color",
@@ -284,6 +305,9 @@ pub fn schema() -> serde_json::Value {
             "fonte":    { "type": "string", "enum": ["tela", "webcam", "auto"] },
             "camera":   { "type": "string" },
             "pessoa":   { "type": "string" },
+            // Fechado como o `direcao`, e pela mesma razão — só que aqui ele economiza
+            // QUATRO verbos, não três.
+            "moeda":    { "type": "string", "enum": ["dolar", "euro", "bitcoin", "ethereum", "todas"] },
             // Enum FECHADO, e é o que permite `camera_move` ser um verbo só em vez de
             // quatro: a gramática derivada do schema não deixa o modelo emitir outra
             // coisa, então não há campo livre para ele errar.
@@ -664,6 +688,9 @@ play_music        TOCAR uma música específica que ele nomeou. `query` = artist
 weather           tempo, chuva ou temperatura ONDE ELE ESTÁ. Sem argumento nenhum.
 weather_at        tempo, chuva ou temperatura numa CIDADE que ele nomeou na frase.
                   `local` = só o nome da cidade, copiado da frase dele.
+cotacao           preço de MOEDA ou CRIPTOMOEDA. `moeda` = dolar, euro, bitcoin, ethereum,
+                  ou todas quando ele não nomear nenhuma (\"como estão as moedas?\").
+                  Cotação NÃO é web_search, do mesmo jeito que tempo não é.
 webcam_on         ligar a câmera DO COMPUTADOR (a webcam, a que aponta para ele).
 webcam_off        desligar a câmera do computador.
 camera_on         mostrar uma câmera de SEGURANÇA da casa, que tem NOME DE LUGAR
@@ -752,6 +779,9 @@ Exemplos de COMANDO:
 \"volta pra anterior\"                -> {{\"action\":\"media_previous\"}}
 \"toque Charlie Brown Jr só os loucos sabem no spotify\" -> {{\"action\":\"play_music\",\"query\":\"Charlie Brown Jr Só os Loucos Sabem\"}}
 \"coloca uma música do Djavan\"       -> {{\"action\":\"play_music\",\"query\":\"Djavan\"}}
+\"quanto tá o dólar?\"                 -> {{\"action\":\"cotacao\",\"moeda\":\"dolar\"}}
+\"e o bitcoin, quanto tá?\"           -> {{\"action\":\"cotacao\",\"moeda\":\"bitcoin\"}}
+\"como estão as moedas hoje?\"        -> {{\"action\":\"cotacao\",\"moeda\":\"todas\"}}
 \"liga a câmera\"                     -> {{\"action\":\"webcam_on\"}}
 \"desliga a câmera\"                  -> {{\"action\":\"webcam_off\"}}
 \"mostra a garagem\"                  -> {{\"action\":\"camera_on\",\"camera\":\"garagem\"}}
@@ -809,6 +839,9 @@ Exemplos de CONVERSA — todos reply, mesmo citando música, jogo, tela ou objet
 \"azul é a minha cor favorita\"                           -> {{\"action\":\"reply\"}}
 \"a luz dessa sala é muito fraca pra ler\"                -> {{\"action\":\"reply\"}}
 \"que horas eu acordo mesmo?\"                            -> {{\"action\":\"reply\"}}
+\"o dólar tá caro demais pra viajar esse ano\"             -> {{\"action\":\"reply\"}}
+\"perdi dinheiro com cripto ano passado\"                  -> {{\"action\":\"reply\"}}
+\"acho bitcoin uma furada, sinceramente\"                  -> {{\"action\":\"reply\"}}
 \"bom dia\"                                               -> {{\"action\":\"reply\"}}
 \"e aí, tudo certo?\"                                     -> {{\"action\":\"reply\"}}"
     );
@@ -973,6 +1006,12 @@ mod tests {
                 r#"{"action":"sou_eu","pessoa":"Guilherme"}"#,
                 Intent::SouEu {
                     pessoa: "Guilherme".to_owned(),
+                },
+            ),
+            (
+                r#"{"action":"cotacao","moeda":"bitcoin"}"#,
+                Intent::Cotacao {
+                    moeda: crate::core::cotacoes::Moeda::Bitcoin,
                 },
             ),
             (r#"{"action":"reply"}"#, Intent::Reply {}),

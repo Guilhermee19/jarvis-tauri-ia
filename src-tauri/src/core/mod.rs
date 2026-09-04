@@ -9,6 +9,7 @@ pub mod automation;
 pub mod cameras;
 pub mod casa;
 pub mod chat;
+pub mod cotacoes;
 pub mod memory;
 pub mod music;
 pub mod rostos;

@@ -1,5 +1,6 @@
 export { useCamerasStore } from './camerasStore'
 export { useCasaStore } from './casaStore'
+export { useCotacoesStore } from './cotacoesStore'
 export { useDesempenhoStore } from './desempenhoStore'
 export { abaAtiva, useNavegadorStore } from './navegadorStore'
 export { useConhecimentoStore, useGrafoVisivel } from './conhecimentoStore'

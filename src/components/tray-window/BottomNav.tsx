@@ -4,6 +4,7 @@ import {
   CameraIcon,
   ChatIcon,
   GaugeIcon,
+  MoedaIcon,
   GlobeIcon,
   GrafoIcon,
   HouseIcon,
@@ -37,6 +38,7 @@ const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'casa', label: 'Casa', Icon: HouseIcon },
   { id: 'cameras', label: 'Câmeras', Icon: VigilanciaIcon },
   { id: 'desempenho', label: 'Desempenho', Icon: GaugeIcon },
+  { id: 'cotacoes', label: 'Cotações', Icon: MoedaIcon },
   { id: 'navegador', label: 'Navegador', Icon: GlobeIcon },
   { id: 'conhecimento', label: 'Conhecimento', Icon: GrafoIcon },
 ]

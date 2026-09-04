@@ -6,6 +6,7 @@ import { NowPlayingWidget } from '@/components/music/NowPlayingWidget'
 import { WebcamStage } from '@/components/home/WebcamStage'
 import { CamerasWindow } from '@/components/cameras/CamerasWindow'
 import { CasaWindow } from '@/components/casa/CasaWindow'
+import { CotacoesWindow } from '@/components/cotacoes/CotacoesWindow'
 import { DesempenhoWindow } from '@/components/desempenho/DesempenhoWindow'
 import { ConhecimentoWindow } from '@/components/conhecimento/ConhecimentoWindow'
 import { NavegadorWindow } from '@/components/navegador/NavegadorWindow'
@@ -52,6 +53,7 @@ export default function HomePage() {
         <CasaWindow />
         <CamerasWindow />
         <DesempenhoWindow />
+        <CotacoesWindow />
         <NavegadorWindow />
         <ConhecimentoWindow />
         <SettingsSheet />

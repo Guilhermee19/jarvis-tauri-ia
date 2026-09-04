@@ -29,6 +29,7 @@ use crate::config::AppSettings;
 use crate::core::automation::{self, AutomationState};
 use crate::core::cameras::{self, Catalogo};
 use crate::core::casa::chaveiro::{Busca, Chaveiro};
+use crate::core::cotacoes;
 use crate::core::lugar::Localizador;
 use crate::core::tempo;
 use crate::core::casa::controle::{self, Ajuste};
@@ -92,7 +93,11 @@ pub enum AgentError {
 /// A tag INTERNA é o que deixa uma variante carregar dados (a faixa) sem os outros
 /// casos ganharem um nível de aninhamento à toa — do lado do TypeScript isso vira uma
 /// união discriminada, com o `switch` exaustivo de graça.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// `PartialEq` sem `Eq` desde que a `Cotacoes` entrou: ela carrega preço, que é `f64`, e
+/// ponto flutuante não é `Eq` em Rust por causa do `NaN`. Nada aqui precisava de `Eq` —
+/// os testes comparam com `assert_eq!`, que só pede `PartialEq`, e a enum nunca foi
+/// chave de mapa nem entrou em `HashSet`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "tipo", rename_all = "kebab-case")]
 pub enum AcaoDeUi {
     WebcamOn,
@@ -113,6 +118,17 @@ pub enum AcaoDeUi {
     /// Abre o widget de "tocando agora" com a faixa que acabou de começar.
     Tocando {
         faixa: music::Faixa,
+    },
+    /// Abre o card de cotações com os números que ACABARAM de ser buscados.
+    ///
+    /// **Leva as cotações junto, e não só um "abra o card".** A alternativa seria a UI
+    /// pedir de volta ao Rust, o que faria a mesma pergunta à AwesomeAPI duas vezes por
+    /// turno — e, pior, deixaria a fala e a tela mostrando números de instantes
+    /// diferentes. Uma cotação que não bate com a que ele acabou de ouvir parece bug.
+    ///
+    /// É a mesma escolha da `Tocando`, que também leva a faixa em vez do pedido.
+    Cotacoes {
+        cotacoes: Vec<crate::core::cotacoes::Cotacao>,
     },
     /// Abre um endereço numa aba do navegador interno.
     ///
@@ -568,6 +584,35 @@ pub async fn handle(
         }
 
         // ---- o tempo lá fora ----------------------------------------------
+        // Cotação: uma ida à API, e o MESMO resultado alimenta a fala e o card.
+        Intent::Cotacao { moeda } => {
+            log.acao(&acao);
+            let relogio = Instant::now();
+
+            let frase = match cotacoes::cotacoes(http).await {
+                Ok(achadas) => {
+                    let frase = cotacoes::resumo(&achadas, *moeda);
+                    // O card sobe SÓ quando deu certo. Abrir uma janelinha vazia para
+                    // depois dizer "não consegui" é mostrar o erro duas vezes.
+                    ui = Some(AcaoDeUi::Cotacoes { cotacoes: achadas });
+                    frase
+                }
+                // Como a casa e o tempo: falha vira frase, não erro de IPC.
+                Err(erro) => erro.to_string(),
+            };
+            log.desfecho(None, relogio.elapsed().as_millis());
+
+            memoria.registrar_acao(Acao {
+                quando: Utc::now().timestamp_millis(),
+                acao: verbo(&acao),
+                alvo: argumentos(&acao),
+                ok: true,
+            });
+            memoria.atualizar_rotinas();
+
+            frase
+        }
+
         Intent::Weather {} | Intent::WeatherAt { .. } => {
             log.acao(&acao);
             let relogio = Instant::now();
@@ -1185,6 +1230,7 @@ fn execute(acao: &Intent) -> Result<String, SystemError> {
         | Intent::Forget { .. }
         | Intent::Alias { .. }
         | Intent::OpenSite { .. }
+        | Intent::Cotacao { .. }
         | Intent::Weather { .. }
         | Intent::WeatherAt { .. }
         | Intent::SmartHome { .. }

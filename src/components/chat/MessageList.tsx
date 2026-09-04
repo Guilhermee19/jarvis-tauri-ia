@@ -19,7 +19,10 @@ export function MessageList({ messages, isTyping, assistantName }: MessageListPr
   }, [messages, isTyping])
 
   return (
-    <div className="scroll-thin flex flex-1 flex-col overflow-y-auto">
+    // `overflow-x-hidden` fecha a porta que o `min-w-0` e o `break-words` já trancaram
+    // por dentro: é o cinto e suspensório contra rolagem horizontal na conversa inteira,
+    // que é o defeito mais feio possível numa lista que só devia rolar para baixo.
+    <div className="scroll-thin flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
       {/* Coluna centralizada: a janela é larga, mas linha de conversa comprida
           cansa de ler. `flex-1` no lugar de `h-full` evita rolagem fantasma. */}
       <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col gap-3 px-3 py-4">
@@ -33,7 +36,7 @@ export function MessageList({ messages, isTyping, assistantName }: MessageListPr
         ) : null}
 
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble key={message.id} message={message} assistantName={assistantName} />
         ))}
 
         {isTyping ? <TypingIndicator assistantName={assistantName} /> : null}

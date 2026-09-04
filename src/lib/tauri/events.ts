@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauriRuntime } from './client'
+import type { Cotacao } from '@/types/cotacoes'
 
 /**
  * Eventos que o backend empurra para a UI (o caminho inverso do `invoke`).
@@ -111,6 +112,8 @@ export type UiAction =
   | { tipo: 'tocando'; faixa: Faixa }
   | { tipo: 'abrir-site'; url: string }
   | { tipo: 'pesquisar'; query: string }
+  /** Abre o card de cotações com os números que o agente ACABOU de buscar. */
+  | { tipo: 'cotacoes'; cotacoes: Cotacao[] }
 
 type JarvisEventName = (typeof JarvisEvent)[keyof typeof JarvisEvent]
 

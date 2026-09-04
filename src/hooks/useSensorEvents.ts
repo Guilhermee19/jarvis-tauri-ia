@@ -15,6 +15,7 @@ import {
   useCamerasStore,
   useChatStore,
   useConhecimentoStore,
+  useCotacoesStore,
   useJanelaStore,
   useNavegadorStore,
   useNowPlayingStore,
@@ -36,6 +37,7 @@ export function useSensorEvents() {
   const abrirSite = useNavegadorStore((state) => state.abrirSite)
   const anotarEndereco = useNavegadorStore((state) => state.anotarEndereco)
   const pesquisar = useNavegadorStore((state) => state.pesquisar)
+  const definirCotacoes = useCotacoesStore((state) => state.definir)
   const abrirJanela = useJanelaStore((state) => state.abrir)
   const fecharJanela = useJanelaStore((state) => state.fechar)
   const focarCamera = useCamerasStore((state) => state.focar)
@@ -130,6 +132,13 @@ export function useSensorEvents() {
           case 'pesquisar':
             void pesquisar(acao.query)
             break
+          // Os números vêm JUNTO do pedido: quem buscou foi o agente, no mesmo turno em
+          // que respondeu por voz. Buscar de novo aqui mostraria na tela um instante
+          // diferente do que ele acabou de falar.
+          case 'cotacoes':
+            definirCotacoes(acao.cotacoes)
+            abrirJanela('cotacoes')
+            break
         }
       }),
     )
@@ -145,6 +154,7 @@ export function useSensorEvents() {
     mostrarFaixa,
     abrirSite,
     pesquisar,
+    definirCotacoes,
     anotarEndereco,
     abrirJanela,
     fecharJanela,
