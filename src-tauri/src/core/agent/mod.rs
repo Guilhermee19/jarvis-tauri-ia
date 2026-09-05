@@ -66,6 +66,20 @@ pub enum AgentError {
     Rede(String),
     #[error("o modelo devolveu algo que não é uma ação válida: {0}")]
     NaoEntendi(String),
+    /// A correção não fala de um assunto, então não há nota a escrever.
+    ///
+    /// **Não é falha do modelo, e a mensagem precisa deixar isso claro** — a primeira
+    /// versão disto voltava como `NaoEntendi`, e a pessoa lia "o modelo devolveu algo que
+    /// não é uma ação válida" depois de escrever uma frase perfeitamente sensata.
+    ///
+    /// O caso real que a criou: "era pra ter pesquisado, ele nem pesquisou", marcado como
+    /// erro de FATO. Está certo que não tenha assunto — aquilo é sobre o JEITO. A saída é
+    /// dizer isso, e não inventar uma nota chamada "quem-e-o-ultron" que nunca casaria
+    /// com nada.
+    #[error(
+        "essa correção não fala de um assunto — ela é sobre o JEITO de responder. O seu          veredito já ficou guardado; marque \"respondeu mal\" para ela virar regra."
+    )]
+    SemAssunto,
     #[error(
         "o modelo {0} não enxerga imagem. Troque por um multimodal em Configurações — `ollama pull qwen2.5vl:3b` e ponha `qwen2.5vl:3b` no campo do modelo"
     )]
@@ -814,9 +828,7 @@ pub async fn aprender_com_a_correcao(
                 &troca,
             )
             .await?
-            .ok_or_else(|| {
-                AgentError::NaoEntendi("não achei sobre que assunto é essa correção".to_owned())
-            })?;
+            .ok_or(AgentError::SemAssunto)?;
 
             memoria.corrigir(&assunto, correcao);
             Ok(())

@@ -507,7 +507,14 @@ async fn google(
 fn motivo_do_google(corpo: &str, status: u16) -> String {
     let cru = corpo.to_lowercase();
 
-    if cru.contains("has not been used") || cru.contains("accessnotconfigured") {
+    // Três redações para a MESMA causa, e a terceira custou um 403 despejado como JSON cru
+    // na bolha da conversa: o Google responde "has not been used", "accessNotConfigured" ou
+    // "does not have the access to Custom Search JSON API" conforme o caminho, e só as duas
+    // primeiras estavam aqui.
+    if cru.contains("has not been used")
+        || cru.contains("accessnotconfigured")
+        || cru.contains("does not have the access")
+    {
         return "a Custom Search API não está habilitada neste projeto do Google Cloud. \
                 Abra console.cloud.google.com, procure \"Custom Search API\" e clique em \
                 ATIVAR — leva um minuto e vale para a chave que você já criou"
@@ -642,6 +649,12 @@ mod tests {
     fn o_403_do_google_vira_o_que_fazer() {
         let nao_habilitada = r#"{"error":{"code":403,"message":"Custom Search API has not been used in project 123 before or it is disabled."}}"#;
         assert!(motivo_do_google(nao_habilitada, 403).contains("ATIVAR"));
+
+        // A MESMA causa, na terceira redação que o Google usa — e a que escapava. Ela caía
+        // no fim da função e o JSON cru ia inteiro para a bolha da conversa, onde a pessoa
+        // lia um erro em inglês em vez do "clique em ATIVAR" que estava a três linhas dali.
+        let sem_acesso = r#"{"error":{"code":403,"message":"This project does not have the access to Custom Search JSON API."}}"#;
+        assert!(motivo_do_google(sem_acesso, 403).contains("ATIVAR"));
 
         let restrita = r#"{"error":{"message":"Requests from referer <empty> are blocked."}}"#;
         assert!(motivo_do_google(restrita, 403).contains("restrita"));

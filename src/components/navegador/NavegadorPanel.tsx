@@ -8,27 +8,44 @@ import { cn } from '@/lib/utils'
 import { abaAtiva, useJanelaStore, useNavegadorStore } from '@/stores'
 
 /**
- * As janelinhas desenhadas ACIMA da que contém este buraco.
+ * Tudo que é desenhado ACIMA deste buraco: janelinhas à frente, e a gaveta.
  *
  * Lido do DOM, e não da store, porque o que importa é o retângulo que está na tela agora —
  * a store guarda a posição escolhida, que é `null` enquanto a janelinha nunca foi
  * arrastada, e não sabe o tamanho que o conteúdo deu a ela. O `z-index` é o mesmo que o
  * `zDaJanela` calculou e a `FloatingPanel` escreveu no `style`.
+ *
+ * **A GAVETA entra sem comparar `z-index`, e não é atalho.** O `Sheet` é `z-40` por
+ * construção, acima da faixa 30–39 inteira das janelinhas — o comentário dele explica que
+ * é exatamente para uma janela por cima de outra nunca passar por cima da gaveta. Ela está
+ * sempre à frente, então não há o que comparar.
+ *
+ * Sem isto a página ficava desenhada POR CIMA das Configurações: o webview é uma camada
+ * nativa e nenhum `z-index` alcança ele, então quem tem que sair da frente é ele.
  */
 function porCimaDe(elemento: HTMLElement): Caixa[] {
   const minha = Number(elemento.closest<HTMLElement>('.floating-panel')?.style.zIndex ?? 0)
 
-  return [...document.querySelectorAll<HTMLElement>('.floating-panel')]
-    .filter((painel) => Number(painel.style.zIndex || 0) > minha)
-    .map((painel) => {
-      const caixa = painel.getBoundingClientRect()
-      return {
-        x: Math.round(caixa.x),
-        y: Math.round(caixa.y),
-        largura: Math.round(caixa.width),
-        altura: Math.round(caixa.height),
-      }
-    })
+  // O `sheet-overlay` cobre a área de conteúdo inteira, então uma gaveta aberta some com a
+  // página — que é o certo: ela escurece tudo o que está atrás, e uma página acesa por
+  // cima do escurecido é justamente o defeito. O `sheet-panel` entra junto como rede: se
+  // um dia a gaveta abrir sem overlay, o retângulo dela ainda é descontado.
+  const acima = [
+    ...document.querySelectorAll<HTMLElement>('.floating-panel, .sheet-overlay, .sheet-panel'),
+  ].filter(
+    (elemento) =>
+      !elemento.classList.contains('floating-panel') || Number(elemento.style.zIndex || 0) > minha,
+  )
+
+  return acima.map((alvo) => {
+    const caixa = alvo.getBoundingClientRect()
+    return {
+      x: Math.round(caixa.x),
+      y: Math.round(caixa.y),
+      largura: Math.round(caixa.width),
+      altura: Math.round(caixa.height),
+    }
+  })
 }
 
 /**
@@ -73,6 +90,9 @@ export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
   // estão: arrastar a conversa por cima da página tem que encolher a página.
   const arranjos = useJanelaStore((state) => state.arranjos)
   const abertas = useJanelaStore((state) => state.abertas)
+  // Abrir a gaveta não mexe em `arranjos` nem em `abertas`, então sem ela nas dependências
+  // a remedição nunca rodava — e a geometria certa não adianta se ninguém a recalcula.
+  const gaveta = useJanelaStore((state) => state.gaveta)
 
   const buraco = useRef<HTMLDivElement>(null)
   // Coberta de tal jeito que não sobrou página para mostrar. Guardado porque é o que a
@@ -115,7 +135,7 @@ export function NavegadorPanel({ escondido = false }: { escondido?: boolean }) {
       observador.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [posicionar, arranjos, abertas, escondido])
+  }, [posicionar, arranjos, abertas, escondido, gaveta])
 
   // Fechar o painel desmonta este componente, e o webview precisa sumir junto — ele não
   // sabe que o painel dele deixou de existir.
