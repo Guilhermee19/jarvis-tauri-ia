@@ -535,7 +535,7 @@ pub async fn interpret(
     let acao: Intent = serde_json::from_str(texto.trim())
         .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))?;
 
-    Ok(sem_confundir_pergunta(acao, frase))
+    Ok(sem_confundir_quando_com_onde(sem_confundir_pergunta(acao, frase)))
 }
 
 /// Carrega o modelo e deixa o prompt do roteador quente, ANTES da primeira pergunta.
@@ -599,6 +599,81 @@ fn sem_confundir_pergunta(acao: Intent, frase: &str) -> Intent {
         Intent::SouEu { .. } if e_pergunta(frase) => Intent::Reply {},
         _ => acao,
     }
+}
+
+/// Palavras que dizem QUANDO. Nenhuma delas é uma cidade.
+const QUANDO: [&str; 22] = [
+    "hoje",
+    "amanha",
+    "ontem",
+    "agora",
+    "cedo",
+    "tarde",
+    "noite",
+    "manha",
+    "madrugada",
+    "semana",
+    "fim",
+    "final",
+    "depois",
+    "proximo",
+    "proxima",
+    "segunda",
+    "terca",
+    "quarta",
+    "quinta",
+    "sexta",
+    "sabado",
+    "domingo",
+];
+
+/// Conectivos que não decidem nada, e por isso não contam na conta abaixo.
+///
+/// As preposições de LUGAR entram junto ("no domingo" e "em Lisboa" começam igual), e isso
+/// é seguro: elas nunca são a única palavra sobrando — o que decide continua sendo o que
+/// vem depois delas.
+const LIGACOES: [&str; 13] = [
+    "e", "de", "do", "da", "para", "pra", "no", "na", "nos", "nas", "em", "ao", "aos",
+];
+
+/// Devolve o `weather` quando o modelo pôs um TEMPO no campo de LUGAR.
+///
+/// **Medido, e resistente a prompt** — que é o critério do [`sem_confundir_pergunta`] aqui
+/// em cima. "qual a previsão do tempo pra amanhã?" saía como `web_search`, e o app tem
+/// previsão de três dias no `core::tempo`: a busca trocava uma resposta exata e grátis por
+/// trechos de site de meteorologia, e foi assim que ela chegou até o usuário.
+///
+/// Ensinar a palavra "previsão" ao prompt resolveu metade: parou de ir para a busca, e
+/// passou a sair como `weather_at { local: "amanhã" }`. É o mesmo defeito que o doc do
+/// [`Intent::WeatherAt`] já registra — **um campo declarado é um campo que a gramática
+/// deixa emitir, e o modelo prefere emitir a omitir**. Uma linha no prompt dizendo que
+/// "amanhã" não é lugar não mudou nada; o campo continua ali.
+///
+/// A conta exige que TODAS as palavras significativas sejam de tempo, e não que UMA seja.
+/// É o que salva "Domingos Martins" e "Santo Domingo", que são cidades de verdade: nelas
+/// sobra uma palavra que não é tempo, e o `local` é honrado como veio.
+fn sem_confundir_quando_com_onde(acao: Intent) -> Intent {
+    let Intent::WeatherAt { local } = &acao else {
+        return acao;
+    };
+
+    let limpo = crate::core::memory::normalizar(local);
+    let mut significativas = limpo
+        .split_whitespace()
+        .filter(|palavra| !LIGACOES.contains(palavra))
+        .peekable();
+
+    // Nada além de conectivos também não é lugar — "weather_at { local: "e" }" é o mesmo
+    // campo preenchido por preencher.
+    if significativas.peek().is_none() {
+        return Intent::Weather {};
+    }
+
+    if significativas.all(|palavra| QUANDO.contains(&palavra)) {
+        return Intent::Weather {};
+    }
+
+    acao
 }
 
 /// Se a frase pergunta em vez de afirmar.
@@ -685,9 +760,14 @@ media_next        pular para a PRÓXIMA música/faixa.
 media_previous    voltar para a música/faixa ANTERIOR.
 play_music        TOCAR uma música específica que ele nomeou. `query` = artista e nome
                   da música, sem \"toca\", sem \"põe\" e sem \"no spotify\".
-weather           tempo, chuva ou temperatura ONDE ELE ESTÁ. Sem argumento nenhum.
-weather_at        tempo, chuva ou temperatura numa CIDADE que ele nomeou na frase.
-                  `local` = só o nome da cidade, copiado da frase dele.
+weather           tempo, chuva, temperatura ou PREVISÃO onde ele está. Sem argumento
+                  nenhum. Cobre HOJE E OS PRÓXIMOS DIAS: \"e amanhã?\", \"a previsão
+                  para o fim de semana\" e \"vai chover no domingo?\" são weather.
+weather_at        tempo, chuva, temperatura ou previsão numa CIDADE que ele NOMEOU na
+                  frase. `local` = só o nome da cidade, copiado da frase dele.
+                  \"amanhã\", \"hoje\", \"de manhã\", \"no domingo\" e \"fim de semana\" são
+                  QUANDO, não ONDE: nenhum deles vai em `local`. Sem nome de cidade
+                  na frase, o verbo é weather.
 cotacao           preço de MOEDA ou CRIPTOMOEDA. `moeda` = dolar, euro, bitcoin, ethereum,
                   ou todas quando ele não nomear nenhuma (\"como estão as moedas?\").
                   Cotação NÃO é web_search, do mesmo jeito que tempo não é.
@@ -707,8 +787,9 @@ look              OLHAR uma imagem e responder sobre ela. `fonte` = onde olhar:
                   segurando; \"tela\" quando ele fala do que está NA TELA, numa janela,
                   num site ou numa mensagem de erro; \"auto\" quando ele não disser.
 web_search        pesquisar sobre o MUNDO. `query` = só os termos, sem \"pesquise\" nem \"no google\".
-                  Tempo, chuva e temperatura NÃO são web_search — são weather, mesmo com
-                  cidade no meio da frase.
+                  Tempo, chuva, temperatura e PREVISÃO NÃO são web_search — são
+                  weather, mesmo com cidade no meio da frase e mesmo quando ele
+                  pergunta de amanhã ou dos próximos dias.
 sou_eu            ele está DIZENDO QUEM ELE É — \"eu sou o Guilherme\", \"sou a Ana\",
                   \"meu nome é Bruno\". `pessoa` = só o primeiro nome, sem \"eu sou\".
                   Serve para eu guardar o rosto dele. NÃO use quando ele fala de
@@ -1129,6 +1210,65 @@ mod tests {
             .unwrap_or_else(|_| crate::config::DEFAULT_OLLAMA_MODEL.to_owned())
     }
 
+    /// A peneira do QUANDO no campo do ONDE, de mesa — sem modelo e sem rede.
+    ///
+    /// O caso que a criou está na primeira linha; os outros dois são o que ela NÃO pode
+    /// quebrar. "Domingos Martins" é cidade do Espírito Santo, e ela existe justamente
+    /// para provar que a conta é "todas as palavras são de tempo", e não "alguma é".
+    #[test]
+    fn tempo_no_campo_do_lugar_vira_weather() {
+        let em = |local: &str| Intent::WeatherAt {
+            local: local.to_owned(),
+        };
+
+        for quando in [
+            "amanhã",
+            "e amanhã?",
+            "hoje",
+            "fim de semana",
+            "no domingo",
+            "depois de amanhã",
+            "próxima semana",
+            "de manhã",
+            "e",
+            "",
+        ] {
+            assert_eq!(
+                sem_confundir_quando_com_onde(em(quando)),
+                Intent::Weather {},
+                "{quando:?} é QUANDO, não ONDE"
+            );
+        }
+
+        for onde in [
+            "Lisboa",
+            "São Paulo",
+            "Domingos Martins",
+            "Santo Domingo",
+            "Teresópolis",
+        ] {
+            assert_eq!(
+                sem_confundir_quando_com_onde(em(onde)),
+                em(onde),
+                "{onde:?} é uma cidade de verdade"
+            );
+        }
+    }
+
+    /// A peneira não pode encostar em nenhum outro verbo.
+    #[test]
+    fn a_peneira_do_quando_so_mexe_no_weather_at() {
+        for acao in [
+            Intent::Weather {},
+            Intent::Reply {},
+            Intent::WebSearch {
+                query: "amanhã".to_owned(),
+            },
+        ] {
+            assert_eq!(sem_confundir_quando_com_onde(acao.clone()), acao);
+        }
+    }
+
     /// Pergunta ao modelo de verdade e imprime o que ele decidiu.
     ///
     /// Fora do `cargo test` comum porque depende do Ollama de pé. É a única forma de
@@ -1156,6 +1296,12 @@ mod tests {
             "que temperatura tá fazendo aí fora",
             "como está o tempo em Lisboa",
             "vai chover amanhã em São Paulo?",
+            // A forma que ESCAPOU em uso real e foi parar no `web_search`: o app tem
+            // previsão de três dias (`core::tempo`), e mandá-la para a busca troca uma
+            // resposta exata de graça por trechos de site de meteorologia.
+            "qual a previsão do tempo pra amanhã?",
+            "e amanhã, vai chover?",
+            "qual a previsão para o fim de semana?",
         ];
 
         let http = client();

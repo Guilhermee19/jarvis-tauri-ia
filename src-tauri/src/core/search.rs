@@ -160,16 +160,20 @@ pub async fn pesquisar(
         Fonte::Wikipedia => wikipedia(http, consulta).await,
     };
 
-    // A chave recusada TEM que aparecer: é configuração errada, e o usuário é o único que
-    // pode consertar. Qualquer outra falha da fonte principal só vira erro se as manchetes
-    // também vierem vazias — derrubar a busca por causa da Wikipedia fora do ar seria
-    // trocar meia resposta por nenhuma.
-    if let Err(SearchError::Recusada { status, motivo }) = &principal {
-        return Err(SearchError::Recusada {
-            status: *status,
-            motivo: motivo.clone(),
-        });
-    }
+    // **A recusa deixou de valer uma busca inteira.** A política antiga devolvia o erro
+    // aqui, na hora, e a razão era boa enquanto durou: "chave recusada" era configuração
+    // errada, e o usuário era o único que podia consertar.
+    //
+    // O que a derrubou foi o Google FECHAR a Custom Search JSON API para projetos novos.
+    // A recusa virou permanente e sem conserto — e um erro que ninguém pode corrigir,
+    // devolvido cru, é um app sem busca nenhuma por tempo indeterminado, com a Wikipédia e
+    // as manchetes de pé o tempo todo ali do lado, nunca consultadas. Pior: acontece com
+    // quem seguiu a documentação até o fim e criou as duas credenciais direito.
+    //
+    // Agora a recusa não some (o `motivo_do_google` já diz exatamente o que houve, e ela
+    // continua chegando ao usuário quando NADA responde) — ela só não leva junto as duas
+    // fontes que ainda funcionam.
+    let google_recusou = principal.is_err() && matches!(chaves.escolher(), Fonte::Google { .. });
 
     let mut achados = match &principal {
         Ok(itens) => itens.clone(),
@@ -184,6 +188,14 @@ pub async fn pesquisar(
     // doc do `pagina`.
     if matches!(chaves.escolher(), Fonte::Google { .. }) {
         pagina::enriquecer(http, &mut achados).await;
+    }
+
+    // **A Wikipédia entra DEPOIS do `enriquecer` de propósito**, pela mesma razão que as
+    // manchetes: o resumo REST dela já é o primeiro parágrafo do artigo, e raspar a página
+    // do verbete para chegar a uma versão pior organizada do que já se tem não paga.
+    if google_recusou {
+        eprintln!("[jarvis] busca: o google recusou — caindo para a wikipedia");
+        achados.extend(wikipedia(http, consulta).await.unwrap_or_default());
     }
 
     achados.extend(noticias(http, consulta).await);
@@ -507,18 +519,46 @@ async fn google(
 fn motivo_do_google(corpo: &str, status: u16) -> String {
     let cru = corpo.to_lowercase();
 
-    // Três redações para a MESMA causa, e a terceira custou um 403 despejado como JSON cru
-    // na bolha da conversa: o Google responde "has not been used", "accessNotConfigured" ou
-    // "does not have the access to Custom Search JSON API" conforme o caminho, e só as duas
-    // primeiras estavam aqui.
-    if cru.contains("has not been used")
-        || cru.contains("accessnotconfigured")
-        || cru.contains("does not have the access")
-    {
-        return "a Custom Search API não está habilitada neste projeto do Google Cloud. \
-                Abra console.cloud.google.com, procure \"Custom Search API\" e clique em \
-                ATIVAR — leva um minuto e vale para a chave que você já criou"
+    // **"não tem acesso" NÃO é "não está ativada", e tratá-las como a mesma causa era o
+    // pior defeito desta função.** As duas viravam "clique em ATIVAR" — e num projeto novo
+    // esse conselho manda a pessoa procurar um botão que já está verde, ativar o que já
+    // está ativo, e concluir que ela errou alguma coisa. Não errou: o Google FECHOU a
+    // Custom Search JSON API para projetos novos, e nenhuma tela do console reverte isso.
+    //
+    // Medido no `jarvis-507603`: API "Ativado", chave do projeto certo, restrição de
+    // aplicativo "Nenhum", 15 chamadas registradas no painel do próprio Google — e 100% de
+    // erro, negado em 11 ms. Configuração não conserta o que é falta de direito.
+    if cru.contains("does not have the access") {
+        return "a Custom Search JSON API está FECHADA para projetos novos — o Google parou \
+                de aceitar clientes nela, e ATIVAR no console não muda nada (a API aparece \
+                como ativada e continua negando). Só projetos que já usavam antes do \
+                fechamento respondem, e mesmo esses vão até 01/01/2027. Apague a chave e o \
+                cx nas configurações: a busca volta para Wikipedia + manchetes, que \
+                funcionam sem cadastro nenhum"
             .to_owned();
+    }
+
+    // Esta sim é a API desligada de verdade — e aqui ATIVAR resolve.
+    if cru.contains("has not been used") || cru.contains("accessnotconfigured") {
+        // **O projeto que o Google nomeia é o da CHAVE, e era ele que se perdia aqui.**
+        // Custou uma sessão inteira: a pessoa ativou a API, viu "API ativada" verde na tela
+        // e recebeu o mesmo 403 — porque a chave tinha sido criada em OUTRO projeto, e a
+        // mensagem original dizia qual. Trocar o texto do Google pelo nosso jogava fora o
+        // único dado que separa "ative a API" de "você ativou no projeto errado".
+        return match projeto_citado(corpo) {
+            Some(projeto) => format!(
+                "a Custom Search API não está habilitada no projeto {projeto} — que é o \
+                 projeto DONO DA CHAVE que o app está usando. Se você acabou de ativar a \
+                 API em outro projeto, a ativação não vale para esta chave: ou ative em \
+                 {projeto}, ou gere uma chave nova dentro do projeto onde você ativou. \
+                 Atalho: console.cloud.google.com/apis/library/customsearch.googleapis.com\
+                 ?project={projeto}"
+            ),
+            None => "a Custom Search API não está habilitada neste projeto do Google Cloud. \
+                     Abra console.cloud.google.com, procure \"Custom Search API\" e clique \
+                     em ATIVAR — leva um minuto e vale para a chave que você já criou"
+                .to_owned(),
+        };
     }
 
     if cru.contains("referer") || cru.contains("referrer") || cru.contains("ip address") {
@@ -541,6 +581,26 @@ fn motivo_do_google(corpo: &str, status: u16) -> String {
         return "a fonte não explicou".to_owned();
     }
     limpo.chars().take(220).collect()
+}
+
+/// O projeto que o Google NOMEIA na recusa — o dono da chave, não o que está aberto na
+/// aba do console.
+///
+/// Ele aparece em dois lugares da mesma mensagem (`in project 519… before` e o
+/// `?project=519…` do link de ativação), e os dois são lidos porque o Google alterna
+/// conforme o caminho: a redação curta traz só o link.
+fn projeto_citado(corpo: &str) -> Option<String> {
+    fn token_depois(texto: &str, marcador: &str) -> Option<String> {
+        let inicio = texto.find(marcador)? + marcador.len();
+        let token: String = texto[inicio..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+
+        (!token.is_empty()).then_some(token)
+    }
+
+    token_depois(corpo, "in project ").or_else(|| token_depois(corpo, "?project="))
 }
 
 // ---- utilidades --------------------------------------------------------------
@@ -648,13 +708,26 @@ mod tests {
     #[test]
     fn o_403_do_google_vira_o_que_fazer() {
         let nao_habilitada = r#"{"error":{"code":403,"message":"Custom Search API has not been used in project 123 before or it is disabled."}}"#;
-        assert!(motivo_do_google(nao_habilitada, 403).contains("ATIVAR"));
+        // O NÚMERO tem que sobreviver: é ele que diz se a chave é do projeto que a pessoa
+        // acabou de ativar ou de outro. Sem ele, "ative a API" e "você ativou no projeto
+        // errado" viram a mesma frase — e a segunda não tem conserto por tentativa.
+        assert!(motivo_do_google(nao_habilitada, 403).contains("123"));
 
-        // A MESMA causa, na terceira redação que o Google usa — e a que escapava. Ela caía
-        // no fim da função e o JSON cru ia inteiro para a bolha da conversa, onde a pessoa
-        // lia um erro em inglês em vez do "clique em ATIVAR" que estava a três linhas dali.
+        // **A causa DIFERENTE que fingia ser a mesma.** Enquanto isto respondia "ATIVAR",
+        // a mensagem mandava mexer numa tela que não conserta nada: a API está fechada
+        // para projetos novos, e o console mostra "Ativado" enquanto nega toda chamada.
         let sem_acesso = r#"{"error":{"code":403,"message":"This project does not have the access to Custom Search JSON API."}}"#;
-        assert!(motivo_do_google(sem_acesso, 403).contains("ATIVAR"));
+        let fechada = motivo_do_google(sem_acesso, 403);
+        assert!(fechada.contains("FECHADA"), "{fechada}");
+        // **A intenção aqui é "não mande a pessoa clicar em ATIVAR", e procurar a PALAVRA
+        // era um proxy errado dela**: a mensagem certa cita o botão justamente para dizer
+        // que ele não resolve ("ATIVAR no console não muda nada"), então a asserção
+        // literal reprovava o texto que ela existe para exigir. O que se cobra é a
+        // negação, que é o que muda o que a pessoa vai fazer a seguir.
+        assert!(
+            fechada.contains("não muda nada"),
+            "tem que dizer que o botão não resolve, senão vira caça ao botão verde: {fechada}"
+        );
 
         let restrita = r#"{"error":{"message":"Requests from referer <empty> are blocked."}}"#;
         assert!(motivo_do_google(restrita, 403).contains("restrita"));
@@ -666,6 +739,26 @@ mod tests {
         assert!(estranho.contains("algo novo"), "{estranho}");
 
         assert_eq!(motivo_do_google("", 500), "a fonte não explicou");
+    }
+
+    /// **O projeto da CHAVE, que não é o projeto da aba aberta.**
+    ///
+    /// O caso real: console mostrando "API ativada" em verde no `jarvis-507603` e o mesmo
+    /// 403 no app, porque a chave tinha nascido em outro projeto. As duas redações do
+    /// Google nomeiam o projeto em lugares diferentes, e por isso as duas são lidas.
+    #[test]
+    fn acha_o_projeto_que_o_google_nomeia() {
+        assert_eq!(
+            projeto_citado("Custom Search API has not been used in project 519826 before"),
+            Some("519826".to_owned())
+        );
+        // Só o link de ativação, que é como a redação curta vem.
+        assert_eq!(
+            projeto_citado("Enable it by visiting https://…/overview?project=jarvis-507603 then retry."),
+            Some("jarvis-507603".to_owned())
+        );
+        // Sem projeto nenhum: o chamador cai no texto genérico em vez de imprimir "None".
+        assert_eq!(projeto_citado("does not have the access"), None);
     }
 
     /// A escolha da fonte é o que o log de ações mostra ao usuário.
