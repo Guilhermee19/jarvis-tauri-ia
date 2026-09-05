@@ -115,6 +115,7 @@ pub async fn responder(
     http: &reqwest::Client,
     settings: &AppSettings,
     memoria: &str,
+    jeito: &str,
     historico: &[ChatMessage],
     frase: &str,
     ao_frase: AoFalar<'_>,
@@ -123,7 +124,7 @@ pub async fn responder(
 
     let mut mensagens = vec![serde_json::json!({
         "role": "system",
-        "content": prompt_de_conversa(&settings.assistant_name, settings.persona, memoria),
+        "content": prompt_de_conversa(&settings.assistant_name, settings.persona, memoria, jeito),
     })];
 
     // O log de ações (`Role::System`) fica de fora: é registro para o usuário ler, e
@@ -557,11 +558,47 @@ fn tirar_links_orfaos(nota: &str, assunto: &str, conhecidas: &[String]) -> Strin
 /// **E o tamanho da resposta virou função da PERGUNTA, não uma constante.** O teto de
 /// "no máximo 2 frases" que estava aqui resolvia o assistente tagarela e criava o burro:
 /// pedir "me explica como funciona" e receber duas frases não é concisão, é recusa. A
-/// regra nova mantém o padrão curto — que é o que evita o tagarela — e abre espaço só
-/// quando o pedido dele abre. Note que o gatilho é o PEDIDO e não o assunto: sem essa
-/// linha, qualquer tema denso vira palestra.
-fn prompt_de_conversa(assistant_name: &str, persona: Persona, memoria: &str) -> String {
+/// regra mantém o padrão curto — que é o que evita o tagarela — e abre espaço só quando o
+/// pedido dele abre. Note que o gatilho é o PEDIDO e não o assunto: sem essa linha,
+/// qualquer tema denso vira palestra.
+///
+/// **Só que a primeira versão dela não segurou nada**, e o `responde_curto_por_padrao`
+/// mostrou o tamanho do buraco. No `qwen2.5vl:3b`, sem memória e sem histórico:
+///
+/// | bateria               | média       |
+/// | --------------------- | ----------- |
+/// | perguntas simples     | 3,33 frases |
+/// | com pedido de detalhe | 7,50 frases |
+///
+/// "qual é o meu nome?" saiu com 6 frases e 841 caracteres — para dizer que não sabe.
+///
+/// O defeito estava na FORMA da regra, não na ideia: ela dizia "até uns seis períodos"
+/// quando ele pedisse, e **um número dentro de uma permissão não é limite, é cota** — o
+/// modelo preenche. Agora o número existe só do lado curto ("uma ou duas frases"), onde
+/// ele é teto de verdade; do lado longo ficou "no tamanho que o assunto pedir", que
+/// permite sem prometer.
+///
+/// **E a regra saiu do `COMO RESPONDER` para um bloco próprio, o último antes da
+/// MEMÓRIA.** Ela estava espremida entre as 23 linhas do `DE ONDE VEM O QUE VOCÊ SABE` e
+/// o despejo das notas, que num 3B é a pior posição possível: a mesma medição pegou ele
+/// RECITANDO os títulos das regras deste prompt de volta, numerados, como se fossem a
+/// resposta à pergunta.
+fn prompt_de_conversa(
+    assistant_name: &str,
+    persona: Persona,
+    memoria: &str,
+    jeito: &str,
+) -> String {
     let tom = persona.tom();
+
+    // **Só existe depois de você corrigir alguma coisa.** Sem isso o prompt fica idêntico
+    // ao de sempre — e o teto de regras mora no `memory::REGRAS_DE_JEITO`, com o porquê:
+    // cada linha aqui é prompt a mais no lugar onde acabamos de cortar prompt.
+    let correcoes = if jeito.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\nO QUE ELE JÁ TE CORRIGIU\nEle reclamou destas coisas nas suas respostas anteriores. Não repita nenhuma.\n{jeito}")
+    };
 
     let bloco = if memoria.trim().is_empty() {
         "Você ainda não sabe nada sobre ele.".to_owned()
@@ -623,17 +660,12 @@ caso — você monta um nome plausível que nunca existiu.
 Responder de cabeça é o pior erro que você pode cometer, e ele não morre na frase: o
 que você disser aqui vira NOTA na memória, e um palpite virado nota passa a ser lido
 como verdade conferida depois.
-Isso NÃO vale para o que é sobre ELE, sobre vocês dois ou sobre você mesmo — aí a
-memória é a fonte certa e ela basta.
+Isso NÃO vale para o que é sobre ELE, sobre vocês dois ou sobre VOCÊ MESMO. Sobre ele e
+sobre vocês dois, a fonte é a memória, e ela basta. Sobre você mesmo — o que você
+consegue e o que não consegue fazer — a fonte são as DUAS LISTAS acima, neste prompt:
+responda por elas e NUNCA diga \"não tenho anotado\" sobre a sua própria capacidade.
 
 COMO RESPONDER
-- O TAMANHO DA RESPOSTA É O TAMANHO DA PERGUNTA. Pergunta simples, resposta simples:
-  uma ou duas frases, e PARE. Não emende explicação que ninguém pediu.
-- Só quando ELE pedir mais — \"me explica\", \"como funciona\", \"fala mais sobre\",
-  \"por quê\", \"detalha\", \"me dá um exemplo\" — desenvolva de verdade: até uns seis
-  períodos, na ordem que ajuda a entender.
-- Quem manda é o PEDIDO dele, não o assunto. Assunto complicado com pergunta curta
-  continua tendo resposta curta; ele pergunta o resto se quiser.
 - Português, direto, sem rodeio de abertura (\"boa pergunta\", \"deixa eu explicar\").
 - Responda À MENSAGEM DELE. A memória abaixo é CONTEXTO SEU, não o assunto da
   conversa. Só cite uma nota se ele perguntar ou se vier mesmo ao caso.
@@ -650,6 +682,20 @@ COMO RESPONDER
   ele não respondeu à sua pergunta, siga o assunto dele em vez de insistir na sua.
 - Se ele reclamar de você (\"você entrou em loop\", \"não pedi nada\"), reconheça em
   meia frase e mude de assunto. Não peça desculpa duas vezes seguidas.
+
+TAMANHO DA RESPOSTA
+O padrão é CURTO. Uma ou duas frases, e PARE.
+Responda o que ele perguntou e SÓ isso: sem contexto que ninguém pediu, sem segundo
+parágrafo, sem lista numerada, sem título em negrito, e sem fechar com pergunta de
+cortesia (\"quer saber mais?\", \"posso detalhar?\").
+Quando ele só CONTA uma coisa (\"tô cansado hoje\", \"gosto de café\") não há pergunta
+nenhuma ali: reconheça em UMA frase e pare. Não sugira atividade, não ofereça lista de
+opções e não devolva três perguntas.
+Ele PEDE quando quer mais, e pede com estas palavras: \"me explica\", \"como funciona\",
+\"detalha\", \"fala mais sobre\", \"me dá um exemplo\", \"por quê\". Só aí desenvolva de
+verdade — e aí desenvolva MESMO, sem economizar, no tamanho que o assunto pedir.
+Sem uma dessas palavras, a resposta é curta MESMO que o assunto seja enorme. Ele pergunta
+o resto se quiser.{correcoes}
 
 MEMÓRIA
 {bloco}"
@@ -811,15 +857,38 @@ pub async fn responder_com_busca(
     assistant_name: &str,
     consulta: &str,
     achados: &[crate::core::search::Achado],
+    lembrado: &str,
 ) -> Result<String, AgentError> {
+    // **Vazio é o caso comum, e ele mantém o prompt IDÊNTICO ao que sempre foi.** Nem o
+    // rótulo nem a regra são montados, então a medição que calibrou este prompt continua
+    // valendo para toda pergunta sobre a qual não existe nota.
+    let (anotado, regra_da_memoria) = if lembrado.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        (
+            format!("\n\nO QUE VOCÊ JÁ TINHA ANOTADO\n{lembrado}"),
+            "\n- O que está em O QUE VOCÊ JÁ TINHA ANOTADO também é fonte, e você pode \
+             usar. Mas em tudo que MUDA — preço, data, cargo, campeão, versão, quem \
+             ganhou — o TRECHO vence a nota: a nota é de antes, o trecho é de agora. Se \
+             os dois discordarem num fato desses, vá pelo trecho e não comente a \
+             diferença."
+                .to_owned(),
+        )
+    };
+
     let fontes: Vec<String> = achados
         .iter()
         .enumerate()
         .map(|(i, achado)| {
             // O trecho de uma manchete já vem com a data escrita nele ("Manchete de
             // 29/08/2026."), e é a regra do prompt que obriga a repeti-la na fala.
-            // Trecho longo de mais come o contexto sem melhorar o resumo.
-            let corpo: String = achado.trecho.chars().take(700).collect();
+            //
+            // **Subiu de 700 para 1 200 quando o `search::pagina` entrou.** Antes o
+            // `trecho` era o snippet de 150 caracteres do Google, e 700 era teto que nunca
+            // pegava; agora ele pode trazer 1 500 do texto da página, e cortar em 700
+            // devolveria o snippet de novo — pagando o GET para nada. Quem paga a conta do
+            // outro lado é o `num_ctx` logo abaixo.
+            let corpo: String = achado.trecho.chars().take(1_200).collect();
 
             format!("[{}] {}\n{corpo}", i + 1, achado.titulo)
         })
@@ -836,16 +905,29 @@ pub async fn responder_com_busca(
         // O `num_predict` é teto de emergência, como no `responder`: quem decide o
         // tamanho é a regra da resposta acompanhar a pergunta, e 300 cortava no meio da
         // frase justamente quando ele tinha pedido detalhe.
-        "options": { "temperature": 0.3, "repeat_penalty": 1.15, "num_predict": 600 },
+        // **O `num_ctx` é obrigatório aqui, e é o único lugar do projeto que o declara.**
+        // O padrão do Ollama é 4096 fichas, e este prompt de sistema sozinho já passa de
+        // 4 kB. Com três achados de 1 200 caracteres, o começo dele — que é onde moram as
+        // regras que impedem a invenção — sairia pela frente da janela, **sem erro
+        // nenhum**: o modelo responderia igual, só que sem as regras. Ler mais páginas
+        // pioraria a resposta, e o sintoma seria indistinguível de "o modelo é ruim".
+        "options": {
+            "temperature": 0.3,
+            "repeat_penalty": 1.15,
+            "num_predict": 600,
+            "num_ctx": 8192
+        },
         "messages": [
             { "role": "system", "content": format!(
                 "Você é o {assistant_name}, assistente pessoal. Você acabou de dar uma \
                  olhada na internet para responder o que ele perguntou.\n\n\
                  FALE COMO GENTE:\n\
-                 - O TAMANHO DA RESPOSTA É O TAMANHO DA PERGUNTA. Pergunta simples, \
-                   1 ou 2 frases e PARE. Só desenvolva (até uns seis períodos) quando \
-                   ele PEDIU detalhe: \"me explica\", \"como funciona\", \"fala mais \
-                   sobre\", \"por quê\", \"detalha\".\n\
+                 - O PADRÃO É CURTO: uma ou duas frases, e PARE. Sem segundo \
+                   parágrafo, sem lista numerada e sem pergunta de cortesia no fim.\n\
+                 - Só desenvolva quando ele PEDIU detalhe com todas as letras — \
+                   \"me explica\", \"como funciona\", \"fala mais sobre\", \"por quê\", \
+                   \"detalha\" —, e aí no tamanho que o assunto pedir. Sem uma dessas \
+                   palavras, curto mesmo que o assunto seja enorme.\n\
                  - Em português, no tom de quem está conversando.\n\
                  - NUNCA diga \"segundo os resultados\", \"de acordo com as fontes\", \
                    \"os trechos indicam\" nem cite links. Ele não pediu um relatório, \
@@ -886,9 +968,9 @@ pub async fn responder_com_busca(
                    \"por volta de\". Preferir o buraco ao palpite não é falha — o que \
                    você disser aqui é gravado como nota COM FONTE, e um chute no meio de \
                    uma resposta com link vira o pior tipo de erro: o que parece \
-                   conferido.") },
+                   conferido.{regra_da_memoria}") },
             { "role": "user", "content":
-                format!("PERGUNTA\n{consulta}\n\nTRECHOS\n\n{}", fontes.join("\n\n")) },
+                format!("PERGUNTA\n{consulta}{anotado}\n\nTRECHOS\n\n{}", fontes.join("\n\n")) },
         ],
     });
 
@@ -917,6 +999,11 @@ pub fn nota_da_busca(achados: &[crate::core::search::Achado]) -> String {
         // quem sabe, o que era verdade na sexta passada.
         .filter(|achado| achado.quando.is_none())
         .map(|achado| {
+            // **Fica em 900 mesmo com o `pagina` trazendo 1 500.** Nota é nota, não
+            // arquivo morto: despejar o texto cru de uma página por busca encheria a pasta
+            // do Obsidian de paredes de texto que ninguém lê, e é o oposto do que o
+            // `PROMPT_DE_NOTA` tenta produzir. Quem precisa do texto inteiro é o prompt
+            // desta resposta, e ele já o recebe.
             let corpo = achado.trecho.chars().take(900).collect::<String>();
             if achado.url.is_empty() {
                 format!("**{}**\n{corpo}", achado.titulo)
@@ -1013,7 +1100,7 @@ mod tests {
     /// oferecer pesquisa, ninguém percebe até usar — a resposta continua plausível.
     #[test]
     fn o_prompt_de_conversa_nao_oferece_pesquisar() {
-        let prompt = prompt_de_conversa("Jarvis", Persona::Jarvis, "");
+        let prompt = prompt_de_conversa("Jarvis", Persona::Jarvis, "", "");
         assert!(prompt.contains("NÃO OFEREÇA PESQUISAR"));
         assert!(!prompt.contains("ofereça pesquisar"));
     }
@@ -1327,6 +1414,7 @@ mod tests {
                     "Jarvis",
                     "quem é o presidente da Argentina?",
                     &achados,
+                    "",
                 )
                 .await;
 
@@ -1335,6 +1423,133 @@ mod tests {
                     Err(erro) => println!("{volta}: ERRO {erro}"),
                 }
             }
+        });
+    }
+
+    /// Perguntas simples que NÃO pedem detalhe. O padrão delas é uma ou duas frases.
+    const CURTAS: [&str; 6] = [
+        "bom dia",
+        "que horas são?",
+        "tudo bem?",
+        "qual é o meu nome?",
+        "gosto de café",
+        "tô cansado hoje",
+    ];
+
+    /// As mesmas perguntas de sempre, agora com o pedido de detalhe nas palavras DELE. É
+    /// o que a regra chama de gatilho, e o que separa "curto por padrão" de "curto e
+    /// pronto" — que seria o assistente burro que o comentário do `prompt_de_conversa`
+    /// registra ter existido aqui antes.
+    const LONGAS: [&str; 4] = [
+        "me explica como funciona o modo conversa",
+        "detalha isso pra mim",
+        "fala mais sobre o que você consegue fazer",
+        "por que você não consegue mandar mensagem?",
+    ];
+
+    /// **Quanto ele fala quando ninguém pediu para ele falar.**
+    ///
+    /// Mede as duas baterias contra o modelo de verdade e conta as frases com o
+    /// [`fim_de_frase`] — de propósito, e não com um `split('.')` novo: é ele que fatia a
+    /// resposta para o TTS (`commands::voice::falar_em_fila`), então o número que sai daqui
+    /// é literalmente quantas sínteses de voz o turno vai custar. No modo conversa o
+    /// microfone fica FECHADO até a última tocar, então cada frase a mais é tempo em que
+    /// ele não pode ser interrompido.
+    ///
+    /// **O `assert` é sobre a RELAÇÃO, e não sobre um teto.** Um absoluto ("≤ 2,5 frases")
+    /// seria número inventado, e um teste que falha por sorte do amostrador vira ruído e
+    /// para de ser rodado. A regra de verdade é "curto por padrão, longo só quando pedido",
+    /// e a única comparação que a mesma execução mede dos dois lados é essa.
+    ///
+    /// **E a relação é medida pela MEDIANA, não pela média** — isso custou uma rodada para
+    /// aprender. Com `temperature: 0.7` a cauda é gorda: numa bateria em que quase toda
+    /// resposta saiu com 1 ou 2 frases, uma única saiu com **19**, e ela sozinha levou a
+    /// média das curtas (3,22) para cima da das longas (2,75). A média estava medindo o
+    /// estouro, não o comportamento. A mediana mede o caso comum; o `pior` impresso ao
+    /// lado mostra o estouro, que é o número que o usuário sente quando acontece.
+    ///
+    /// Por isso também `voltas` **precisa ser mais que 1** para o resultado valer: com uma
+    /// amostra por pergunta, duas execuções seguidas do mesmo prompt deram 2,00 e 2,33 de
+    /// média — a diferença inteira era ruído.
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture responde_curto_por_padrao
+    /// JARVIS_MODELO=qwen2.5vl:7b cargo test --lib -- --ignored --nocapture responde_curto_por_padrao
+    /// ```
+    #[test]
+    #[ignore]
+    fn responde_curto_por_padrao() {
+        let modelo = std::env::var("JARVIS_MODELO")
+            .unwrap_or_else(|_| crate::config::DEFAULT_OLLAMA_MODEL.to_owned());
+        let voltas: usize = std::env::var("JARVIS_VOLTAS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1);
+
+        let settings = AppSettings {
+            ollama_model: modelo.clone(),
+            ..AppSettings::default()
+        };
+
+        let http = super::super::intent::client();
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        // Sem memória e sem histórico: o que se mede é o prompt, e nota velha ou conversa
+        // anterior mudariam o tamanho por um motivo que não é o que está sendo medido.
+        let calado = |_: &str| {};
+
+        bloco.block_on(async {
+            println!("modelo: {modelo}\n");
+            let mut medianas = Vec::new();
+
+            for (rotulo, bateria) in [("CURTAS", &CURTAS[..]), ("LONGAS", &LONGAS[..])] {
+                println!("--- {rotulo} ---");
+                let mut contagens: Vec<usize> = Vec::new();
+
+                for pergunta in bateria {
+                    for _ in 0..voltas {
+                        let saida =
+                            responder(&http, &settings, "", "", &[], pergunta, &calado).await;
+
+                        match saida {
+                            Ok(texto) => {
+                                let frases = fatiar(&texto).len();
+                                contagens.push(frases);
+                                println!(
+                                    "{frases} frase(s), {} chars | {pergunta}\n    {}",
+                                    texto.chars().count(),
+                                    texto.replace('\n', " ")
+                                );
+                            }
+                            Err(erro) => println!("ERRO em {pergunta:?}: {erro}"),
+                        }
+                    }
+                }
+
+                contagens.sort_unstable();
+                let mediana = contagens.get(contagens.len() / 2).copied().unwrap_or(0);
+                let pior = contagens.last().copied().unwrap_or(0);
+                let curtinhas = contagens.iter().filter(|&&n| n <= 2).count();
+                let soma: usize = contagens.iter().sum();
+
+                println!(
+                    "{rotulo}: mediana {mediana} | média {:.2} | pior {pior} | \
+                     {curtinhas} de {} com até 2 frases\n",
+                    soma as f32 / contagens.len().max(1) as f32,
+                    contagens.len()
+                );
+                medianas.push(mediana);
+            }
+
+            let (curtas, longas) = (medianas[0], medianas[1]);
+            assert!(
+                curtas <= longas,
+                "sem pedido de detalhe ele deveria falar no MÁXIMO o mesmo tanto: \
+                 mediana de {curtas} frases nas curtas contra {longas} nas longas"
+            );
         });
     }
 }

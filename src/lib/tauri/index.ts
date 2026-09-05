@@ -35,7 +35,7 @@ export {
   browserSelect,
   browserState,
 } from './navegador'
-export { announce, clearHistory, getHistory, sendMessage } from './chat'
+export { announce, avaliarResposta, clearHistory, getHistory, sendMessage } from './chat'
 export { enrollFace, forgetPerson, listPeople, whoIsThere } from './rostos'
 export { getSettings, saveSettings } from './settings'
 export {

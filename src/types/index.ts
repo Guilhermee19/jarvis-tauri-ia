@@ -12,7 +12,7 @@ export type {
   Varredura,
 } from './casa'
 export type { Achado, Camera, CamerasLigadas, Direcao, Sondagem, TipoDeCamera } from './cameras'
-export type { ChatMessage, ChatResponse, ChatRole } from './chat'
+export type { ChatMessage, ChatResponse, ChatRole, ErroDaResposta, Veredito } from './chat'
 export type { PessoaConhecida, QuemEsta } from './rostos'
 export type { Metricas } from './desempenho'
 export type { Aba, AreaDoNavegador, EstadoDoNavegador } from './navegador'

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResponse } from '@/types'
+import type { ChatMessage, ChatResponse, ErroDaResposta, Veredito } from '@/types'
 import { call } from './client'
 
 /** Wrappers de `src-tauri/src/commands/chat.rs`. */
@@ -36,4 +36,23 @@ export function clearHistory(): Promise<void> {
  */
 export function announce(content: string): Promise<void> {
   return call<void>('announce', { content })
+}
+
+/**
+ * Põe uma nota numa resposta: acertou, passou perto, ou errou.
+ *
+ * **O que ensina é a `correcao`, não o veredito.** Um "errou" sozinho não diz a um modelo
+ * de 3B o que era esperado, então marcar erro sem escrever a certa vira só registro.
+ *
+ * O `id` precisa ser o do BACKEND. Durante o streaming a bolha carrega um UUID gerado
+ * aqui, que o `getHistory` seguinte descarta — avaliar naquele instante criaria uma nota
+ * órfã, e é por isso que o controle fica escondido até a resposta terminar.
+ */
+export function avaliarResposta(
+  id: string,
+  veredito: Veredito,
+  tipo?: ErroDaResposta,
+  correcao?: string,
+): Promise<void> {
+  return call<void>('avaliar_resposta', { id, veredito, tipo, correcao })
 }

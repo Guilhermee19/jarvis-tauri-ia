@@ -68,9 +68,18 @@ const LONGE: LogicalPosition<f64> = LogicalPosition::new(-10_000.0, -10_000.0);
 /// A página nasce reduzida.
 ///
 /// A janelinha é bem menor que uma janela de navegador, e um site desenhado para 1280 px
-/// dentro de 600 px vira barra de rolagem horizontal e menu sanfonado. A 80% cabe a
-/// largura de conteúdo que a maioria dos sites espera.
-const ZOOM: f64 = 0.8;
+/// dentro de 600 px vira barra de rolagem horizontal e menu sanfonado.
+///
+/// **O número sai de uma conta, não de gosto**, e a conta desmente o valor anterior: o
+/// zoom multiplica a largura CSS que a página enxerga, então num painel de 600 px os 80%
+/// entregavam 750 px — ainda longe dos 1280 e ainda no menu sanfonado que este comentário
+/// reclamava. A 70% são 857 px, que caem na faixa de tablet, onde a maioria dos layouts
+/// responsivos ainda serve o conteúdo em coluna única em vez de cair na versão de celular.
+///
+/// Não desce mais que isso porque o piso é a leitura: a 70% um corpo de texto de 16 px sai
+/// com 11 px, que ainda se lê de relance. Os 1200 px que o parágrafo acima sugere sairiam
+/// a 50%, com o texto em 8 px — a página caberia inteira e não daria para ler nada.
+const ZOOM: f64 = 0.7;
 
 /// A aba mudou de endereço sozinha — clique num link, redirecionamento, rota de SPA.
 ///

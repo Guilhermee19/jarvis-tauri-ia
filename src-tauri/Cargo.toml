@@ -79,6 +79,36 @@ tokio = { version = "1", features = ["time", "sync"] }
 # é o último lugar onde alguém procuraria.
 ort = { version = "=2.0.0-rc.9", features = ["download-binaries"] }
 ort-sys = "=2.0.0-rc.9"
+# **Ler a página do resultado da busca**, e não só o trecho de 150 caracteres que a API do
+# Google devolve. Para isso é preciso um parser de tag soup de verdade: o `limpar()` do
+# `core/search.rs` foi escrito para tirar `<b>` de um snippet, e num documento inteiro ele
+# cospe o conteúdo de todo `<script>` como se fosse texto.
+#
+# **Já está no `Cargo.lock`** (chega por `tauri-utils`/`wry`), então não há download nem
+# risco de resolução. Mas, ao contrário do `tokio` e do `windows` aqui em cima, declarar
+# NÃO é de graça: hoje ele compila só para o host, como proc-macro; declarado, passa a
+# compilar também para o target, junto de `html5ever`, `markup5ever`, `tendril`,
+# `selectors` e `cssparser`. São alguns segundos de build a mais, uma vez.
+#
+# MSRV conferido manifesto a manifesto: 1.75 aqui, 1.71 na família html5ever, 1.68 no
+# cssparser, e o `selectors 0.36.1` não declara nenhum. Todos cabem no 1.77.2 que este
+# pacote declara, sem precisar do pino que a `ort` precisou.
+#
+# **O que NÃO deu para conferir, e não é culpa destas duas crates:** `cargo +1.77.2 check`
+# nem chega a compilar este projeto hoje. Ele para antes, em `aligned v0.4.3` — uma
+# transitiva que já estava no `Cargo.lock` desde bem antes disto — com "feature
+# `edition2024` is required". Ou seja, o `rust-version` acima já não descrevia a realidade
+# quando este comentário foi escrito. Vale como intenção e como piso para escolher crate
+# nova (foi por ele que a `tuya-rs` e o `ort` rc.13 ficaram de fora), não como algo que
+# alguém consiga verificar rodando.
+dom_query = "0.27"
+# `join_all`, para as páginas serem lidas ao mesmo tempo em vez de uma atrás da outra — a
+# busca passa a custar a mais lenta, e não a soma. Já vem no lock pelo `reqwest`.
+#
+# Não é o `JoinSet` do tokio: aquele exigiria a feature `rt` (que só as `dev-dependencies`
+# ligam) e futuros `'static`, o que obrigaria a clonar o cliente e as URLs. O `join_all`
+# roda na mesma task, sem `spawn`.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 # Só para as ferramentas `#[ignore]` que conversam com a nuvem: elas precisam de um

@@ -120,6 +120,7 @@ pub fn run() {
             commands::chat::get_history,
             commands::chat::clear_history,
             commands::chat::announce,
+            commands::chat::avaliar_resposta,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::system::show_window,

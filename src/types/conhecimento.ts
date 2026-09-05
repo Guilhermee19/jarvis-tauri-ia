@@ -6,7 +6,7 @@ export interface NoDoGrafo {
   id: string
   /** O mesmo, legível: `tony-stark` vira `Tony Stark`. */
   rotulo: string
-  /** `fato`, `aprendido`, `resumo` ou `rotina` — é por aqui que a tela filtra. */
+  /** `fato`, `aprendido`, `resumo`, `rotina` ou `corrigido` — a tela filtra por aqui. */
   tipo: string
   /** Quanto ele sabe do assunto, de 0 a 1. Vira o tamanho do círculo. */
   peso: number
@@ -49,4 +49,5 @@ export const TIPOS_DE_NOTA = [
   { id: 'aprendido', rotulo: 'Aprendidos' },
   { id: 'resumo', rotulo: 'Resumos' },
   { id: 'rotina', rotulo: 'Rotinas' },
+  { id: 'corrigido', rotulo: 'Corrigidos' },
 ] as const

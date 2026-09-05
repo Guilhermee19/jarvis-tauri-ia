@@ -1,7 +1,10 @@
 'use client'
 
+import { useChatStore } from '@/stores/chatStore'
 import { cn, formatTime } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
+
+import { AvaliacaoDaResposta } from './AvaliacaoDaResposta'
 
 /**
  * A partir de quantos caracteres a mensagem deixa de ser bolha.
@@ -29,6 +32,17 @@ interface MessageBubbleProps {
 export function MessageBubble({ message, assistantName }: MessageBubbleProps) {
   const isUser = message.role === 'user'
 
+  /*
+   * **Só depois que ele terminou de falar**, e a razão é um `id` que troca no meio.
+   *
+   * Enquanto a resposta chega em fluxo, a bolha vive com um UUID gerado AQUI no frontend
+   * (`chatStore.receberFrase`), que o `loadHistory` do fim do turno joga fora quando as
+   * mensagens voltam do Rust com o id de verdade. Uma avaliação presa àquele id nasceria
+   * apontando para uma mensagem que deixou de existir segundos depois.
+   */
+  const emCurso = useChatStore((state) => state.respostaEmCurso)
+  const podeAvaliar = !isUser && message.role === 'assistant' && message.id !== emCurso
+
   // Sem bolha e sem lado: isto é registro da máquina, não fala. A borda tracejada é
   // o que separa as duas coisas sem precisar inventar uma cor nova.
   if (message.role === 'system') {
@@ -51,7 +65,14 @@ export function MessageBubble({ message, assistantName }: MessageBubbleProps) {
   }
 
   if (message.content.length > LIMITE_DA_BOLHA) {
-    return <Corrida message={message} assistantName={assistantName} isUser={isUser} />
+    return (
+      <Corrida
+        message={message}
+        assistantName={assistantName}
+        isUser={isUser}
+        podeAvaliar={podeAvaliar}
+      />
+    )
   }
 
   return (
@@ -78,6 +99,7 @@ export function MessageBubble({ message, assistantName }: MessageBubbleProps) {
           {message.content}
         </div>
         <span className="text-muted px-1 text-[10px]">{formatTime(message.timestamp)}</span>
+        {podeAvaliar && <AvaliacaoDaResposta id={message.id} />}
       </div>
     </div>
   )
@@ -91,7 +113,12 @@ export function MessageBubble({ message, assistantName }: MessageBubbleProps) {
  * lado do usuário existe para o olho achar o começo do próprio texto ao rolar para trás,
  * que é o que a borda da bolha fazia antes.
  */
-function Corrida({ message, assistantName, isUser }: MessageBubbleProps & { isUser: boolean }) {
+function Corrida({
+  message,
+  assistantName,
+  isUser,
+  podeAvaliar,
+}: MessageBubbleProps & { isUser: boolean; podeAvaliar: boolean }) {
   return (
     <div
       className={cn(
@@ -116,6 +143,8 @@ function Corrida({ message, assistantName, isUser }: MessageBubbleProps & { isUs
       <div className="text-content text-sm leading-relaxed break-words whitespace-pre-wrap">
         {message.content}
       </div>
+
+      {podeAvaliar && <AvaliacaoDaResposta id={message.id} />}
     </div>
   )
 }

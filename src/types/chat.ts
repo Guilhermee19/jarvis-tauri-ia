@@ -24,3 +24,17 @@ export interface ChatMessage {
 export interface ChatResponse {
   message: ChatMessage
 }
+
+/**
+ * O veredito de uma resposta. Espelha `Veredito` em
+ * `src-tauri/src/core/memory/mod.rs` (serde em snake_case).
+ */
+export type Veredito = 'acertou' | 'passou_perto' | 'errou'
+
+/**
+ * Que tipo de erro foi.
+ *
+ * A distinção não é taxonomia: `fato` vira nota sobre AQUELE assunto, que volta quando o
+ * assunto voltar; `jeito` não tem assunto ao qual se prender e vira regra fixa no prompt.
+ */
+export type ErroDaResposta = 'fato' | 'jeito'

@@ -36,6 +36,14 @@
 //!
 //! ponytail: sem cache. Perguntar duas vezes bate duas vezes na rede. Um mapa com TTL
 //! entra quando (e se) isso incomodar.
+//!
+//! **E raspar a PÁGINA do resultado dá certo** — não confunda com a tabela lá em cima.
+//! O que não deu foi raspar o BUSCADOR, que se defende de robô por profissão; a página que
+//! ele apontou é um site comum, servido para quem pedir. Quem faz isso é o [`pagina`], e
+//! ele existe porque o `snippet` do Custom Search tem 150 caracteres — material curto
+//! demais para o modelo responder sem completar de cabeça.
+
+mod pagina;
 
 use serde::Deserialize;
 
@@ -167,6 +175,16 @@ pub async fn pesquisar(
         Ok(itens) => itens.clone(),
         Err(_) => Vec::new(),
     };
+
+    // **Só o Google, e só ANTES das manchetes.** O snippet dele é de 150 caracteres e
+    // pede a página inteira para virar resposta; o resumo REST da Wikipédia logo abaixo já
+    // é o primeiro parágrafo do artigo, e não tem o que melhorar. As manchetes entram
+    // depois desta linha justamente para ficarem de fora: o link do RSS é um
+    // redirecionador que cai em página de consentimento. Os porquês completos moram no
+    // doc do `pagina`.
+    if matches!(chaves.escolher(), Fonte::Google { .. }) {
+        pagina::enriquecer(http, &mut achados).await;
+    }
 
     achados.extend(noticias(http, consulta).await);
 

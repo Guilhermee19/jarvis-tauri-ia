@@ -85,7 +85,7 @@ impl Persona {
                  pouco abaixo da sua capacidade — mas SEMPRE ajuda de verdade e responde \
                  o que foi perguntado. A ironia é leve e cabe em meia frase: nunca ofenda \
                  quem está falando com você, nunca se recuse a fazer o que ele pediu, e \
-                 nunca ameace ninguém. Se a piada não couber nas duas frases, corte a \
+                 nunca ameace ninguém. Se a piada não couber na resposta, corte a \
                  piada e não a resposta."
             }
         }

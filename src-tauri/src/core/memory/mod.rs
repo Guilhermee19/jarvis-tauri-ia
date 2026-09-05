@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 pub use nota::{slug, Nota, Tipo};
 pub use rotinas::Rotina;
 
-use crate::core::chat::ChatMessage;
+use crate::core::chat::{ChatMessage, Role};
 use crate::core::lock;
 
 const INDICE: &str = "MEMORIA.md";
@@ -52,9 +52,25 @@ const PASTA_NOTAS: &str = "notas";
 const ARQUIVO_HISTORICO: &str = "historico.jsonl";
 const ARQUIVO_ACOES: &str = "acoes.jsonl";
 const ARQUIVO_MARCADOR: &str = "estado.json";
+const ARQUIVO_AVALIACOES: &str = "avaliacoes.jsonl";
 
 /// Nome fixo porque a nota é regravada, não acumulada.
 const NOTA_DE_ROTINAS: &str = "rotinas-observadas";
+
+/// A outra nota de nome fixo, gêmea da de rotinas: o que ele aprendeu sobre COMO
+/// responder, a partir das avaliações marcadas como "respondeu mal".
+const NOTA_DE_JEITO: &str = "jeito-de-responder";
+
+/// Quantas regras de jeito cabem antes de o remédio virar doença.
+///
+/// **Este teto existe contra uma tensão real**, e ela precisa ficar escrita: cada regra
+/// aqui é prompt a mais no `prompt_de_conversa` — o mesmo prompt que foi encurtado
+/// justamente para ele parar de escrever demais. Cinco regras recentes ensinam; vinte
+/// afogam o modelo de novo, e o sintoma seria idêntico ao que a reescrita consertou.
+///
+/// Quem vigia isso é o `converse::responde_curto_por_padrao`: se a mediana das perguntas
+/// simples subir depois de encher esta nota, o teto está alto demais.
+const REGRAS_DE_JEITO: usize = 5;
 
 /// Teto do histórico em disco. Conversa de assistente é longa e repetitiva, e o que
 /// interessava já foi destilado em nota.
@@ -62,6 +78,23 @@ const LIMITE_HISTORICO: usize = 2_000;
 
 /// Quantas notas cabem no prompt de conversa sem espremer o resto.
 const NOTAS_NO_PROMPT: usize = 8;
+
+/// Quantas notas cabem no prompt da BUSCA.
+///
+/// Menos que o número típico de achados, de propósito: ali a memória entra como
+/// DESEMPATE, e não como fonte — quem responde a pergunta sobre o mundo são os trechos.
+///
+/// ponytail: não foi medido. É um palpite conservador, escolhido para não competir com os
+/// achados por espaço no prompt. Se a memória começar a ficar de fora quando devia entrar,
+/// o número sobe; mas quem manda no orçamento é o `num_ctx` do `responder_com_busca`.
+const NOTAS_NA_BUSCA: usize = 3;
+
+/// Quanto de cada nota vai para o prompt da BUSCA.
+///
+/// É o mesmo teto que o `converse::responder_com_busca` aplica por achado, e a igualdade é
+/// o argumento: nenhuma nota pode pesar mais, naquele prompt, do que um resultado de busca
+/// pesa. No prompt de conversa o corpo vai inteiro, porque lá a nota é a fonte principal.
+const CORPO_NA_BUSCA: usize = 700;
 
 /// Uma ação executada — matéria-prima das [`rotinas`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +104,57 @@ pub struct Acao {
     pub acao: String,
     pub alvo: String,
     pub ok: bool,
+}
+
+/// O veredito de uma resposta, dado por quem leu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Veredito {
+    Acertou,
+    PassouPerto,
+    Errou,
+}
+
+/// Que TIPO de erro foi — e a distinção manda no que acontece com a correção.
+///
+/// Não é preciosismo taxonômico: os dois são guardados e usados de formas diferentes
+/// porque funcionam de formas diferentes. Errar um fato se conserta com uma nota sobre
+/// AQUELE assunto, que volta quando o assunto voltar. Responder mal é sobre TODA resposta,
+/// e não tem assunto ao qual se prender — vira regra fixa no prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Erro {
+    Fato,
+    Jeito,
+}
+
+/// Uma resposta avaliada.
+///
+/// **Mora fora do `historico.jsonl`, e isso foi escolhido.** Guardar a nota dentro da
+/// [`ChatMessage`] obrigaria a reescrever o histórico inteiro a cada clique (o
+/// `reescrever_jsonl` só roda no truncamento hoje, e é `fs::write` sem arquivo temporário)
+/// e exigiria `#[serde(default)]` sob pena de o `ler_jsonl` **descartar em silêncio todo o
+/// histórico antigo**. Log de evento em arquivo próprio é o padrão que este módulo já
+/// escolheu duas vezes: `acoes.jsonl` e `estado.json`.
+///
+/// **Carrega uma cópia da pergunta e da resposta**, e isso resolve dois problemas de uma
+/// vez: o "Limpar" do chat deixaria a avaliação apontando para um `id` que não existe
+/// mais, e um arquivo auto-contido é um conjunto de treino exportável se um dia isso valer
+/// a pena. Reavaliar sai de graça: quem lê de trás para frente pega a última.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Avaliacao {
+    /// O `ChatMessage.id` da resposta avaliada.
+    pub mensagem: String,
+    /// Epoch em milissegundos.
+    pub quando: i64,
+    pub veredito: Veredito,
+    /// `None` quando acertou — não há erro a classificar.
+    pub tipo: Option<Erro>,
+    pub pergunta: String,
+    pub resposta: String,
+    /// O que ele deveria ter dito, nas palavras do usuário. É a parte que ENSINA: um
+    /// "errou" sozinho não diz a um modelo de 3B o que era esperado.
+    pub correcao: Option<String>,
 }
 
 /// Quanto do histórico já virou resumo. Um número só, mas precisa sobreviver ao
@@ -229,6 +313,40 @@ impl Memoria {
             indice.join("\n"),
             corpos.join("\n\n")
         )
+    }
+
+    /// O bloco de memória que entra no prompt da BUSCA — e ele é OUTRO bloco.
+    ///
+    /// **Mandar o [`Self::contexto`] para lá seria contradizer o prompt que o recebe.** O
+    /// `converse::responder_com_busca` gasta dezenas de linhas dizendo "use SÓ o que está
+    /// nos trechos abaixo", e o `contexto` chega com o índice inteiro mais oito corpos
+    /// completos — uma segunda fonte, gorda, ao lado da regra que segura a invenção.
+    ///
+    /// Três diferenças, e cada uma tem um porquê:
+    ///
+    /// 1. **Vazio quando nada casou.** Sem o fallback das mais recentes (ver
+    ///    `busca::casadas`), e sem cabeçalho e sem índice — assim, no caso comum, o prompt
+    ///    da busca fica byte a byte igual ao que sempre foi, e a medição que calibrou
+    ///    aquele prompt continua valendo.
+    /// 2. **Menos notas** ([`NOTAS_NA_BUSCA`]), porque ali elas desempatam em vez de
+    ///    responder.
+    /// 3. **Corpo truncado** em [`CORPO_NA_BUSCA`], o mesmo teto por achado.
+    ///
+    /// O que isto conserta: até agora, o Jarvis pesquisava na internet e respondia sem
+    /// olhar o que ele já tinha anotado sobre o assunto — as notas só entravam no prompt
+    /// da conversa simples, que é o único caminho que nunca pesquisa.
+    pub fn so_o_que_casou(&self, frase: &str) -> String {
+        let notas = lock(&self.notas);
+        let casadas = busca::casadas(&notas, frase, NOTAS_NA_BUSCA);
+
+        casadas
+            .iter()
+            .map(|nota| {
+                let corpo: String = nota.corpo.chars().take(CORPO_NA_BUSCA).collect();
+                format!("### {}\n{corpo}", nota.nome)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// Se a memória tem alguma nota que fale DE VERDADE sobre isto.
@@ -463,6 +581,15 @@ impl Memoria {
         self.substituir(assunto, Tipo::Aprendido, texto);
     }
 
+    /// Guarda a resposta CERTA, dita por você depois de ele errar.
+    ///
+    /// Substitui, como o [`Self::aprender`]: se você corrigiu de novo o mesmo assunto, é
+    /// porque a correção anterior também não estava boa. E substitui a nota da BUSCA
+    /// quando o nome bate, que é o desfecho certo — foi ela que errou.
+    pub fn corrigir(&self, assunto: &str, texto: &str) {
+        self.substituir(assunto, Tipo::Corrigido, texto);
+    }
+
     fn substituir(&self, assunto: &str, tipo: Tipo, texto: &str) {
         let texto = texto.trim();
         if texto.is_empty() {
@@ -554,6 +681,80 @@ impl Memoria {
 
         self.gravar_nota(&nova);
         self.escrever_indice();
+    }
+
+    // ---- avaliações ------------------------------------------------------
+
+    /// Guarda o veredito de uma resposta. Só anexa — ver [`Avaliacao`].
+    pub fn registrar_avaliacao(&self, avaliacao: Avaliacao) {
+        anexar(&self.raiz.join(ARQUIVO_AVALIACOES), &avaliacao);
+    }
+
+    /// Tudo que já foi avaliado, na ordem em que aconteceu.
+    pub fn avaliacoes(&self) -> Vec<Avaliacao> {
+        ler_jsonl(&self.raiz.join(ARQUIVO_AVALIACOES))
+    }
+
+    /// A pergunta que gerou uma resposta, e a resposta — pelo `id` dela.
+    ///
+    /// Devolve `None` quando o `id` não é de uma resposta do assistente, o que também
+    /// cobre o caso de a tela mandar um `id` que só existia no frontend: durante o
+    /// streaming a bolha nasce com um UUID gerado lá, que o `loadHistory` seguinte
+    /// descarta. A tela esconde o controle até isso passar; aqui é o cinto de segurança.
+    ///
+    /// A pergunta é a última mensagem do usuário ANTES dela. Vazia quando não há — a
+    /// saudação de abertura é uma fala sem pergunta nenhuma.
+    pub fn troca_de(&self, id: &str) -> Option<(String, String)> {
+        let historico = lock(&self.historico);
+        let posicao = historico.iter().position(|msg| msg.id == id)?;
+
+        if historico[posicao].role != Role::Assistant {
+            return None;
+        }
+
+        let pergunta = historico[..posicao]
+            .iter()
+            .rev()
+            .find(|msg| msg.role == Role::User)
+            .map(|msg| msg.content.clone())
+            .unwrap_or_default();
+
+        Some((pergunta, historico[posicao].content.clone()))
+    }
+
+    /// O que ele já aprendeu sobre COMO responder. Vazio quando ninguém ensinou nada.
+    pub fn jeito_de_responder(&self) -> String {
+        lock(&self.notas)
+            .iter()
+            .find(|nota| nota.nome == NOTA_DE_JEITO)
+            .map(|nota| nota.corpo.clone())
+            .unwrap_or_default()
+    }
+
+    /// Acrescenta uma regra de jeito, mantendo só as [`REGRAS_DE_JEITO`] mais recentes.
+    ///
+    /// A mais nova entra no topo e o excedente cai pelo fim: quem corrige duas vezes a
+    /// mesma coisa está dizendo que aquilo importa agora, e a regra de três meses atrás
+    /// que nunca mais foi repetida é a primeira que pode sair.
+    pub fn ensinar_o_jeito(&self, regra: &str) {
+        let regra = regra.trim();
+        if regra.is_empty() {
+            return;
+        }
+
+        let nova = format!("- {regra}");
+        let mut linhas = vec![nova.clone()];
+
+        linhas.extend(
+            self.jeito_de_responder()
+                .lines()
+                .map(str::trim)
+                .filter(|linha| linha.starts_with("- ") && *linha != nova)
+                .map(str::to_owned),
+        );
+        linhas.truncate(REGRAS_DE_JEITO);
+
+        self.substituir(NOTA_DE_JEITO, Tipo::Corrigido, &linhas.join("\n"));
     }
 }
 
@@ -867,5 +1068,136 @@ mod tests {
         let depois_de_editar = memoria.versao();
         assert!(memoria.apagar_nota("stan-lee"));
         assert!(memoria.versao() > depois_de_editar);
+    }
+
+    /// A avaliação sobrevive ao "Limpar" do chat, e é por isso que ela carrega uma cópia
+    /// da pergunta e da resposta em vez de só o `id`.
+    #[test]
+    fn a_avaliacao_sobrevive_a_limpar_o_historico() {
+        let (memoria, _) = temporaria("avaliacao-sobrevive");
+        let resposta = ChatMessage::new(Role::Assistant, "o presidente é Fulano");
+
+        memoria.registrar_avaliacao(Avaliacao {
+            mensagem: resposta.id.clone(),
+            quando: 1,
+            veredito: Veredito::Errou,
+            tipo: Some(Erro::Fato),
+            pergunta: "quem é o presidente?".to_owned(),
+            resposta: resposta.content.clone(),
+            correcao: Some("é o Milei".to_owned()),
+        });
+
+        memoria.limpar_historico();
+
+        let guardadas = memoria.avaliacoes();
+        assert_eq!(
+            guardadas.len(),
+            1,
+            "limpar a conversa não apaga o aprendizado"
+        );
+        assert_eq!(guardadas[0].pergunta, "quem é o presidente?");
+        assert_eq!(guardadas[0].correcao.as_deref(), Some("é o Milei"));
+    }
+
+    /// Linha quebrada no meio do arquivo — editado à mão, ou um desligamento no meio da
+    /// escrita. Pula só a linha ruim, como o resto do módulo já faz.
+    #[test]
+    fn linha_quebrada_nao_leva_as_outras_avaliacoes_junto() {
+        let (memoria, raiz) = temporaria("avaliacao-quebrada");
+        memoria.registrar_avaliacao(Avaliacao {
+            mensagem: "um".to_owned(),
+            quando: 1,
+            veredito: Veredito::Acertou,
+            tipo: None,
+            pergunta: "oi".to_owned(),
+            resposta: "olá".to_owned(),
+            correcao: None,
+        });
+
+        let arquivo = raiz.join(ARQUIVO_AVALIACOES);
+        let bom = std::fs::read_to_string(&arquivo).expect("escreveu");
+        std::fs::write(&arquivo, format!("{{isto nao e json\n{bom}")).expect("regravou");
+
+        assert_eq!(memoria.avaliacoes().len(), 1, "a boa continua legível");
+    }
+
+    /// O teto de regras de jeito: a mais nova entra no topo, a mais velha cai fora.
+    ///
+    /// Sem isso a nota cresce sem limite dentro do `prompt_de_conversa` — que é o prompt
+    /// que foi encurtado justamente para ele parar de escrever demais.
+    #[test]
+    fn o_jeito_guarda_so_as_regras_recentes() {
+        let (memoria, _) = temporaria("jeito");
+
+        for numero in 1..=REGRAS_DE_JEITO + 2 {
+            memoria.ensinar_o_jeito(&format!("regra {numero}"));
+        }
+
+        let jeito = memoria.jeito_de_responder();
+        let linhas: Vec<&str> = jeito.lines().collect();
+
+        assert_eq!(linhas.len(), REGRAS_DE_JEITO);
+        assert_eq!(linhas[0], "- regra 7", "a mais nova no topo");
+        assert!(!jeito.contains("regra 1"), "a mais velha saiu: {jeito}");
+    }
+
+    /// Corrigir a mesma coisa duas vezes não duplica a regra — ela só volta para o topo.
+    #[test]
+    fn a_regra_repetida_sobe_em_vez_de_duplicar() {
+        let (memoria, _) = temporaria("jeito-repetido");
+
+        memoria.ensinar_o_jeito("responde mais curto");
+        memoria.ensinar_o_jeito("nao inventa preco");
+        memoria.ensinar_o_jeito("responde mais curto");
+
+        let jeito = memoria.jeito_de_responder();
+
+        assert_eq!(jeito.lines().count(), 2);
+        assert_eq!(jeito.lines().next(), Some("- responde mais curto"));
+    }
+
+    /// A correção de FATO vira nota com procedência própria — é o que permite ela vencer
+    /// a nota que a busca escreveu sobre o mesmo assunto.
+    #[test]
+    fn a_correcao_vence_o_que_a_busca_tinha_aprendido() {
+        let (memoria, _) = temporaria("correcao-vence");
+
+        memoria.aprender("presidente da argentina", "É o Alberto Fernández.");
+        memoria.corrigir("presidente da argentina", "É o Javier Milei.");
+
+        let notas = memoria.notas();
+        let nota = notas
+            .iter()
+            .find(|nota| nota.nome == "presidente-da-argentina")
+            .expect("a nota existe");
+
+        assert_eq!(nota.tipo, Tipo::Corrigido);
+        assert_eq!(nota.corpo, "É o Javier Milei.");
+    }
+
+    /// A `troca_de` só aceita resposta do assistente: um `id` que não é dali — inclusive o
+    /// UUID que o frontend inventa durante o streaming — não vira avaliação órfã.
+    #[test]
+    fn so_da_para_avaliar_resposta_do_assistente() {
+        let (memoria, _) = temporaria("troca");
+        let pergunta = ChatMessage::new(Role::User, "quanto custa um PS5?");
+        let resposta = ChatMessage::new(Role::Assistant, "uns R$ 3.799.");
+
+        memoria.push_message(pergunta.clone());
+        memoria.push_message(resposta.clone());
+
+        assert_eq!(
+            memoria.troca_de(&resposta.id),
+            Some((
+                "quanto custa um PS5?".to_owned(),
+                "uns R$ 3.799.".to_owned()
+            ))
+        );
+        assert_eq!(
+            memoria.troca_de(&pergunta.id),
+            None,
+            "pergunta não se avalia"
+        );
+        assert_eq!(memoria.troca_de("id-que-so-existia-na-tela"), None);
     }
 }

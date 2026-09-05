@@ -35,6 +35,16 @@ pub enum Tipo {
     /// porque fato é sobre o usuário: misturar os dois faria o Jarvis falar de Nikola
     /// Tesla como se fosse uma coisa que você contou dele.
     Aprendido,
+    /// O usuário disse que a resposta estava errada, e escreveu a certa.
+    ///
+    /// Separado do [`Tipo::Aprendido`] pela mesma razão que aquele é separado do
+    /// [`Tipo::Fato`]: **procedência**. Uma correção sua vale mais que o que uma busca
+    /// trouxe, e precisa poder VENCER a nota da busca quando as duas falam do mesmo
+    /// assunto — o que só é possível se der para distinguir uma da outra.
+    ///
+    /// É também o tipo da nota `jeito-de-responder`, que não é sobre um assunto e sim
+    /// sobre como falar. As duas nasceram da mesma coisa: você corrigindo.
+    Corrigido,
 }
 
 impl Tipo {
@@ -45,6 +55,7 @@ impl Tipo {
             Self::Rotina => "rotina",
             Self::Resumo => "resumo",
             Self::Aprendido => "aprendido",
+            Self::Corrigido => "corrigido",
         }
     }
 
@@ -54,6 +65,7 @@ impl Tipo {
             "rotina" => Self::Rotina,
             "resumo" => Self::Resumo,
             "aprendido" => Self::Aprendido,
+            "corrigido" => Self::Corrigido,
             _ => Self::Fato,
         }
     }

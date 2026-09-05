@@ -1,11 +1,11 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::core::agent::{self, AgentError};
+use crate::core::agent::{self, AcaoDeUi, AgentError};
 use crate::core::automation::AutomationState;
 use crate::core::cameras::Catalogo;
 use crate::core::casa::chaveiro::Chaveiro;
 use crate::core::chat::{ChatMessage, ChatResponse, Role};
-use crate::core::memory::Memoria;
+use crate::core::memory::{Avaliacao, Erro, Memoria, Veredito};
 use crate::core::lugar::Localizador;
 use crate::core::services::Services;
 use crate::state::AppState;
@@ -47,6 +47,19 @@ const MEMORIA_EVENT: &str = "jarvis://memoria-mudou";
 struct Pedaco<'a> {
     turno: &'a str,
     frase: &'a str,
+}
+
+/// Manda um pedido do agente para a tela.
+///
+/// Existe como função porque agora há DOIS momentos que pedem: o meio do turno, pelo
+/// `ao_pedir_ui` (a aba da busca, que precisa abrir enquanto ele pesquisa), e o fim dele,
+/// pelo `Outcome::ui`. Os dois têm que emitir o mesmo evento com o mesmo log, senão a
+/// tela passa a se comportar diferente conforme o caminho que o agente tomou.
+///
+/// Falha de emissão é engolida: não há UI escutando, e não há o que fazer a respeito.
+fn pedir_a_ui(app: &AppHandle, acao: AcaoDeUi) {
+    eprintln!("[jarvis] ui-action {acao:?}");
+    let _ = app.emit(UI_ACTION_EVENT, acao);
 }
 
 /// Põe uma fala do Jarvis no histórico, sem ter havido pergunta.
@@ -128,6 +141,11 @@ pub async fn send_message(
             let _ = frases.send(frase.to_owned());
         };
 
+        // O gêmeo do `ao_falar` para a TELA: fecha `Sync` sem esforço porque só captura o
+        // `&AppHandle`. É por ele que a aba da busca abre no começo do turno, e não depois
+        // da resposta pronta — ver `agent::AoPedirUi`.
+        let ao_pedir_ui = |acao: AcaoDeUi| pedir_a_ui(&app, acao);
+
         agent::handle(
             &http,
             &settings,
@@ -138,6 +156,7 @@ pub async fn send_message(
             localizador.inner(),
             &content,
             &ao_falar,
+            &ao_pedir_ui,
         )
         .await
     };
@@ -159,11 +178,10 @@ pub async fn send_message(
         memoria.push_message(ChatMessage::new(Role::System, trace));
     }
 
-    // O `core` não conhece Tauri, então quem emite é a fronteira. Falha de emissão é
-    // engolida: a resposta já está composta, e sem UI escutando não há o que fazer.
+    // O que o turno decidiu só no fim — hoje, os dois caminhos da visão. O que pede a
+    // tela no MEIO do turno já saiu pelo `ao_pedir_ui` lá em cima.
     if let Some(acao) = outcome.ui {
-        eprintln!("[jarvis] ui-action {acao:?}");
-        let _ = app.emit(UI_ACTION_EVENT, acao);
+        pedir_a_ui(&app, acao);
     }
 
     let reply = ChatMessage::new(Role::Assistant, outcome.reply);
@@ -275,6 +293,69 @@ pub fn get_history(memoria: State<'_, Memoria>) -> Vec<ChatMessage> {
 #[tauri::command]
 pub fn clear_history(memoria: State<'_, Memoria>) {
     memoria.limpar_historico();
+}
+
+/// Põe uma nota numa resposta: acertou, passou perto, ou errou.
+///
+/// **O que ENSINA é a `correcao`, não o veredito.** Um "errou" sozinho não diz a um modelo
+/// de 3B o que era esperado — ele não tem como adivinhar. Por isso a tela pede a resposta
+/// certa quando você marca erro, e por isso o veredito sem correção só vira registro.
+///
+/// O que acontece com a correção depende do TIPO, e a distinção é o coração disto:
+///
+/// - **Errou o FATO** vira nota sobre AQUELE assunto, do [`crate::core::memory::Tipo`]
+///   `Corrigido`. Ela volta sozinha quando o assunto voltar, pela mesma busca lexical que
+///   já serve a conversa e (desde a mudança do `pesquisar_e_responder`) também a busca na
+///   web. O nome do assunto sai do `destilar_assunto`, o mesmo que já nomeia a nota de uma
+///   conversa — não há extração nova aqui.
+/// - **Respondeu MAL** não tem assunto ao qual se prender: vira regra na nota reservada
+///   `jeito-de-responder`, que entra no prompt de toda conversa. Com teto, e o porquê do
+///   teto está no `memory::REGRAS_DE_JEITO`.
+///
+/// Falhar em destilar o assunto NÃO perde a avaliação: ela já foi para o disco antes, e o
+/// que se perde é só a nota. É a mesma ordem do `pesquisar_e_responder` — gravar primeiro,
+/// falar depois.
+#[tauri::command(async)]
+pub async fn avaliar_resposta(
+    id: String,
+    veredito: Veredito,
+    tipo: Option<Erro>,
+    correcao: Option<String>,
+    state: State<'_, AppState>,
+    memoria: State<'_, Memoria>,
+) -> Result<(), String> {
+    let Some((pergunta, resposta)) = memoria.troca_de(&id) else {
+        return Err(format!("não achei a resposta \"{id}\" para avaliar"));
+    };
+
+    let correcao = correcao
+        .map(|texto| texto.trim().to_owned())
+        .filter(|texto| !texto.is_empty());
+
+    memoria.registrar_avaliacao(Avaliacao {
+        mensagem: id,
+        quando: chrono::Utc::now().timestamp_millis(),
+        veredito,
+        tipo,
+        pergunta: pergunta.clone(),
+        resposta,
+        correcao: correcao.clone(),
+    });
+
+    let (Some(correcao), Some(tipo)) = (correcao, tipo) else {
+        return Ok(());
+    };
+
+    agent::aprender_com_a_correcao(
+        &state.http(),
+        &state.settings(),
+        memoria.inner(),
+        &pergunta,
+        tipo,
+        &correcao,
+    )
+    .await
+    .map_err(stringify)
 }
 
 fn stringify(error: AgentError) -> String {

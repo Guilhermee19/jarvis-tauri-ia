@@ -33,7 +33,7 @@ use crate::core::cotacoes;
 use crate::core::lugar::Localizador;
 use crate::core::tempo;
 use crate::core::casa::controle::{self, Ajuste};
-use crate::core::memory::{Acao, Memoria};
+use crate::core::memory::{Acao, Erro, Memoria};
 use crate::core::music;
 use crate::core::search;
 use crate::core::system::{self, MediaKey, SystemError};
@@ -176,7 +176,22 @@ pub struct Manutencao {
 /// o agente tomou para saber o que falar.
 pub type AoFalar<'a> = &'a (dyn Fn(&str) + Sync);
 
-// Nove parâmetros pelo mesmo motivo do `send_message`: cada capacidade que o agente
+/// Um pedido à tela, entregue ANTES do fim do turno.
+///
+/// Irmão do [`AoFalar`], e pela mesma razão: o [`Outcome`] só chega a quem chama quando a
+/// resposta inteira está pronta, e há coisa que perde o sentido se esperar. A boca já
+/// falava cedo; a tela não.
+///
+/// **O caso que pediu isto foi a aba da busca.** Ela abria depois da resposta, ou seja,
+/// depois de o Jarvis já ter dito o que leu — a janela chegava como comprovante de algo
+/// que já tinha acontecido. Abrindo no começo, ela vira o que a pessoa queria: dá para VER
+/// que ele está pesquisando, em vez de encarar a tela parada por segundos.
+///
+/// Continua sendo um PEDIDO, e não coisa feita aqui: quem emite é a fronteira
+/// (`commands::chat`), porque o `core` não conhece Tauri. Só o instante mudou.
+pub type AoPedirUi<'a> = &'a (dyn Fn(AcaoDeUi) + Sync);
+
+// Dez parâmetros pelo mesmo motivo do `send_message`: cada capacidade que o agente
 // alcança entra como um `&` próprio, e agrupá-las numa struct só para agradar o lint
 // criaria um tipo que existe por causa do lint.
 #[allow(clippy::too_many_arguments)]
@@ -190,6 +205,7 @@ pub async fn handle(
     localizador: &Localizador,
     dito: &str,
     ao_falar: AoFalar<'_>,
+    ao_pedir_ui: AoPedirUi<'_>,
 ) -> Result<Outcome, AgentError> {
     // Modelo vazio desliga o intérprete e volta ao mock. É a saída de emergência sem
     // precisar de um booleano — mesmo padrão do `tts_voice_id` ("vazio = padrão").
@@ -249,6 +265,10 @@ pub async fn handle(
     // seria falada duas vezes.
     let mut ja_falou = false;
 
+    // Mesmo problema do `ja_falou`, um andar acima: os caminhos de busca pedem a aba no
+    // começo, e sem esta marca o fecho lá embaixo pediria a segunda.
+    let mut ja_pediu_a_aba = false;
+
     let reply = match &acao {
         // A memória não cobria, e era pergunta sobre o mundo: ele vai estudar ANTES de
         // responder, em vez de dizer que não sabe.
@@ -273,6 +293,15 @@ pub async fn handle(
             // o microfone fica FECHADO até o turno acabar — ela não tem nem como
             // interromper falando. Uma frase custa zero, usa a fila de voz que já está
             // aberta, e é sintetizada enquanto a rede trabalha.
+            // **A aba primeiro, a fala depois.** Abrir a janelinha, criar o webview e
+            // carregar a página do Google é a parte lenta das duas, e é justamente ela
+            // que a pessoa quer ver acontecendo. A frase entra logo atrás, enquanto a
+            // página carrega.
+            ao_pedir_ui(AcaoDeUi::Pesquisar {
+                query: termo.clone(),
+            });
+            ja_pediu_a_aba = true;
+
             ao_falar("Isso eu não tenho anotado. Deixa eu dar uma olhada.");
 
             pesquisar_e_responder(http, settings, memoria, &termo, dito, &mut log).await
@@ -300,6 +329,13 @@ pub async fn handle(
         // ele erra o suficiente para isso não se sustentar.
         Intent::WebSearch { query } => {
             log.acao(&acao);
+
+            // Antes de gravar em disco e antes de ir à rede: aqui a busca é o que ELE
+            // pediu, então a janela é a resposta começando, não um efeito colateral.
+            ao_pedir_ui(AcaoDeUi::Pesquisar {
+                query: query.clone(),
+            });
+            ja_pediu_a_aba = true;
 
             memoria.registrar_acao(Acao {
                 quando: Utc::now().timestamp_millis(),
@@ -723,7 +759,12 @@ pub async fn handle(
     // Só quando a UI não tem outro pedido: quando ele foi olhar uma câmera, a janelinha da
     // câmera é o que a pessoa pediu para ver, e uma aba do Google por cima seria roubar a
     // tela dela.
-    if ui.is_none() {
+    //
+    // **Sobrou para a VISÃO.** Os dois caminhos de busca da conversa já pediram a aba lá
+    // em cima, e o `ja_pediu_a_aba` é o que impede a segunda. Quem ainda chega aqui é o
+    // `olhar`/`olhar_camera` que escalou para a internet — e esse tem que decidir no fim
+    // mesmo, porque é só aqui que se sabe se a câmera pediu a tela para ela.
+    if ui.is_none() && !ja_pediu_a_aba {
         if let Some(consulta) = log.pesquisou.clone() {
             ui = Some(AcaoDeUi::Pesquisar { query: consulta });
         }
@@ -735,6 +776,52 @@ pub async fn handle(
         ui,
         manutencao,
     })
+}
+
+/// Transforma uma correção sua em memória.
+///
+/// **O caminho depende do TIPO, e é por isso que a tela pergunta.** Corrigir um FATO tem
+/// assunto: vira nota, e volta sozinha pela busca lexical quando o assunto voltar.
+/// Corrigir o JEITO não tem assunto nenhum — "você respondeu longo demais" não é sobre
+/// bitcoin nem sobre a academia —, então vira regra fixa no prompt da conversa.
+///
+/// Mora aqui, e não no comando, porque o ramo do fato **fala com o modelo**: o assunto
+/// sai do [`converse::destilar_assunto`], o mesmo que já nomeia a nota de uma conversa.
+/// Comando não tem lógica de negócio, é a regra da casa em `commands/mod.rs`.
+pub async fn aprender_com_a_correcao(
+    http: &reqwest::Client,
+    settings: &AppSettings,
+    memoria: &Memoria,
+    pergunta: &str,
+    tipo: Erro,
+    correcao: &str,
+) -> Result<(), AgentError> {
+    match tipo {
+        Erro::Jeito => {
+            memoria.ensinar_o_jeito(correcao);
+            Ok(())
+        }
+        Erro::Fato => {
+            // A pergunta entra junto de propósito: "é o Milei" sozinho não diz sobre o que
+            // é a correção, e o nome da nota é o que decide se ela vai ser reencontrada.
+            let troca = format!("Ele perguntou: {pergunta}\nA resposta certa é: {correcao}");
+
+            let assunto = converse::destilar_assunto(
+                http,
+                &settings.ollama_url,
+                &settings.ollama_model,
+                &memoria.nomes_das_notas(),
+                &troca,
+            )
+            .await?
+            .ok_or_else(|| {
+                AgentError::NaoEntendi("não achei sobre que assunto é essa correção".to_owned())
+            })?;
+
+            memoria.corrigir(&assunto, correcao);
+            Ok(())
+        }
+    }
 }
 
 /// O termo a pesquisar antes de responder, ou `None` para conversar normalmente.
@@ -823,6 +910,7 @@ async fn conversar(
         http,
         settings,
         &memoria.contexto(dito),
+        &memoria.jeito_de_responder(),
         &memoria.recentes(converse::JANELA),
         dito,
         ao_falar,
@@ -1078,6 +1166,20 @@ async fn pesquisar_e_responder(
     pergunta: &str,
     log: &mut Log,
 ) -> String {
+    // **Antes de tudo, e a ordem é o ponto.** Logo abaixo o `aprender` grava a nota DESTA
+    // busca (de propósito, antes de responder). Se o bloco fosse montado depois, o modelo
+    // receberia os mesmos achados duas vezes — crus nos TRECHOS e destilados como
+    // "memória" —, gastando contexto para repetir a si mesmo.
+    //
+    // Este é o enganche que faltava: até agora, os quatro caminhos que pesquisam
+    // (`Reply` com estudo, `WebSearch` e os dois da visão) respondiam SEM nenhuma nota na
+    // frente do modelo. Eles convergem todos aqui, então é um lugar só.
+    //
+    // Os braços de COMANDO ficam de fora e não é esquecimento: a resposta deles é frase
+    // fixa em Rust, sem ida ao modelo — não há prompt onde enganchar. A memória já
+    // participa deles pelo outro canal, os `apelidos()` no prompt do roteador.
+    let lembrado = memoria.so_o_que_casou(pergunta);
+
     let chaves = settings.chaves_de_busca();
     let fonte = search::fonte(&chaves);
     let relogio = Instant::now();
@@ -1107,6 +1209,7 @@ async fn pesquisar_e_responder(
         &settings.assistant_name,
         pergunta,
         &achados,
+        &lembrado,
     )
     .await;
 
@@ -1844,7 +1947,7 @@ mod tests {
             let relogio = Instant::now();
             let primeira = std::sync::Mutex::new(None::<f32>);
 
-            let resposta = match converse::responder(&http, &settings, "", &[], &dito, &|frase| {
+            let resposta = match converse::responder(&http, &settings, "", "", &[], &dito, &|frase| {
                 let mut primeira = primeira.lock().expect("mutex");
                 if primeira.is_none() {
                     *primeira = Some(relogio.elapsed().as_secs_f32());

@@ -32,6 +32,27 @@ const VAZIAS: [&str; 35] = [
 /// Sem nenhum casamento, devolve as mais recentes — memória que só aparece quando é
 /// invocada pelo nome exato não parece memória, parece busca.
 pub fn relevantes(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
+    let mut escolhidas = casadas(notas, frase, teto);
+    generosidades(notas, &mut escolhidas, teto);
+    escolhidas
+}
+
+/// Só as notas que CASARAM, sem salto no grafo e sem fallback.
+///
+/// **É o [`relevantes`] menos as duas generosidades dele**, e as duas saem pelo mesmo
+/// motivo: quem chama isto é o prompt da BUSCA, onde o modelo já está lendo trechos de
+/// páginas e a instrução é "use só o que está aqui". Nesse prompt:
+///
+/// - o **fallback** seria veneno. Ele devolve as notas mais recentes, escolhidas por DATA,
+///   e ali elas apareceriam ao lado de trechos sobre outro assunto — com cara de fonte
+///   conferida. É exatamente o modo de falha que fez o [`casou`] existir, agora dentro do
+///   prompt que mais depende de não inventar.
+/// - o **salto no grafo** é enfeite de conversa. Ele existe para a memória parecer memória
+///   ("acordo às 6" puxando `[[academia]]`), e ali a pergunta é sobre o mundo.
+///
+/// Devolve vazio quando nada casou, e é o chamador que decide o que fazer com isso — no
+/// caso, não montar bloco nenhum e deixar o prompt idêntico ao que sempre foi.
+pub fn casadas(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
     if notas.is_empty() || teto == 0 {
         return Vec::new();
     }
@@ -42,14 +63,16 @@ pub fn relevantes(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
     // execuções (um prompt que muda sozinho é impossível de depurar).
     pontuadas.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.nome.cmp(&b.1.nome)));
 
-    let mut escolhidas: Vec<Nota> = Vec::new();
-    let mut vistas: HashSet<String> = HashSet::new();
+    pontuadas
+        .into_iter()
+        .take(teto)
+        .map(|(_, nota)| nota.clone())
+        .collect()
+}
 
-    for (_, nota) in pontuadas.iter().take(teto) {
-        if vistas.insert(nota.nome.clone()) {
-            escolhidas.push((*nota).clone());
-        }
-    }
+/// O salto no grafo e o fallback, que o [`relevantes`] tem e o [`casadas`] não.
+fn generosidades(notas: &[Nota], escolhidas: &mut Vec<Nota>, teto: usize) {
+    let mut vistas: HashSet<String> = escolhidas.iter().map(|nota| nota.nome.clone()).collect();
 
     // O salto no grafo: puxa o que as escolhidas citam. Um salto só — dois já arrastam
     // metade da memória quando as notas são bem ligadas.
@@ -68,10 +91,8 @@ pub fn relevantes(notas: &[Nota], frase: &str, teto: usize) -> Vec<Nota> {
     if escolhidas.is_empty() {
         let mut recentes: Vec<&Nota> = notas.iter().collect();
         recentes.sort_by(|a, b| b.atualizado.cmp(&a.atualizado).then(a.nome.cmp(&b.nome)));
-        escolhidas = recentes.into_iter().take(teto).cloned().collect();
+        *escolhidas = recentes.into_iter().take(teto).cloned().collect();
     }
-
-    escolhidas
 }
 
 /// As notas que casaram, com quantos pontos cada uma. Sem ordem e sem o fallback.
@@ -143,10 +164,14 @@ mod tests {
     use super::super::nota::{Nota, Tipo};
     use super::*;
 
-    /// O sinal que o fallback apaga — e a razão de os dois existirem lado a lado.
+    /// O sinal que o fallback apaga — e a razão de os TRÊS existirem lado a lado.
     ///
-    /// Amarra os dois comportamentos num teste só de propósito: quebra se alguém
-    /// "consertar" o fallback do `relevantes` sem olhar o `casou`, ou vice-versa.
+    /// Amarra os comportamentos num teste só de propósito: quebra se alguém "consertar" o
+    /// fallback do `relevantes` sem olhar o `casou`, ou vice-versa.
+    ///
+    /// O `casadas` entrou aqui pelo mesmo motivo, e não num teste separado: ele é o
+    /// `relevantes` SEM o fallback, então a única coisa que garante que ele continua sendo
+    /// isso é os dois serem cobrados na mesma frase, com as mesmas notas.
     #[test]
     fn casou_e_o_sinal_que_o_fallback_esconde() {
         let notas = vec![Nota::nova(
@@ -164,6 +189,56 @@ mod tests {
             relevantes(&notas, "cotacao do bitcoin", 1).len(),
             1,
             "e mesmo assim o relevantes entrega a mais recente — é o fallback, e ele fica"
+        );
+        assert!(
+            casadas(&notas, "cotacao do bitcoin", 1).is_empty(),
+            "o casadas é o que NÃO tem fallback — é ele que o prompt da busca usa, e uma              nota escolhida por data ao lado dos trechos parece fonte conferida"
+        );
+    }
+
+    /// O outro lado: quando casa de verdade, os dois entregam a mesma nota.
+    #[test]
+    fn casadas_entrega_o_que_casou() {
+        let notas = vec![
+            Nota::nova("academia", Tipo::Fato, "Treina de manhã.", "2026-01-01"),
+            Nota::nova("cafe", Tipo::Fato, "Gosta de coado.", "2026-02-01"),
+        ];
+
+        let achadas = casadas(&notas, "que horas abre a academia?", 8);
+
+        assert_eq!(achadas.len(), 1, "só uma nota fala de academia");
+        assert_eq!(achadas[0].nome, "academia");
+    }
+
+    /// O salto no grafo é generosidade de CONVERSA, e não pode vazar para a busca: ali o
+    /// modelo está lendo trechos de página, e uma nota que entrou de carona por citação
+    /// chega sem ter casado com nada.
+    #[test]
+    fn casadas_nao_da_o_salto_no_grafo() {
+        let notas = vec![
+            Nota::nova(
+                "rotina-da-manha",
+                Tipo::Fato,
+                "Acorda às 6 e vai para a [[academia]].",
+                "2026-01-01",
+            ),
+            Nota::nova(
+                "academia",
+                Tipo::Fato,
+                "Smart Fit da esquina.",
+                "2026-01-01",
+            ),
+        ];
+
+        assert_eq!(
+            relevantes(&notas, "rotina da manha", 8).len(),
+            2,
+            "na conversa a academia vem junto, pelo [[link]]"
+        );
+        assert_eq!(
+            casadas(&notas, "rotina da manha", 8).len(),
+            1,
+            "na busca, só o que casou"
         );
     }
 
