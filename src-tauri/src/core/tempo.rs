@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::lugar::Coordenadas;
 
@@ -25,8 +25,17 @@ const PREVISAO: &str = "https://api.open-meteo.com/v1/forecast";
 /// tempo agora" em cinco segundos do que uma resposta certa em trinta.
 const TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Quantos dias pedir. Três cobre "e amanhã?" sem encher a resposta falada.
-const DIAS: u8 = 3;
+/// Quantos dias pedir.
+///
+/// **Sete por causa do CARD, e a fala continua em três.** Os dois números convivem sem se
+/// atrapalhar porque quem corta a fala é o [`Previsao::frase`], que percorre uma lista de
+/// três rótulos ("Hoje", "Amanhã", "Depois de amanhã") e para junto com ela — pedir mais
+/// dias ao serviço não alonga uma vírgula do que é dito em voz alta.
+///
+/// Era três quando só existia a fala, e o comentário de então dizia que três "cobre 'e
+/// amanhã?' sem encher a resposta falada". Continua verdade; o que mudou foi ter um
+/// segundo consumidor, para o qual olhar a semana é justamente o ponto.
+const DIAS: u8 = 7;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TempoError {
@@ -134,6 +143,7 @@ pub async fn consultar(
         ceu: bruta.current.weather_code,
         dias: (0..bruta.daily.time.len().min(DIAS as usize))
             .map(|i| Dia {
+                data: bruta.daily.time[i].clone(),
                 minima: bruta.daily.temperature_2m_min[i],
                 maxima: bruta.daily.temperature_2m_max[i],
                 ceu: bruta.daily.weather_code[i],
@@ -143,16 +153,26 @@ pub async fn consultar(
     })
 }
 
-#[derive(Debug, Clone)]
+/// **`Serialize` porque isto atravessa o IPC inteiro**, e não só virou frase: o card do
+/// tempo recebe estes mesmos números, para a tela e a fala nunca discordarem. É a escolha
+/// que a `AcaoDeUi::Cotacoes` já tinha feito, e pelo mesmo motivo.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Previsao {
     pub temperatura: f32,
     pub umidade: u8,
+    /// Código WMO do céu. Vira palavra na [`descricao`] e vira desenho na tela.
     pub ceu: u8,
     pub dias: Vec<Dia>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Dia {
+    /// `YYYY-MM-DD`, do fuso do lugar — é o `timezone=auto` da consulta que garante isso.
+    ///
+    /// Vai como texto e não como índice porque quem rotula é a TELA: "Hoje" e "Amanhã"
+    /// dependem de que dia é hoje para quem está lendo, e uma posição no vetor não
+    /// sobrevive à meia-noite se o card ficar aberto.
+    pub data: String,
     pub minima: f32,
     pub maxima: f32,
     pub ceu: u8,
@@ -295,12 +315,14 @@ mod tests {
             ceu: 0,
             dias: vec![
                 Dia {
+                    data: "2026-09-05".to_owned(),
                     minima: 16.8,
                     maxima: 30.2,
                     ceu: 0,
                     chuva: 5,
                 },
                 Dia {
+                    data: "2026-09-06".to_owned(),
                     minima: 18.6,
                     maxima: 28.1,
                     ceu: 61,

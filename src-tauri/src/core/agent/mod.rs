@@ -144,6 +144,21 @@ pub enum AcaoDeUi {
     Cotacoes {
         cotacoes: Vec<crate::core::cotacoes::Cotacao>,
     },
+    /// Abre o card do tempo com a previsão que ACABOU de ser consultada.
+    ///
+    /// Mesma escolha da [`AcaoDeUi::Cotacoes`], e aqui ela é ainda mais direta: a
+    /// Open-Meteo já devolveu sete dias na chamada que produziu a fala, e pedir de novo
+    /// pela tela gastaria uma segunda ida à rede para mostrar números de outro instante.
+    ///
+    /// **A fala fica com três dias e o card com sete**, do MESMO dado. Quem corta é a
+    /// `Previsao::frase`, porque uma semana inteira lida em voz alta é insuportável — e
+    /// olhar a semana é justamente para o que serve um card.
+    Tempo {
+        /// Vazio quando é "aqui": a coordenada veio do Windows e não tem nome, e inventar
+        /// um a partir dela seria chute. A tela mostra "Aqui" nesse caso.
+        lugar: String,
+        previsao: crate::core::tempo::Previsao,
+    },
     /// Abre um endereço numa aba do navegador interno.
     ///
     /// Vem como pedido à UI, e não como coisa feita aqui, porque as abas são webviews do
@@ -671,8 +686,9 @@ pub async fn handle(
                 Intent::WeatherAt { local } => local.as_str(),
                 _ => "",
             };
-            let frase = ver_o_tempo(http, settings, localizador, pedido).await;
+            let (frase, card) = ver_o_tempo(http, settings, localizador, pedido).await;
             log.desfecho(None, relogio.elapsed().as_millis());
+            ui = card;
 
             memoria.registrar_acao(Acao {
                 quando: Utc::now().timestamp_millis(),
@@ -1372,27 +1388,37 @@ async fn ver_o_tempo(
     settings: &AppSettings,
     localizador: &Localizador,
     local: &str,
-) -> String {
+) -> (String, Option<AcaoDeUi>) {
     let pedido = local.trim();
     let casa = settings.cidade.trim();
 
     let por_nome = if pedido.is_empty() { casa } else { pedido };
 
+    // Cada erro do caminho vira frase e NENHUM card: a tela não tem o que desenhar quando
+    // não se sabe onde é nem o que faz lá, e um card vazio ao lado de "não achei nenhum
+    // lugar chamado Xique-Xique" seria pior que card nenhum.
     let (onde, nome) = if por_nome.is_empty() {
         match localizador.onde_estou(&settings.assistant_name) {
             Ok(coordenadas) => (coordenadas, None),
-            Err(erro) => return erro.to_string(),
+            Err(erro) => return (erro.to_string(), None),
         }
     } else {
         match tempo::procurar(http, por_nome).await {
             Ok(lugar) => (lugar.coordenadas, Some(lugar.completo())),
-            Err(erro) => return erro.to_string(),
+            Err(erro) => return (erro.to_string(), None),
         }
     };
 
     match tempo::consultar(http, onde).await {
-        Ok(previsao) => previsao.frase(nome.as_deref()),
-        Err(erro) => erro.to_string(),
+        Ok(previsao) => {
+            let frase = previsao.frase(nome.as_deref());
+            let card = AcaoDeUi::Tempo {
+                lugar: nome.unwrap_or_default(),
+                previsao,
+            };
+            (frase, Some(card))
+        }
+        Err(erro) => (erro.to_string(), None),
     }
 }
 
@@ -2213,6 +2239,49 @@ espera do usuário          {espera:>6.2} s  <- até a fala começar");
             })
             .unwrap(),
             serde_json::json!({ "tipo": "pesquisar", "query": "preço do dólar" }),
+        );
+
+        // O card do tempo carrega a previsão inteira, e a forma dela também é espelhada à
+        // mão (`src/types/tempo.ts`). Um campo renomeado aqui vira um card com "NaN°" na
+        // tela, sem erro em lugar nenhum — que é o mesmo tipo de silêncio dos dois acima.
+        assert_eq!(
+            serde_json::to_value(AcaoDeUi::Tempo {
+                lugar: "Teresópolis, Rio de Janeiro, Brasil".to_owned(),
+                previsao: crate::core::tempo::Previsao {
+                    temperatura: 27.5,
+                    umidade: 51,
+                    ceu: 0,
+                    // **Meios graus, e não 16.8/30.2.** Os campos são `f32` e o
+                    // `json!` monta `f64`: um 30.2 vira 30.200000762939453 de um lado e
+                    // 30.2 do outro, e o teste falharia por arredondamento em vez de por
+                    // contrato. Estes valores são exatos em binário nos dois tamanhos, e o
+                    // que se cobra aqui é o NOME e o aninhamento dos campos.
+                    dias: vec![crate::core::tempo::Dia {
+                        data: "2026-09-05".to_owned(),
+                        minima: 16.5,
+                        maxima: 30.5,
+                        ceu: 61,
+                        chuva: 70,
+                    }],
+                },
+            })
+            .unwrap(),
+            serde_json::json!({
+                "tipo": "tempo",
+                "lugar": "Teresópolis, Rio de Janeiro, Brasil",
+                "previsao": {
+                    "temperatura": 27.5,
+                    "umidade": 51,
+                    "ceu": 0,
+                    "dias": [{
+                        "data": "2026-09-05",
+                        "minima": 16.5,
+                        "maxima": 30.5,
+                        "ceu": 61,
+                        "chuva": 70
+                    }]
+                }
+            }),
         );
     }
 

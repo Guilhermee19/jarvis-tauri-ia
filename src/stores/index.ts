@@ -12,5 +12,6 @@ export {
   type WidgetPosition,
 } from './nowPlayingStore'
 export { useSensorStore } from './sensorStore'
+export { useTempoStore } from './tempoStore'
 export { useSettingsStore } from './settingsStore'
 export { useJanelaStore, zDaJanela, type GavetaId, type JanelaId } from './janelaStore'

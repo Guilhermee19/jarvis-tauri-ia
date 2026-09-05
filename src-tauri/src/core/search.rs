@@ -754,7 +754,9 @@ mod tests {
         );
         // Só o link de ativação, que é como a redação curta vem.
         assert_eq!(
-            projeto_citado("Enable it by visiting https://…/overview?project=jarvis-507603 then retry."),
+            projeto_citado(
+                "Enable it by visiting https://…/overview?project=jarvis-507603 then retry."
+            ),
             Some("jarvis-507603".to_owned())
         );
         // Sem projeto nenhum: o chamador cai no texto genérico em vez de imprimir "None".

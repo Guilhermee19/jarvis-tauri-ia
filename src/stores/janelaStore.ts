@@ -32,7 +32,15 @@ const ESPERA_MS = 500
  * a conversa — que é o comportamento certo para gaveta e errado para janela.
  */
 export type JanelaId =
-  'chat' | 'casa' | 'cameras' | 'desempenho' | 'navegador' | 'cotacoes' | 'conhecimento' | 'musica'
+  | 'chat'
+  | 'casa'
+  | 'cameras'
+  | 'desempenho'
+  | 'navegador'
+  | 'cotacoes'
+  | 'conhecimento'
+  | 'musica'
+  | 'tempo'
 export type GavetaId = 'settings'
 
 /**

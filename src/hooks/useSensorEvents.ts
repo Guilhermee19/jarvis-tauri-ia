@@ -16,6 +16,7 @@ import {
   useChatStore,
   useConhecimentoStore,
   useCotacoesStore,
+  useTempoStore,
   useJanelaStore,
   useNavegadorStore,
   useNowPlayingStore,
@@ -38,6 +39,7 @@ export function useSensorEvents() {
   const anotarEndereco = useNavegadorStore((state) => state.anotarEndereco)
   const pesquisar = useNavegadorStore((state) => state.pesquisar)
   const definirCotacoes = useCotacoesStore((state) => state.definir)
+  const definirTempo = useTempoStore((state) => state.definir)
   const abrirJanela = useJanelaStore((state) => state.abrir)
   const fecharJanela = useJanelaStore((state) => state.fechar)
   const focarCamera = useCamerasStore((state) => state.focar)
@@ -139,6 +141,13 @@ export function useSensorEvents() {
             definirCotacoes(acao.cotacoes)
             abrirJanela('cotacoes')
             break
+          // Mesmo trato do card acima, e aqui a economia é maior: a Open-Meteo devolveu
+          // sete dias na chamada que virou a fala, e o card mostra todos eles sem uma
+          // segunda ida à rede.
+          case 'tempo':
+            definirTempo(acao.lugar, acao.previsao)
+            abrirJanela('tempo')
+            break
         }
       }),
     )
@@ -155,6 +164,7 @@ export function useSensorEvents() {
     abrirSite,
     pesquisar,
     definirCotacoes,
+    definirTempo,
     anotarEndereco,
     abrirJanela,
     fecharJanela,

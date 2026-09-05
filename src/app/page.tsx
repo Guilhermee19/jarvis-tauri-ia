@@ -7,6 +7,7 @@ import { WebcamStage } from '@/components/home/WebcamStage'
 import { CamerasWindow } from '@/components/cameras/CamerasWindow'
 import { CasaWindow } from '@/components/casa/CasaWindow'
 import { CotacoesWindow } from '@/components/cotacoes/CotacoesWindow'
+import { TempoWindow } from '@/components/tempo/TempoWindow'
 import { DesempenhoWindow } from '@/components/desempenho/DesempenhoWindow'
 import { ConhecimentoWindow } from '@/components/conhecimento/ConhecimentoWindow'
 import { NavegadorWindow } from '@/components/navegador/NavegadorWindow'
@@ -54,6 +55,7 @@ export default function HomePage() {
         <CamerasWindow />
         <DesempenhoWindow />
         <CotacoesWindow />
+        <TempoWindow />
         <NavegadorWindow />
         <ConhecimentoWindow />
         <SettingsSheet />

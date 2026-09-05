@@ -12,6 +12,7 @@ import {
   SettingsIcon,
   VigilanciaIcon,
 } from '@/components/ui/icons'
+import { Sol } from '@/components/tempo/icones'
 import { cn } from '@/lib/utils'
 import { useChatStore, useJanelaStore, useSensorStore, type JanelaId } from '@/stores'
 
@@ -39,6 +40,7 @@ const JANELAS: NavItem<Exclude<JanelaId, 'musica'>>[] = [
   { id: 'cameras', label: 'Câmeras', Icon: VigilanciaIcon },
   { id: 'desempenho', label: 'Desempenho', Icon: GaugeIcon },
   { id: 'cotacoes', label: 'Cotações', Icon: MoedaIcon },
+  { id: 'tempo', label: 'Tempo', Icon: Sol },
   { id: 'navegador', label: 'Navegador', Icon: GlobeIcon },
   { id: 'conhecimento', label: 'Conhecimento', Icon: GrafoIcon },
 ]

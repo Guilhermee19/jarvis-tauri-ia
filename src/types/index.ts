@@ -28,4 +28,6 @@ export type { CapturedImage, MonitorInfo, Recording, Voice, WebcamResolution } f
 export { TIPOS_DE_NOTA } from './conhecimento'
 export type { ArestaDoGrafo, Grafo, NoDoGrafo } from './conhecimento'
 export type { Cotacao } from './cotacoes'
+export { ceuDoCodigo } from './tempo'
+export type { CeuId, DiaDeTempo, Previsao } from './tempo'
 export { NOME_DA_MOEDA } from './cotacoes'

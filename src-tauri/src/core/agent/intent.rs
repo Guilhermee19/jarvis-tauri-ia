@@ -535,7 +535,11 @@ pub async fn interpret(
     let acao: Intent = serde_json::from_str(texto.trim())
         .map_err(|erro| AgentError::NaoEntendi(format!("{erro} — {texto}")))?;
 
-    Ok(sem_confundir_quando_com_onde(sem_confundir_pergunta(acao, frase)))
+    // Duas peneiras, em ordem: a primeira devolve `sou_eu` para `reply`, a segunda tira o
+    // QUANDO do campo do ONDE. Aninhá-las numa linha só economizava uma variável e
+    // escondia que são duas correções independentes.
+    let acao = sem_confundir_pergunta(acao, frase);
+    Ok(sem_confundir_quando_com_onde(acao))
 }
 
 /// Carrega o modelo e deixa o prompt do roteador quente, ANTES da primeira pergunta.
