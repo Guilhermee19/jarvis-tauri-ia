@@ -1768,7 +1768,7 @@ mod tests {
             ollama_url: std::env::var("JARVIS_OLLAMA")
                 .unwrap_or_else(|_| "http://localhost:11434".to_owned()),
             ollama_model: std::env::var("JARVIS_MODELO")
-                .unwrap_or_else(|_| "qwen2.5vl:3b".to_owned()),
+                .unwrap_or_else(|_| crate::config::DEFAULT_OLLAMA_MODEL.to_owned()),
             ..AppSettings::default()
         };
 

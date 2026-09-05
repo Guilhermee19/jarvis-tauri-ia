@@ -92,7 +92,8 @@ impl Persona {
     }
 }
 
-/// Escolhido medindo, em duas rodadas.
+/// Escolhido medindo, em três rodadas — e ele CONTINUA sendo o 3B depois da terceira,
+/// que é o que essa rodada tem de interessante.
 ///
 /// Primeiro contra o `llama3.2:3b`, para rotear comando: 12 de 12 em português contra
 /// 11 (o llama errou "próxima faixa"). Depois, quando a visão entrou, contra o
@@ -106,8 +107,24 @@ impl Persona {
 /// | `gemma3:4b`    | —      | inventa nome de app | sim | ~17 s      |
 /// | `qwen2.5vl:3b` | 15/15  | sim     | sim       | ~2–3,5 s          |
 ///
-/// Ter UM modelo multimodal não é preferência, é necessidade: com 4 GB de VRAM o
-/// Ollama não segura dois, e a primeira chamada depois de uma troca levou 67 segundos.
+/// A terceira rodada não trocou de modelo, trocou de MÁQUINA: as duas primeiras foram
+/// num cartão de 4 GB, e a de hoje tem 12 GB — onde o `qwen2.5vl:7b` (5,5 GB na VRAM)
+/// cabe inteiro e a limitação que escolheu um 3B deixou de existir. Subir de tamanho
+/// dentro da mesma família parecia lucro de graça, e não é: o 7B **regride o verbo do
+/// tempo**, no `interpreta_de_verdade`, com a mesma saída nas duas voltas.
+///
+/// | frase                        | `qwen2.5vl:3b`   | `qwen2.5vl:7b`             |
+/// | ---------------------------- | ---------------- | -------------------------- |
+/// | "vai chover hoje?"           | `Weather`        | `WebSearch`                |
+/// | "como está o tempo em Lisboa"| `WeatherAt`      | `WebSearch`                |
+///
+/// Trocar dois verbos que funcionam por uma busca na web que custa cota do Google e
+/// responde pior não é upgrade. O 7B ganha em REDAÇÃO, e é lá que ele foi posto: ver
+/// `ollama_model_busca`.
+///
+/// Ter UM modelo multimodal não é preferência, é necessidade: o roteador é texto e o
+/// "o que é isso?" é imagem, e a primeira chamada depois de uma troca de modelo levou
+/// 67 segundos — dois modelos pagariam isso a cada duas mensagens.
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5vl:3b";
 
 /// Região padrão da Tuya. `us` porque conta brasileira do Smart Life quase sempre é
@@ -187,8 +204,24 @@ pub struct AppSettings {
     /// é o tamanho do modelo, e resumir busca não precisa de visão — então dá para usar
     /// um maior AQUI sem trocar o principal.
     ///
-    /// Custa VRAM: os dois ficam carregados ao mesmo tempo (com `keep_alive` de 2 h). Num
-    /// cartão de 4 GB não cabe, e é por isso que o padrão é vazio.
+    /// **Quem ocupa a vaga hoje é o `qwen2.5vl:7b`**, medido contra os outros dois no
+    /// `converse::responde_so_com_a_fonte`, seis voltas cada, com as mesmas manchetes:
+    ///
+    /// | modelo         | acerta | inventa detalhe   | português      | não cita fonte |
+    /// | -------------- | ------ | ----------------- | -------------- | -------------- |
+    /// | `qwen2.5vl:7b` | 6/6    | não               | limpo          | 6/6            |
+    /// | `qwen2.5vl:3b` | 6/6    | não               | limpo          | **4/6**        |
+    /// | `mistral`      | 6/6    | **sim** ("entrevista à imprensa") | "pela ele mesmo" | 6/6 |
+    ///
+    /// O 3B não inventou o FATO nesta rodada — o que ele quebra agora é a regra de não
+    /// citar fonte, colando "[1] Manchete de 29/08/2026" no meio da fala. E o `mistral`,
+    /// que na rodada antiga era a saída, é hoje o único que inventa: a fonte diz "cadeia
+    /// nacional de rádio e televisão" e ele responde "entrevista à imprensa".
+    ///
+    /// Custa VRAM: os dois ficam carregados ao mesmo tempo (com `keep_alive` de 2 h).
+    /// Medido nos 12 GB desta máquina, `3b` + `7b` deixam **245 MiB livres** — cabe, mas
+    /// sem folga para um jogo aberto junto. Num cartão de 4 GB não cabe nada disso, e é
+    /// por isso que o PADRÃO continua vazio: quem tem VRAM sobrando preenche o campo.
     pub ollama_model_busca: String,
     /// Pasta da memória (markdown, formato Obsidian). Vazio = a pasta `memoria/` do
     /// projeto em desenvolvimento, ou a de dados do usuário num app instalado.

@@ -1121,6 +1121,14 @@ mod tests {
             .count()
     }
 
+    /// O modelo que os testes de verdade medem. Sai do [`DEFAULT_OLLAMA_MODEL`] para não
+    /// envelhecer junto com ele — e `JARVIS_MODELO=qwen2.5vl:3b` compara com o anterior
+    /// sem editar teste nenhum, que foi como a subida para o 7B foi medida.
+    fn modelo_medido() -> String {
+        std::env::var("JARVIS_MODELO")
+            .unwrap_or_else(|_| crate::config::DEFAULT_OLLAMA_MODEL.to_owned())
+    }
+
     /// Pergunta ao modelo de verdade e imprime o que ele decidiu.
     ///
     /// Fora do `cargo test` comum porque depende do Ollama de pé. É a única forma de
@@ -1160,7 +1168,7 @@ mod tests {
                     let saida = interpret(
                         &http,
                         "http://localhost:11434",
-                        "qwen2.5vl:3b",
+                        &modelo_medido(),
                         "Jarvis",
                         &BTreeMap::new(),
                         &[],
@@ -1235,7 +1243,7 @@ mod tests {
                     let saida = interpret(
                         &http,
                         "http://localhost:11434",
-                        "qwen2.5vl:3b",
+                        &modelo_medido(),
                         "Jarvis",
                         &BTreeMap::new(),
                         &[],
@@ -1361,7 +1369,7 @@ mod tests {
     #[test]
     #[ignore]
     fn o_endereco_do_ollama_custa() {
-        let modelo = std::env::var("JARVIS_MODELO").unwrap_or_else(|_| "qwen2.5vl:3b".to_owned());
+        let modelo = modelo_medido();
 
         let bloco = tokio::runtime::Builder::new_current_thread()
             .enable_all()

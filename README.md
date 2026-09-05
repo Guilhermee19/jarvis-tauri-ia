@@ -295,6 +295,20 @@ ligar o raciocínio custa 3–4 s por comando.
 Nem o `gemma3:4b` nem o `qwen2.5vl:3b` cabem inteiros nos 4 GB — os dois rodam ~55% em
 CPU (`ollama ps` mostra). O qwen ainda assim responde 5× mais rápido.
 
+**E numa placa maior? Subir para o `qwen2.5vl:7b` PIORA.** A medição acima é de um cartão
+de 4 GB; numa de 12 GB o 7B da mesma família cabe inteiro (5,5 GB, 100% GPU) e a
+restrição que escolheu um 3B some. Só que ele regride o verbo do tempo, igual nas duas
+voltas do `interpreta_de_verdade`:
+
+| frase                          | `qwen2.5vl:3b` | `qwen2.5vl:7b` |
+| ------------------------------ | -------------- | -------------- |
+| "vai chover hoje?"             | `Weather`      | `WebSearch`    |
+| "como está o tempo em Lisboa"  | `WeatherAt`    | `WebSearch`    |
+
+Ele joga na busca da web o que o app já sabe responder sozinho — gasta cota do Google e
+responde pior. O 7B ganha em redação, não em roteamento, e é por isso que ele entra pelo
+campo **"Modelo que responde a busca"**, e não no lugar do principal.
+
 **whisper.cpp** — transcreve a fala. Baixe [`whisper-blas-bin-x64.zip`](https://github.com/ggml-org/whisper.cpp/releases)
 e o modelo [`ggml-small-q5_1.bin`](https://huggingface.co/ggerganov/whisper.cpp), e
 descompacte os dois em `%APPDATA%\com.jarvis.app\whisper\`. O `base` é fraco demais em
@@ -897,6 +911,23 @@ que enxerga a webcam) e por isso é pequeno; resumir busca não precisa de visã
 principal, que é o comportamento de sempre — preenchido, os dois ficam carregados, e isso
 custa VRAM.
 
+**Quem ocupa a vaga hoje é o `qwen2.5vl:7b`**, escolhido refazendo a medição acima com o
+`converse::responde_so_com_a_fonte`, seis voltas em cada modelo e as mesmas manchetes:
+
+| modelo         | acerta | inventa detalhe                   | português        | não cita fonte |
+| -------------- | ------ | --------------------------------- | ---------------- | -------------- |
+| `qwen2.5vl:7b` | 6/6    | não                               | limpo            | 6/6            |
+| `qwen2.5vl:3b` | 6/6    | não                               | limpo            | **4/6**        |
+| `mistral`      | 6/6    | **sim** ("entrevista à imprensa") | "pela ele mesmo" | 6/6            |
+
+Duas coisas mudaram desde a rodada antiga. O 3B parou de inventar o FATO — o que ele
+quebra agora é a regra de não citar fonte, colando "[1] Manchete de 29/08/2026" no meio da
+fala. E o `mistral`, que era a saída recomendada, virou o único que inventa: a fonte diz
+"cadeia nacional de rádio e televisão" e ele responde "entrevista à imprensa".
+
+Com os dois carregados nos 12 GB desta máquina sobram **245 MiB** — cabe, mas sem folga
+para um jogo aberto junto. Em 4 GB não cabe, e por isso o padrão do campo continua vazio.
+
 **Sem a chave, ele admite que não sabe.** Um teste com temperatura 0.2 devolveu uma
 receita de pão de queijo inventada, com tempo de forno que não estava em trecho nenhum.
 A 0, e com a regra "se pedirem passo a passo e os trechos só tiverem informação geral,
@@ -1344,6 +1375,7 @@ Salvas em `%APPDATA%\com.jarvis.app\settings.json`:
   "ttsVoiceUltron": "",
   "ollamaUrl": "http://localhost:11434",
   "ollamaModel": "qwen2.5vl:3b",
+  "ollamaModelBusca": "qwen2.5vl:7b",
   "memoriaPath": "",
   "braveApiKey": "",
   "spotifyClientId": "",

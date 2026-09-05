@@ -113,7 +113,7 @@ export function SettingsForm({ initial, isSaving, onSubmit, onCancel }: Settings
         value={ollamaModelBusca}
         onChange={(event) => setOllamaModelBusca(event.target.value)}
         placeholder="usa o do intérprete"
-        hint="Um modelo maior só para resumir o que a busca achou — não precisa enxergar. Medido: com as fontes na frente, o qwen2.5vl:3b completou a resposta com informação velha em 8 de 8 tentativas; o `mistral` e o `llama3` ficaram no que estava escrito. Custa VRAM, porque os dois ficam carregados."
+        hint="Um modelo maior só para resumir o que a busca achou — não precisa enxergar. Vazio usa o do intérprete. Medido em seis voltas com as fontes na frente: o `qwen2.5vl:7b` respondeu limpo nas seis, o `qwen2.5vl:3b` colou a citação (`[1] Manchete de…`) na fala em duas, e o `mistral` inventou detalhe que não estava no trecho. Custa VRAM: os dois ficam carregados ao mesmo tempo, e num cartão de 4 GB não cabe."
       />
 
       <Input

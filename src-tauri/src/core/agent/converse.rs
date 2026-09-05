@@ -1262,4 +1262,79 @@ mod tests {
         assert!(texto.is_char_boundary(corte));
         assert_eq!(texto[..corte].trim(), "Não é bem assim, não.");
     }
+
+    /// Repete, contra o modelo de verdade, a medição que decidiu o `ollama_model_busca`:
+    /// **o modelo completa a resposta com o que ele "lembra", mesmo com a fonte na
+    /// frente?**
+    ///
+    /// As duas manchetes abaixo dizem que Milei é o presidente sem nunca escrever o
+    /// cargo ao lado do nome — que é exatamente a brecha por onde a invenção entra. O
+    /// `qwen2.5vl:3b` inventou em 8 de 8 voltas (inclusive "Alberto Fernández", que
+    /// contradiz o trecho); o `mistral` e o `llama3` ficaram no que estava escrito.
+    ///
+    /// Não tem `assert`: quem julga é quem lê a saída. O que ele automatiza é a repetição
+    /// — dez voltas na mão é o que fazia esta medição não ser refeita ao trocar de modelo.
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture responde_so_com_a_fonte
+    /// JARVIS_MODELO=qwen2.5vl:3b cargo test --lib -- --ignored --nocapture responde_so_com_a_fonte
+    /// ```
+    #[test]
+    #[ignore]
+    fn responde_so_com_a_fonte() {
+        let modelo = std::env::var("JARVIS_MODELO")
+            .unwrap_or_else(|_| crate::config::DEFAULT_OLLAMA_MODEL.to_owned());
+        let voltas: usize = std::env::var("JARVIS_VOLTAS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(8);
+
+        let achados = vec![
+            crate::core::search::Achado {
+                titulo: "Milei anuncia novo pacote de cortes".to_owned(),
+                trecho: "Manchete de 29/08/2026. Javier Milei anunciou nesta sexta \
+                         um novo pacote de cortes de gastos, em cadeia nacional de \
+                         rádio e televisão."
+                    .to_owned(),
+                url: "https://exemplo.test/milei-cortes".to_owned(),
+                quando: Some("29/08/2026".to_owned()),
+            },
+            crate::core::search::Achado {
+                titulo: "Casa Rosada confirma viagem de Milei aos EUA".to_owned(),
+                trecho: "Manchete de 30/08/2026. A Casa Rosada confirmou que Milei \
+                         viaja a Washington na próxima semana para uma reunião sobre a \
+                         dívida."
+                    .to_owned(),
+                url: "https://exemplo.test/milei-eua".to_owned(),
+                quando: Some("30/08/2026".to_owned()),
+            },
+        ];
+
+        let http = super::super::intent::client();
+        let bloco = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        bloco.block_on(async {
+            println!("modelo: {modelo}\n");
+
+            for volta in 1..=voltas {
+                let saida = responder_com_busca(
+                    &http,
+                    "http://127.0.0.1:11434",
+                    &modelo,
+                    "Jarvis",
+                    "quem é o presidente da Argentina?",
+                    &achados,
+                )
+                .await;
+
+                match saida {
+                    Ok(texto) => println!("{volta}: {}", texto.replace('\n', " ")),
+                    Err(erro) => println!("{volta}: ERRO {erro}"),
+                }
+            }
+        });
+    }
 }
