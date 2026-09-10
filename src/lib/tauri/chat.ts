@@ -8,8 +8,8 @@ import { call } from './client'
  * quando o agente real entrar, essa mesma chamada é que vai rodar o loop de tool use.
  *
  * **Só volta quando ele terminou de FALAR**, e não quando o texto ficou pronto: a resposta
- * sai em fluxo, e o Rust espera a última frase calar. É esse retorno que o modo conversa
- * usa para saber quando reabrir o microfone.
+ * sai em fluxo, e o Rust espera a última frase calar. É esse retorno que a escuta usa
+ * para saber quando reabrir o microfone — antes dele, ele ouviria a si mesmo.
  *
  * `turno` é o crachá das frases: cada uma volta por evento carimbada com ele, e é assim
  * que uma resposta interrompida não escreve dentro da bolha da resposta seguinte. Quem o

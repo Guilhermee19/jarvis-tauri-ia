@@ -1447,23 +1447,14 @@ fn casa(chaveiro: &Chaveiro, acao: &Intent) -> Result<String, String> {
         // um conselho inútil.
         Busca::Nenhum if chaveiro.vazio() => {
             return Err(
-                "ainda não sei quais aparelhos você tem. Abre o painel Casa, procura os                  aparelhos e importa os nomes da nuvem — aí eu passo a saber."
+                "ainda não sei quais aparelhos você tem. Abre o painel Casa, procura os aparelhos e importa os nomes da nuvem — aí eu passo a saber."
                     .to_owned(),
             )
         }
-        Busca::Nenhum => {
-            let conhecidos: Vec<String> = chaveiro
-                .todos()
-                .into_iter()
-                .filter(|aparelho| !aparelho.nome.trim().is_empty())
-                .map(|aparelho| aparelho.nome)
-                .collect();
-
-            return Err(format!(
-                "não achei nenhum aparelho chamado \"{dito}\". Os que eu conheço: {}.",
-                conhecidos.join(", ")
-            ));
-        }
+        // Sem a lista inteira: quem pediu "liga a cafeteira" não pediu o inventário da
+        // casa, e despejar doze nomes para dizer uma coisa só é uma resposta que ninguém
+        // termina de ouvir. Quem quiser a lista abre o painel Casa.
+        Busca::Nenhum => return Err(format!("não achei nenhum aparelho chamado \"{dito}\".")),
         Busca::Varios(nomes) => {
             return Err(format!(
                 "isso serve para mais de um aparelho: {}. Qual deles?",
@@ -1476,7 +1467,7 @@ fn casa(chaveiro: &Chaveiro, acao: &Intent) -> Result<String, String> {
     // que só anunciou antes deste chaveiro existir.
     if aparelho.ultimo_ip.trim().is_empty() {
         return Err(format!(
-            "sei quem é {}, mas não sei onde está na rede. Procura os aparelhos no              painel Casa uma vez e eu passo a alcançar.",
+            "sei quem é {}, mas não sei onde está na rede. Procura os aparelhos no painel Casa uma vez e eu passo a alcançar.",
             aparelho.nome
         ));
     }
@@ -1850,8 +1841,8 @@ mod tests {
             "a resposta tem que dizer onde resolver: {resposta}"
         );
 
-        // Com aparelho conhecido mas nome que não bate, o conselho é outro: a lista do
-        // que ele conhece.
+        // Com aparelho conhecido mas nome que não bate, a resposta diz o nome que ele
+        // ouviu — e SÓ isso. A lista inteira era o inventário da casa que ninguém pediu.
         let cheio = chaveiro_de_teste("cheio");
         cheio
             .guardar(vec![crate::core::casa::chaveiro::Conhecido {
@@ -1866,8 +1857,12 @@ mod tests {
 
         let resposta = casa(&cheio, &apagar("ventilador do quarto")).expect_err("nao conhece");
         assert!(
-            resposta.contains("Luz Cozinha"),
-            "tem que listar o que ele conhece: {resposta}"
+            resposta.contains("ventilador do quarto"),
+            "tem que repetir o nome que não achou: {resposta}"
+        );
+        assert!(
+            !resposta.contains("Luz Cozinha"),
+            "e não despejar a lista de aparelhos: {resposta}"
         );
 
         // Nome certo, mas nunca visto na rede: o que falta é uma varredura, não a nuvem.
@@ -1939,6 +1934,7 @@ mod tests {
                         &http,
                         &whisper,
                         std::path::Path::new(&wav),
+                        &settings.assistant_name,
                     )
                     .await
                     {

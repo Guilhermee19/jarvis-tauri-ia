@@ -14,7 +14,13 @@ import {
 } from '@/components/ui/icons'
 import { Sol } from '@/components/tempo/icones'
 import { cn } from '@/lib/utils'
-import { useChatStore, useJanelaStore, useSensorStore, type JanelaId } from '@/stores'
+import {
+  useChatStore,
+  useJanelaStore,
+  useSensorStore,
+  useSettingsStore,
+  type JanelaId,
+} from '@/stores'
 
 interface NavItem<Id> {
   id: Id
@@ -106,18 +112,26 @@ function WebcamButton() {
   )
 }
 
+/**
+ * O interruptor da escuta — o ÚNICO jeito de falar com ele.
+ *
+ * Ligado, o microfone fica aberto ouvindo a sala inteira, e a frase que começa pelo
+ * nome dele vira comando. É por isso que o botão ficou aqui e não no painel de
+ * conversa: a escuta não pertence a uma janelinha, ela continua com tudo fechado.
+ */
 function MicButton() {
-  const isOn = useSensorStore((state) => state.isMicOn)
+  const isOn = useSensorStore((state) => state.isListening)
   const isBusy = useSensorStore((state) => state.isMicBusy)
   const level = useSensorStore((state) => state.micLevel)
-  const toggleMic = useSensorStore((state) => state.toggleMic)
+  const assistantName = useSettingsStore((state) => state.settings.assistantName)
+  const toggleListening = useSensorStore((state) => state.toggleListening)
 
   return (
     <NavButton
-      label={isOn ? 'Desligar o microfone' : 'Ligar o microfone'}
+      label={isOn ? 'Parar de escutar' : `Escutar — diga "${assistantName}, …" para mandar`}
       isActive={isOn}
       isBusy={isBusy}
-      onClick={() => void toggleMic()}
+      onClick={() => void toggleListening()}
       icon={<MicIcon className="h-4.5 w-4.5" />}
       // Anel que respira com a voz: o botão precisa mostrar que está CAPTANDO, não
       // só que está ligado. A raiz quadrada tira a fala do fundo da escala linear.

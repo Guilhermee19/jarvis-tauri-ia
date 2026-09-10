@@ -80,6 +80,7 @@ pub async fn transcribe(
     app: AppHandle,
     voice: State<'_, VoiceState>,
     services: State<'_, Services>,
+    settings: State<'_, AppState>,
 ) -> Result<String, String> {
     let http = voice.http();
 
@@ -97,7 +98,9 @@ pub async fn transcribe(
         .app_cache_dir()
         .map_err(|error| format!("sem diretório de cache para ler o áudio: {error}"))?;
 
-    transcribe_audio(&http, &url, &cache_dir.join(RECORDING_FILE))
+    let nome = settings.settings().assistant_name;
+
+    transcribe_audio(&http, &url, &cache_dir.join(RECORDING_FILE), &nome)
         .await
         .map_err(stringify)
 }

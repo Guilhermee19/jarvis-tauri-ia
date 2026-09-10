@@ -15,7 +15,7 @@ export function MicSection() {
   return (
     <Section
       title="Microfone"
-      hint="Mesmo interruptor do ícone na barra: grava do microfone padrão e salva um WAV mono de 16 bits, o formato que a transcrição vai consumir. Ainda não transcreve."
+      hint="Gravação de teste do microfone padrão: salva um WAV mono de 16 bits, o formato que a transcrição consome, e não transcreve. É outro botão que o ícone da barra, que liga a escuta — e os dois disputam o mesmo dispositivo, então um recusa enquanto o outro estiver ligado."
       error={error}
     >
       <div className="flex items-center gap-2">

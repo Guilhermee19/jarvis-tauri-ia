@@ -102,8 +102,8 @@ export function SpeechSection() {
 
       {!temVoz ? (
         <p className="text-muted text-[11px]">
-          Sem voz escolhida o Jarvis fica calado — inclusive no modo conversa, que recusa
-          ligar.
+          Sem voz escolhida o Jarvis fica calado: ele ouve e executa igual, mas responde só
+          por escrito na conversa.
         </p>
       ) : null}
 

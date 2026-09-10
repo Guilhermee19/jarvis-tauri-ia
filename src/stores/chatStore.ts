@@ -22,8 +22,8 @@ interface ChatState {
    * Ele está falando a resposta agora.
    *
    * Mora aqui, e não no `sensorStore` junto do microfone, porque a fala acompanha a
-   * RESPOSTA — vale para o que foi digitado igual ao que foi falado. O modo conversa
-   * lê esta flag em vez de manter uma cópia própria.
+   * RESPOSTA — vale para o que foi digitado igual ao que foi falado. O HUD lê esta flag
+   * em vez de manter uma cópia própria.
    */
   isSpeaking: boolean
   /**
@@ -94,9 +94,8 @@ function describeError(error: unknown): string {
  * agente segue outro caminho — nasce em pedaços no Rust e é falada de lá, frase a frase.
  *
  * Sem clipe de voz cadastrado ele fica calado e SEM ERRO: voz é opcional, e um aviso
- * vermelho a cada mensagem digitada seria ruído por uma coisa que ninguém pediu. Quem
- * liga o modo conversa aí sim recebe a recusa na hora do clique, porque ali a voz é o
- * ponto.
+ * vermelho a cada mensagem digitada seria ruído por uma coisa que ninguém pediu — a
+ * escuta continua ouvindo e executando, só sem responder em voz alta.
  *
  * Esse silêncio importa mais do que importava: sem clipe, tentar falar subiria o servidor
  * de voz — segundos de modelo carregando — para no fim não ter voz nenhuma para clonar.

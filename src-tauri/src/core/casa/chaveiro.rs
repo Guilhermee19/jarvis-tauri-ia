@@ -241,6 +241,12 @@ impl Chaveiro {
     /// sinônimo: a regra é que TODAS as palavras do nome do aparelho apareçam na frase.
     /// O caminho inverso — palavras da frase presentes no nome — casaria "a luz" com
     /// qualquer luz da casa.
+    ///
+    /// **Duas passadas, e a segunda perdoa o ouvido.** Quem fala não digita: o ditado
+    /// devolve "cafetira" ou "cafeitira" para uma "Cafeteira" que está ali na lista, e
+    /// exigir a palavra idêntica virava um "não achei" para um comando perfeitamente
+    /// claro. A passada frouxa só roda quando a exata não achou nada — o nome ouvido
+    /// certo continua ganhando de qualquer aproximação.
     pub fn achar_por_nome(&self, dito: &str) -> Busca {
         let frase = normalizar(dito);
         if frase.is_empty() {
@@ -248,21 +254,10 @@ impl Chaveiro {
         }
 
         let palavras: Vec<&str> = frase.split(' ').collect();
-        let mut candidatos: Vec<(usize, Conhecido)> = Vec::new();
 
-        for aparelho in lock(&self.aparelhos).values() {
-            let nome = normalizar(&aparelho.nome);
-            if nome.is_empty() {
-                continue;
-            }
-
-            let do_nome: Vec<&str> = nome.split(' ').collect();
-            if do_nome
-                .iter()
-                .all(|palavra| palavras.contains(palavra))
-            {
-                candidatos.push((do_nome.len(), aparelho.clone()));
-            }
+        let mut candidatos = self.cabem_na_frase(&palavras, false);
+        if candidatos.is_empty() {
+            candidatos = self.cabem_na_frase(&palavras, true);
         }
 
         // Nome mais específico ganha: com "Luz" e "Luz Cozinha" cadastrados, "apaga a
@@ -283,6 +278,77 @@ impl Chaveiro {
             ),
         }
     }
+
+    /// Os aparelhos cujo nome inteiro cabe na frase, e de quantas palavras é cada nome.
+    ///
+    /// Com `ouvido_torto`, palavra arranhada pelo ditado ainda casa — ver [`parecidas`].
+    fn cabem_na_frase(&self, palavras: &[&str], ouvido_torto: bool) -> Vec<(usize, Conhecido)> {
+        let mut candidatos: Vec<(usize, Conhecido)> = Vec::new();
+
+        for aparelho in lock(&self.aparelhos).values() {
+            let nome = normalizar(&aparelho.nome);
+            if nome.is_empty() {
+                continue;
+            }
+
+            let do_nome: Vec<&str> = nome.split(' ').collect();
+            let cabe = do_nome.iter().all(|palavra| {
+                palavras.iter().any(|dita| {
+                    if ouvido_torto {
+                        parecidas(dita, palavra)
+                    } else {
+                        dita == palavra
+                    }
+                })
+            });
+
+            if cabe {
+                candidatos.push((do_nome.len(), aparelho.clone()));
+            }
+        }
+
+        candidatos
+    }
+}
+
+/// Se uma palavra do ditado é a palavra do nome mal ouvida.
+///
+/// A folga cresce com o tamanho porque o estrago do engano é que muda: em palavra curta
+/// uma letra já é outra palavra ("sala" e "sela"), e em palavra longa uma ou duas quase
+/// nunca são — "cafeitira" não é nada no mundo além de "cafeteira" torta. Palavra de até
+/// quatro letras, por isso, continua exigindo igualdade.
+fn parecidas(dita: &str, do_nome: &str) -> bool {
+    let tolerancia = match do_nome.chars().count() {
+        0..=4 => return dita == do_nome,
+        5..=7 => 1,
+        _ => 2,
+    };
+
+    // Diferença de tamanho já é distância mínima, e sai mais barato que a matriz.
+    let sobra = dita.chars().count().abs_diff(do_nome.chars().count());
+    sobra <= tolerancia && distancia(dita, do_nome) <= tolerancia
+}
+
+/// Quantas letras é preciso trocar, tirar ou pôr para chegar de uma palavra na outra
+/// (Levenshtein, uma linha por vez — isto roda sobre palavras, não sobre textos).
+fn distancia(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+
+    let mut linha: Vec<usize> = (0..=b.len()).collect();
+
+    for (i, letra_a) in a.iter().enumerate() {
+        let mut diagonal = linha[0];
+        linha[0] = i + 1;
+
+        for (j, letra_b) in b.iter().enumerate() {
+            let trocando = diagonal + usize::from(letra_a != letra_b);
+            diagonal = linha[j + 1];
+            linha[j + 1] = trocando.min(linha[j] + 1).min(diagonal + 1);
+        }
+    }
+
+    linha[b.len()]
 }
 
 /// O resultado de procurar um aparelho por nome.
@@ -497,6 +563,34 @@ mod tests {
             chaveiro.achar_por_nome("liga o ventilador do quarto"),
             Busca::Nenhum
         ));
+    }
+
+    /// O ditado erra letra, e o aparelho continua sendo aquele. Era o caso do "liga a
+    /// cafeitira": a "Cafeteira" estava cadastrada e ele respondia que não conhecia.
+    #[test]
+    fn perdoa_o_que_o_ditado_ouviu_torto() {
+        let chaveiro = Chaveiro::new(&pasta("ouvido-torto"));
+        chaveiro
+            .guardar(vec![
+                nomeado("cafe", "Cafeteira"),
+                nomeado("sala", "TV da Sala"),
+            ])
+            .expect("grava");
+
+        for frase in ["liga a cafetira", "liga a cafeitira por favor", "liga a cafeteira"] {
+            assert!(
+                matches!(chaveiro.achar_por_nome(frase), Busca::Um(achado) if achado.id == "cafe"),
+                "{frase} tinha que achar a cafeteira"
+            );
+        }
+
+        // A folga não pode virar chute: palavra que não é o nome arranhado continua sem
+        // achar nada, e palavra curta exige igualdade ("sela" não é "sala").
+        assert!(matches!(
+            chaveiro.achar_por_nome("liga o ventilador"),
+            Busca::Nenhum
+        ));
+        assert!(matches!(chaveiro.achar_por_nome("liga a tv da sela"), Busca::Nenhum));
     }
 
     /// Duas luzes e um pedido que serve para as duas: perguntar é melhor que apagar a

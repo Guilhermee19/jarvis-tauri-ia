@@ -88,8 +88,8 @@ export function speakText(text: string, voiceId?: string): Promise<void> {
 }
 
 /**
- * Cala a fala em andamento. Vale também durante a SÍNTESE — desligar o modo conversa
- * enquanto o modelo ainda está gerando não pode deixar a frase chegar e tocar depois.
+ * Cala a fala em andamento. Vale também durante a SÍNTESE — desligar a escuta enquanto
+ * o modelo ainda está gerando não pode deixar a frase chegar e tocar depois.
  */
 export function stopSpeaking(): Promise<void> {
   return call<void>('stop_speaking')

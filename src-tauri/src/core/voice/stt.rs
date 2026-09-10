@@ -39,11 +39,72 @@ const TIMEOUT_TRANSCRICAO: Duration = Duration::from_secs(120);
 /// ruído, e o que passar daqui ainda encontra [`e_alucinacao_de_silencio`].
 const PICO_MINIMO: f32 = 0.015;
 
+/// O vocabulário que o Whisper lê ANTES do áudio, para saber em que mundo ele está.
+///
+/// Isto é o `initial prompt` do whisper.cpp, e é o remédio para o defeito mais chato do
+/// ditado: o modelo transcreve bem uma NARRAÇÃO e mal um comando de três palavras, porque
+/// não tem contexto nenhum em que se apoiar. O nome do assistente é o pior caso — "Jarvis"
+/// não é palavra do português, e sem pista o modelo entrega "Jax", "Já" ou "Charles". Sem
+/// o nome, a frase inteira morre no filtro do `dictation.ts`, calada.
+///
+/// **Medido, não suposto.** No mesmo WAV e com o mesmo `ggml-small-q5_1`:
+///
+/// ```text
+/// sem pista:  "Já, quem eu estou ali?"
+/// com pista:  "Jarvis, quem eu estou ali?"
+/// ```
+///
+/// Beam search foi medido no mesmo áudio e não mudou nada (`-bs 5` devolveu o mesmo
+/// "Jax"), então continua fora: seria CPU por turno sem contrapartida.
+///
+/// ## Por que uma lista de palavras, e não frases de exemplo
+///
+/// Frases de exemplo condicionam um pouco melhor, e foram a primeira tentativa. Não
+/// sobreviveram ao teste do ruído: com `"{nome}, aumenta o volume."` na pista, dois
+/// segundos de chiado voltaram transcritos como **"Jarvis, aumenta o volume. Jarvis,
+/// aumenta o volume."** — um comando pronto para executar, nascido de um espirro perto do
+/// microfone. Uma pista que é um comando é uma alucinação com gatilho.
+///
+/// A lista dá o mesmo ganho no nome (medido: o "Jarvis" volta igual) e o mesmo ruído
+/// volta como `"[sons de fogo]"`, que morre no filtro logo abaixo. E ela começa por
+/// "Vocabulário" de propósito: um eco dela não começa pelo nome do assistente, então
+/// nem chega ao roteador — o `dictation.ts` o descarta como conversa alheia.
+/// As palavras que o modelo precisa ter na ponta da língua. Uma lista e não uma frase,
+/// pelo que está escrito acima.
+const VOCABULARIO: &[&str] = &[
+    "ligar",
+    "desligar",
+    "acender",
+    "apagar",
+    "abrir",
+    "fechar",
+    "aumentar",
+    "diminuir",
+    "volume",
+    "música",
+    "luz",
+    "lâmpada",
+    "cafeteira",
+    "tomada",
+    "ar-condicionado",
+    "televisão",
+    "YouTube",
+];
+
+fn pista(nome: &str) -> String {
+    format!("Vocabulário: {nome}, {}.", VOCABULARIO.join(", "))
+}
+
 /// Lê o WAV que o microfone deixou, reamostra e transcreve.
+///
+/// O nome do assistente entra na pista porque ele é a palavra que MAIS precisa ser
+/// ouvida certa — é a que decide se a frase é um comando ou conversa alheia — e é
+/// justamente a que o modelo tem menos chance de acertar sozinho.
 pub async fn transcribe(
     http: &reqwest::Client,
     url: &str,
     wav: &Path,
+    nome_do_assistente: &str,
 ) -> Result<String, VoiceError> {
     let audio = ler_e_reamostrar(wav)?;
 
@@ -64,7 +125,8 @@ pub async fn transcribe(
         // Mandar por requisição faz o idioma não depender de quem abriu o processo.
         .text("language", "pt")
         // Explícito porque o pedido é transcrever, nunca verter para o inglês.
-        .text("translate", "false");
+        .text("translate", "false")
+        .text("prompt", pista(nome_do_assistente));
 
     let endpoint = format!("{}/inference", url.trim_end_matches('/'));
     let resposta = http
@@ -103,7 +165,10 @@ pub async fn transcribe(
         .map_err(|error| VoiceError::TranscricaoRede(error.to_string()))?;
 
     let texto = transcricao.text.trim().to_owned();
-    if texto.is_empty() || e_alucinacao_de_silencio(&texto) {
+    if texto.is_empty()
+        || e_alucinacao_de_silencio(&texto)
+        || e_eco_da_pista(&texto, nome_do_assistente)
+    {
         return Err(VoiceError::NadaOuvido);
     }
 
@@ -135,12 +200,32 @@ const ALUCINACOES: &[&str] = &[
     "silêncio",
 ];
 
+/// A conta que a pista cobra: diante de ruído, o modelo às vezes devolve de volta o
+/// contexto que recebeu. Nasce da mesma função que a monta, e não de uma cópia, para
+/// mexer na pista não deixar este filtro para trás.
+fn e_eco_da_pista(texto: &str, nome: &str) -> bool {
+    normalizar(texto) == normalizar(&pista(nome))
+}
+
 fn e_alucinacao_de_silencio(texto: &str) -> bool {
     let normalizado = normalizar(texto);
     if normalizado.is_empty() {
         return true;
     }
-    ALUCINACOES.contains(&normalizado.trim())
+    e_etiqueta_de_som(texto) || ALUCINACOES.contains(&normalizado.trim())
+}
+
+/// Texto INTEIRO entre colchetes ou parênteses é etiqueta de som, nunca fala:
+/// `"[Som de fio]"`, `"[sons de fogo]"`, `"(música)"`.
+///
+/// Pela forma e não pelo conteúdo porque o conteúdo é infinito — as duas primeiras
+/// saíram do mesmo ruído de dois segundos, e nenhuma delas estava na lista fixa acima,
+/// que nunca vai acompanhar a imaginação do modelo. O que todas têm em comum é a
+/// marcação, e ninguém dá comando falando entre colchetes.
+fn e_etiqueta_de_som(texto: &str) -> bool {
+    let texto = texto.trim();
+    (texto.starts_with('[') && texto.ends_with(']'))
+        || (texto.starts_with('(') && texto.ends_with(')'))
 }
 
 /// Caixa baixa, sem pontuação e com espaços colapsados — é o que faz
@@ -323,6 +408,30 @@ mod tests {
     fn a_media_nao_estoura_perto_do_pico() {
         assert_eq!(media(&[i16::MAX, i16::MAX, i16::MAX]), i16::MAX);
         assert_eq!(media(&[10, 20, 30]), 20);
+    }
+
+    /// A pista é uma frase que o modelo pode devolver de volta. Ela nasce montada de
+    /// propósito para NÃO parecer comando, e mesmo assim é rejeitada — cinto e
+    /// suspensório, como o resto deste arquivo.
+    #[test]
+    fn o_eco_da_propria_pista_nao_vira_comando() {
+        assert!(e_eco_da_pista(&pista("Jarvis"), "Jarvis"));
+        // Com pontuação e caixa trocadas, que é como o eco costuma voltar.
+        assert!(e_eco_da_pista(&pista("Jarvis").to_uppercase(), "Jarvis"));
+        assert!(!e_eco_da_pista("liga a cafeteira", "Jarvis"));
+        // O nome faz parte da pista: o eco de OUTRO assistente não é o eco deste.
+        assert!(!e_eco_da_pista(&pista("Ultron"), "Jarvis"));
+    }
+
+    /// As duas primeiras saíram do mesmo ruído de dois segundos, e nenhuma estava na
+    /// lista fixa — é por isso que a regra é a forma, e não o conteúdo.
+    #[test]
+    fn etiqueta_de_som_nao_e_fala() {
+        assert!(e_alucinacao_de_silencio("[Som de fio]"));
+        assert!(e_alucinacao_de_silencio("[sons de fogo]"));
+        assert!(e_alucinacao_de_silencio("(música)"));
+        assert!(!e_alucinacao_de_silencio("liga a luz [da sala]"));
+        assert!(!e_alucinacao_de_silencio("desliga a cafeteira"));
     }
 
     /// O caso que motivou o filtro: silêncio não pode virar comando.

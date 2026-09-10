@@ -2,42 +2,30 @@
 
 import { useChatStore, useSensorStore, useSettingsStore } from '@/stores'
 
-/** De quem é a vez no modo conversa. */
-export type ConversationStatus = 'ouvindo' | 'pensando' | 'falando'
+/** De quem é a vez enquanto a escuta está ligada. */
+export type EscutaStatus = 'ouvindo' | 'pensando' | 'falando'
 
 /**
- * Ditado por ALTERNÂNCIA: clica, fala, clica de novo e o texto aparece no campo.
+ * A escuta contínua vista de fora — o que o HUD e o botão do microfone desenham.
  *
- * Não é "segurar para falar", apesar do que dizia este comentário: um botão que só
- * vale enquanto o ponteiro está pressionado não dá para operar pelo teclado. O
- * raciocínio inteiro está no `toggleMic` do `ChatInput`.
+ * Não existe mais botão de "falar" nem de "conversar" no painel de chat: falar com ele
+ * é ligar o microfone na barra e dizer o nome dele. O que sobrou aqui, então, é
+ * LEITURA — ligar e desligar é do `sensorStore`, e o laço inteiro mora lá para
+ * sobreviver a fechar a janelinha de conversa.
  *
- * A assinatura mudou em relação ao stub que existia aqui. Ele previa transcrições
- * PARCIAIS chegando por evento (`jarvis://transcript`), o que faz sentido para escuta
- * contínua com wake word — não é o caso. Aqui a gravação tem começo e fim marcados
- * pelo dedo do usuário, e a transcrição é uma pergunta com uma resposta: `stop()`
- * devolve o texto. Um evento teria um produtor e um consumidor já em chamada direta.
- *
- * O estado todo mora no `sensorStore` porque o dono do gravador precisa ser um só —
- * o microfone da bancada de diagnóstico e este botão disputariam o dispositivo.
+ * O estado todo vem da store porque o dono do gravador precisa ser um só — o
+ * microfone da bancada de diagnóstico e a escuta disputariam o dispositivo.
  */
 export function useVoiceInput() {
-  const isRecording = useSensorStore((state) => state.isDictating)
-  const isTranscribing = useSensorStore((state) => state.isTranscribing)
-  const start = useSensorStore((state) => state.startDictation)
-  const stop = useSensorStore((state) => state.stopDictation)
-  // O pico do microfone, para o botão poder PROVAR que está ouvindo. Sem isso, mic
+  const isListening = useSensorStore((state) => state.isListening)
+  const toggleListening = useSensorStore((state) => state.toggleListening)
+  // O pico do microfone, para o HUD poder PROVAR que está ouvindo. Sem isso, mic
   // mudo no painel do Windows e mic funcionando são a mesma tela — e a diferença só
   // aparecia segundos depois, como "não ouvi nada".
   const level = useSensorStore((state) => state.micLevel)
   const ttsLevel = useSensorStore((state) => state.ttsLevel)
   const error = useSensorStore((state) => state.dictationError)
   const clearError = useSensorStore((state) => state.clearDictationError)
-
-  // O modo conversa é o mesmo microfone com o laço ligado, então vem pelo mesmo
-  // hook: quem desenha o botão de falar é quem desenha o de conversar.
-  const isConversing = useSensorStore((state) => state.isConversing)
-  const toggleConversation = useSensorStore((state) => state.toggleConversation)
 
   // De quem é a vez. Derivado do chat, e não guardado no `sensorStore`, porque
   // pensar e falar são estados da RESPOSTA — copiá-los para cá criaria duas
@@ -46,11 +34,7 @@ export function useVoiceInput() {
   const isSpeaking = useChatStore((state) => state.isSpeaking)
   // O motor decide a calibração do medidor logo abaixo — os dois normalizam diferente.
   const motorDeVoz = useSettingsStore((state) => state.settings.ttsEngine)
-  const conversationStatus: ConversationStatus = isSpeaking
-    ? 'falando'
-    : isThinking
-      ? 'pensando'
-      : 'ouvindo'
+  const status: EscutaStatus = isSpeaking ? 'falando' : isThinking ? 'pensando' : 'ouvindo'
 
   /**
    * O nível do áudio que importa AGORA, seja ele de entrada ou de saída.
@@ -86,16 +70,12 @@ export function useVoiceInput() {
   const nivelDeAudio = isSpeaking ? Math.min(1, ttsLevel / PICO_TIPICO_DA_FALA) : level
 
   return {
-    isRecording,
+    isListening,
+    toggleListening,
     nivelDeAudio,
-    isTranscribing,
-    start,
-    stop,
+    status,
     level,
     error,
     clearError,
-    isConversing,
-    conversationStatus,
-    toggleConversation,
   }
 }

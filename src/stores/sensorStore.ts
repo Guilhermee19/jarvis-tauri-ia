@@ -9,10 +9,10 @@ import {
   stopSpeaking,
   transcribe,
 } from '@/lib/tauri'
+import { comandoEnderecado } from '@/lib/dictation'
 import { avaliarTurno, iniciarTurno, type DecisaoVad, type TurnoVad } from '@/lib/vad'
 import { useChatStore } from './chatStore'
 import { useSettingsStore } from './settingsStore'
-import { vozDaPersona } from '@/types'
 import type { Recording } from '@/types'
 
 /**
@@ -24,15 +24,20 @@ import type { Recording } from '@/types'
 const TARGET_FRAME_MS = 40
 
 /**
- * De quanto em quanto tempo o modo conversa olha o medidor do microfone.
+ * De quanto em quanto tempo a escuta olha o medidor do microfone.
  *
  * É um `setInterval` lendo `micLevel`, e não uma reação à mudança do valor, porque
  * em silêncio o pico chega 0 repetido — e o zustand não notifica quem seleciona um
  * valor igual ao anterior. Reagir à mudança perderia exatamente o caso que importa,
  * que é justamente o silêncio parado.
  *
- * 200 ms amostra um a cada quatro eventos do backend (que vêm a 20 Hz). É granular o
- * bastante para medir 1,2 s de silêncio e não faz o laço girar à toa.
+ * 200 ms para uma fonte que chega a 20 Hz — e é por isso que o que se lê aqui é o
+ * PICO acumulado desde a última olhada, e não o `micLevel` daquele instante. Amostrar
+ * o valor pontual joga fora três de cada quatro medidas, e as jogadas fora são
+ * justamente as sílabas fortes: a fala vira uma sequência de picos e vales de ~50 ms,
+ * e o sorteio de qual deles o timer pega decidia se a frase existia ou não. Era isso
+ * que obrigava a falar alto E devagar — arrastar a sílaba é o único jeito de garantir
+ * que ela sobreviva à amostragem.
  */
 const AMOSTRAGEM_VAD_MS = 200
 
@@ -120,20 +125,19 @@ interface SensorState {
   setTtsLevel: (level: number) => void
 
   /**
-   * Ditado do chat (segurar o botão para falar). Mora AQUI, junto do `toggleMic`,
-   * porque o dono do gravador tem que ser um só: se o botão do chat chamasse
-   * `startRecording` por conta própria com o microfone da bancada ligado, o backend
-   * responderia "já existe uma gravação em andamento".
+   * O gravador do turno de voz — um trecho de fala entre dois silêncios. Mora AQUI,
+   * junto do `toggleMic`, porque o dono do gravador tem que ser um só: se a escuta
+   * chamasse `startRecording` por conta própria com o microfone da bancada ligado, o
+   * backend responderia "já existe uma gravação em andamento".
    */
   isDictating: boolean
   isTranscribing: boolean
   /**
-   * Erro do ditado, SEPARADO do `micError` da bancada.
+   * Erro da escuta, SEPARADO do `micError` da bancada.
    *
-   * Separado porque os dois têm plateias diferentes: o `micError` aparece no HUD da
-   * home, que fica atrás do painel de chat — quem clicou "Falar" nunca ia ver. E era
-   * exatamente esse o bug: a falha ia para um alerta escondido e o botão parecia não
-   * fazer nada. Erro de ditado tem que aparecer ao lado do botão que o causou.
+   * Separado porque os dois têm donos diferentes: o `micError` é da gravação de teste
+   * do diagnóstico, e este é do microfone que fica ouvindo o tempo todo. Juntá-los
+   * faria um erro de lá acusar o botão de cá, e vice-versa.
    */
   dictationError: string | null
   startDictation: () => Promise<void>
@@ -142,15 +146,28 @@ interface SensorState {
   clearDictationError: () => void
 
   /**
-   * Modo conversa: o microfone fica aberto, o SILÊNCIO marca o fim da sua frase e a
-   * resposta volta falada — sem clique nenhum entre uma frase e a próxima.
+   * Escuta contínua: o microfone fica aberto ouvindo TUDO, o silêncio marca o fim de
+   * cada frase, e só a que começa pelo nome do assistente vira comando.
    *
-   * Mora aqui pelo mesmo motivo do ditado: o gravador tem um dono só. E o laço fica
-   * na store, e não num hook, para sobreviver a fechar o painel de chat — desligar a
-   * janelinha não é dizer "pare de me ouvir".
+   * É o único jeito de falar com ele por voz — não há mais botão de "falar" nem de
+   * "conversar" no painel de chat. O gatilho é o nome, como se chama qualquer pessoa
+   * numa sala: sem ele a frase é conversa alheia e é descartada sem resposta.
+   *
+   * Mora aqui porque o gravador tem um dono só. E o laço fica na store, e não num
+   * hook, para sobreviver a fechar o painel de chat — desligar a janelinha não é
+   * dizer "pare de me ouvir".
    */
-  isConversing: boolean
-  toggleConversation: () => Promise<void>
+  isListening: boolean
+  toggleListening: () => Promise<void>
+  /**
+   * Liga ou desliga a escuta sem depender de qual é o estado agora.
+   *
+   * Existe pelo mesmo motivo do `setWebcam` ao lado do `toggleWebcam`: quem chama na
+   * abertura do app quer ESCUTA LIGADA, não "o contrário do que estiver valendo" — e
+   * um `toggle` chamado duas vezes (o efeito que o React roda em dobro no modo estrito
+   * do `dev`) desligaria justamente o que a primeira chamada ligou.
+   */
+  setListening: (on: boolean) => Promise<void>
 }
 
 function describe(error: unknown): string {
@@ -169,11 +186,26 @@ function stopPreviewLoop() {
 }
 
 /** Mesma razão do `previewTimer`: é maquinário do laço, não estado desenhado. */
-let conversationTimer: ReturnType<typeof setInterval> | null = null
+let listeningTimer: ReturnType<typeof setInterval> | null = null
 
-function stopConversationLoop() {
-  if (conversationTimer !== null) clearInterval(conversationTimer)
-  conversationTimer = null
+function stopListeningLoop() {
+  if (listeningTimer !== null) clearInterval(listeningTimer)
+  listeningTimer = null
+}
+
+/**
+ * O maior pico que o microfone mandou desde a última olhada do VAD.
+ *
+ * Fora do estado pela mesma razão do `listeningTimer`: ninguém desenha isto. Quem
+ * desenha lê o `micLevel`, que continua sendo o valor do instante.
+ */
+let picoAcumulado = 0
+
+/** Devolve o pico e zera a conta — a próxima janela começa limpa. */
+function consumirPico(): number {
+  const pico = picoAcumulado
+  picoAcumulado = 0
+  return pico
 }
 
 export const useSensorStore = create<SensorState>((set, get) => {
@@ -208,27 +240,33 @@ export const useSensorStore = create<SensorState>((set, get) => {
   }
 
   /**
-   * O laço do modo conversa: amostra o medidor, e quando o VAD diz que a frase
-   * acabou, encadeia transcrever → responder → falar → voltar a ouvir.
+   * O laço da escuta: amostra o medidor, e quando o VAD diz que a frase acabou,
+   * encadeia transcrever → decidir se era para ele → responder → voltar a ouvir.
    *
    * `ocupado` existe porque o turno leva SEGUNDOS (Whisper + Ollama + Chatterbox) e
    * o timer continua disparando durante todos eles. Sem a trava, a amostra seguinte
    * tentaria fechar um turno que já está sendo fechado.
    */
-  function runConversationLoop() {
+  function runListeningLoop() {
     let turno: TurnoVad = iniciarTurno(Date.now())
     let ocupado = false
+    consumirPico()
 
-    conversationTimer = setInterval(() => {
-      if (ocupado || !get().isConversing) return
+    listeningTimer = setInterval(() => {
+      if (ocupado || !get().isListening) return
 
-      const passo = avaliarTurno(turno, get().micLevel, Date.now())
+      const passo = avaliarTurno(turno, consumirPico(), Date.now())
       turno = passo.turno
       if (passo.decisao === 'ouvindo') return
 
       ocupado = true
       void fecharTurno(passo.decisao).finally(() => {
-        turno = iniciarTurno(Date.now())
+        // O fundo da sala sobrevive ao turno: ele é do ambiente, não da gravação, e
+        // reaprendê-lo do zero a cada frase custaria as primeiras amostras da frase
+        // seguinte. O pico, ao contrário, é zerado — o que entrou enquanto ele
+        // pensava e falava não é fala de ninguém para este turno.
+        turno = iniciarTurno(Date.now(), turno.ruido)
+        consumirPico()
         ocupado = false
       })
     }, AMOSTRAGEM_VAD_MS)
@@ -241,26 +279,38 @@ export const useSensorStore = create<SensorState>((set, get) => {
         await stopRecording().catch(() => undefined)
       } else {
         const ouvido = await get().stopDictation()
-        // Desligar o modo no meio de um turno descarta a frase de propósito: o
+        // Desligar a escuta no meio de um turno descarta a frase de propósito: o
         // clique foi "pare", e mandar a última coisa ouvida seria o contrário.
-        if (!get().isConversing) return
+        if (!get().isListening) return
 
-        // O modo conversa manda TUDO direto, sem exigir o vocativo que o botão de
-        // ditado exige (`comandoEnderecado`): ligar o modo já é a declaração de que
-        // a fala é para ele. O `send` responde E fala — só volta quando ele calou,
-        // que é exatamente quando o microfone pode reabrir sem ouvir a si mesmo.
-        if (ouvido) await useChatStore.getState().send(ouvido)
+        // O NOME é o gatilho, e é ele que separa "falou com o Jarvis" de "falou
+        // perto do Jarvis". Com o microfone aberto o tempo todo, tudo que é dito na
+        // sala chega até aqui — sem esse filtro, uma conversa entre duas pessoas
+        // viraria uma fila de comandos. O que não é endereçado morre aqui, calado.
+        //
+        // ponytail: todo trecho de fala paga o Whisper antes de ser descartado — a
+        // única forma de saber se o nome foi dito é transcrevendo. Uma palavra-gatilho
+        // de verdade (Porcupine, openWakeWord) resolveria isso dentro do `mic.rs`, sem
+        // mudar nada daqui.
+        const comando = comandoEnderecado(
+          ouvido,
+          useSettingsStore.getState().settings.assistantName,
+        )
+
+        // O `send` responde E fala — só volta quando ele calou, que é exatamente
+        // quando o microfone pode reabrir sem ouvir a si mesmo.
+        if (comando) await useChatStore.getState().send(comando)
       }
 
-      if (!get().isConversing) return
+      if (!get().isListening) return
       await get().startDictation()
 
       // Não conseguiu reabrir o microfone (dispositivo arrancado, permissão
-      // revogada): desliga o modo em vez de girar para sempre sem gravar nada. O
+      // revogada): desliga a escuta em vez de girar para sempre sem gravar nada. O
       // `startDictation` já deixou o motivo em `dictationError`.
       if (!get().isDictating) {
-        stopConversationLoop()
-        set({ isConversing: false })
+        stopListeningLoop()
+        set({ isListening: false })
       }
     }
   }
@@ -311,6 +361,15 @@ export const useSensorStore = create<SensorState>((set, get) => {
 
     toggleMic: async () => {
       if (get().isMicBusy) return
+      // O outro lado da recusa que o `startDictation` já fazia: com a escuta ligada o
+      // gravador é dela, e pedir de novo esbarraria no "já existe uma gravação em
+      // andamento" do backend — um erro que não diz onde desligar.
+      if (!get().isMicOn && get().isListening) {
+        set({
+          micError: 'o microfone está ocupado pela escuta — desligue o ícone do microfone na barra',
+        })
+        return
+      }
       set({ isMicBusy: true, micError: null })
 
       try {
@@ -328,7 +387,10 @@ export const useSensorStore = create<SensorState>((set, get) => {
       }
     },
 
-    setMicLevel: (level) => set({ micLevel: level }),
+    setMicLevel: (level) => {
+      picoAcumulado = Math.max(picoAcumulado, level)
+      set({ micLevel: level })
+    },
     setTtsLevel: (level) => set({ ttsLevel: level }),
 
     isDictating: false,
@@ -384,8 +446,8 @@ export const useSensorStore = create<SensorState>((set, get) => {
         set({ lastRecording: await stopRecording() })
         return await transcribe()
       } catch (cause) {
-        // Erro vira aviso e string vazia: o botão de falar não pode deixar o chat
-        // num estado travado só porque o Whisper não estava lá.
+        // Erro vira aviso e string vazia: um turno perdido não pode derrubar a
+        // escuta só porque o Whisper não estava lá.
         set({ dictationError: describe(cause) })
         return ''
       } finally {
@@ -393,12 +455,16 @@ export const useSensorStore = create<SensorState>((set, get) => {
       }
     },
 
-    isConversing: false,
+    isListening: false,
 
-    toggleConversation: async () => {
-      if (get().isConversing) {
-        stopConversationLoop()
-        set({ isConversing: false })
+    toggleListening: async () => get().setListening(!get().isListening),
+
+    setListening: async (on: boolean) => {
+      if (get().isListening === on) return
+
+      if (!on) {
+        stopListeningLoop()
+        set({ isListening: false })
         // Calar vem ANTES de soltar o microfone: quem clicou em desligar quer
         // silêncio agora, não quando a frase em curso terminar.
         await stopSpeaking().catch(() => undefined)
@@ -406,23 +472,15 @@ export const useSensorStore = create<SensorState>((set, get) => {
         return
       }
 
-      // Sem voz configurada o modo seria só o ditado automático — ele ouviria, e
-      // responderia por escrito, calado. Recusar na hora do clique diz onde
-      // resolver; deixar quebrar depois esconderia isso atrás de uma frase inteira.
-      if (!vozDaPersona(useSettingsStore.getState().settings).trim()) {
-        set({
-          dictationError:
-            'para conversar por voz, escolha um clipe com a sua voz em Diagnóstico › Voz — bastam uns 10 segundos falando',
-        })
-        return
-      }
-
+      // Sem clipe de voz ele ouve e executa do mesmo jeito, só responde por escrito
+      // na janelinha de conversa. Recusar aqui trocaria uma escuta útil por nenhuma
+      // — a voz é o acabamento da resposta, não a condição para ouvir.
       set({ dictationError: null })
       await get().startDictation()
       if (!get().isDictating) return
 
-      set({ isConversing: true })
-      runConversationLoop()
+      set({ isListening: true })
+      runListeningLoop()
     },
   }
 })
